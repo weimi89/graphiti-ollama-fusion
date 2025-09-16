@@ -36,15 +36,28 @@ class OllamaEmbedder(EmbedderClient):
         self.dimensions = dimensions
         self.embed_url = f"{self.base_url}/api/embed"
 
-    async def create(self, input_data: List[str]) -> List[List[float]]:
+    async def create(self, input_data: str | list[str]) -> list[float] | list[list[float]]:
         """
-        創建嵌入向量
+        創建嵌入向量（兼容新版本接口）
 
         Args:
-            input_data: 要嵌入的文本列表
+            input_data: 要嵌入的文本（字符串）或文本列表
 
         Returns:
-            嵌入向量列表
+            單個向量（如果輸入是字符串）或向量列表（如果輸入是列表）
+        """
+        # 🆕 適配新版本的接口
+        if isinstance(input_data, str):
+            # 新版本：單個字符串輸入，返回單個向量
+            embeddings = await self._create_embeddings([input_data])
+            return embeddings[0] if embeddings else []
+        else:
+            # 向後兼容：列表輸入，返回向量列表
+            return await self._create_embeddings(input_data)
+
+    async def _create_embeddings(self, input_data: List[str]) -> List[List[float]]:
+        """
+        內部方法：創建嵌入向量列表
         """
         if not input_data:
             return []
@@ -247,7 +260,13 @@ class OllamaEmbedder(EmbedderClient):
         Returns:
             嵌入向量列表
         """
-        return await self.create(input_data)
+        # 確保 create_batch 總是返回列表格式
+        result = await self.create(input_data)
+        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
+            return result
+        else:
+            # 如果 create 返回單個向量，包裝成列表
+            return [result] if isinstance(result, list) else []
 
     def get_dimensions(self) -> int:
         """
@@ -332,20 +351,34 @@ async def test_ollama_embedder():
         print("   ❌ 連接失敗，請確保 Ollama 正在運行")
         return False
 
-    # 測試單個嵌入
-    print("\n2️⃣ 測試單個文本嵌入...")
-    test_texts = ["TypeScript 是 JavaScript 的超集"]
-    embeddings = await embedder.create(test_texts)
+    # 測試新版本介面：單個字符串輸入
+    print("\n2️⃣ 測試單個字符串嵌入（新介面）...")
+    single_text = "TypeScript 是 JavaScript 的超集"
+    single_embedding = await embedder.create(single_text)
 
-    if embeddings and len(embeddings[0]) > 0:
-        print(f"   ✅ 成功！嵌入維度: {len(embeddings[0])}")
-        print(f"   前5個值: {embeddings[0][:5]}")
+    if isinstance(single_embedding, list) and len(single_embedding) > 0 and isinstance(single_embedding[0], float):
+        print(f"   ✅ 成功！嵌入維度: {len(single_embedding)}")
+        print(f"   前5個值: {single_embedding[:5]}")
+        print(f"   類型：單個向量 (list[float])")
     else:
-        print("   ❌ 嵌入失敗")
+        print("   ❌ 單個字符串嵌入失敗")
+        return False
+
+    # 測試列表輸入
+    print("\n3️⃣ 測試列表嵌入（兼容模式）...")
+    test_texts = ["TypeScript 是 JavaScript 的超集"]
+    list_embeddings = await embedder.create(test_texts)
+
+    if isinstance(list_embeddings, list) and len(list_embeddings) > 0 and isinstance(list_embeddings[0], list):
+        print(f"   ✅ 成功！嵌入維度: {len(list_embeddings[0])}")
+        print(f"   前5個值: {list_embeddings[0][:5]}")
+        print(f"   類型：向量列表 (list[list[float]])")
+    else:
+        print("   ❌ 列表嵌入失敗")
         return False
 
     # 測試批量嵌入
-    print("\n3️⃣ 測試批量嵌入...")
+    print("\n4️⃣ 測試批量嵌入...")
     batch_texts = [
         "React 18 引入了 Concurrent Features",
         "API 錯誤處理最佳實踐",
@@ -362,7 +395,7 @@ async def test_ollama_embedder():
         return False
 
     # 獲取模型信息
-    print("\n4️⃣ 獲取模型信息...")
+    print("\n5️⃣ 獲取模型信息...")
     model_info = await embedder.get_model_info()
     if "error" not in model_info:
         print(f"   ✅ 模型: {embedder.model}")
