@@ -22,7 +22,7 @@
                               ▼
                     ┌──────────────────┐    ┌─────────────────┐
                     │  Ollama Client   │◄──►│  Ollama 服務    │
-                    │  (實體提取)       │    │  qwen2.5:14b    │
+                    │  (實體提取)       │    │  qwen2.5:7b    │
                     └──────────────────┘    └─────────────────┘
                               │
                               ▼
@@ -49,7 +49,7 @@ cypher-shell -u neo4j -p YOUR_PASSWORD "RETURN 'Neo4j is running' as status"
 
 # 啟動 Ollama 並安裝模型
 ollama serve
-ollama pull qwen2.5:14b
+ollama pull qwen2.5:7b
 ollama pull nomic-embed-text:v1.5
 ```
 
@@ -61,7 +61,7 @@ cp .env.example .env
 
 # .env 檔案已經預設配置，包含：
 # NEO4J_PASSWORD=YOUR_PASSWORD (請設定你的 Neo4j 密碼)
-# MODEL_NAME=qwen2.5:14b (Ollama 模型)
+# MODEL_NAME=qwen2.5:7b (Ollama 模型)
 # 請根據你的實際設定修改密碼
 ```
 
@@ -77,6 +77,30 @@ uv run graphiti_mcp_server.py --transport stdio
 # 或啟動 SSE 模式 (用於 Cursor 等)
 uv run graphiti_mcp_server.py --transport sse --host 0.0.0.0 --port 8000
 ```
+
+## 📁 專案結構
+
+```
+graphiti/
+├── 📄 graphiti_mcp_server.py      # 主要 MCP 服務器
+├── 🧲 ollama_embedder.py          # 自定義 Ollama 嵌入器
+├── 🤖 ollama_graphiti_client.py   # 優化的 Ollama 客戶端
+├── ⚙️ .env.example                # 環境配置範本
+├── 📋 pyproject.toml              # Python 專案配置
+├── 📚 docs/                       # 文檔
+│   ├── CLAUDE.md                   # 開發記錄
+│   └── USAGE.md                    # 使用指南
+├── 🧪 tests/                      # 測試文件
+│   ├── test_simple_memory.py       # 基本功能測試
+│   ├── test_mcp_complete.py        # 完整功能測試
+│   ├── test_embedding.py           # 嵌入功能測試
+│   └── ...                         # 其他測試文件
+└── 🔧 tools/                      # 工具腳本
+    ├── debug_ollama.py             # Ollama 調試工具
+    └── performance_diagnose.py     # 性能診斷工具
+```
+
+詳細使用說明請參閱 [docs/USAGE.md](docs/USAGE.md)
 
 ## 🔧 MCP 客戶端配置
 
@@ -171,7 +195,7 @@ NEO4J_PASSWORD=YOUR_PASSWORD             # Neo4j 密碼 (請設定你的密碼)
 
 ### Ollama 配置
 ```env
-MODEL_NAME=qwen2.5:14b                   # 主要 LLM 模型
+MODEL_NAME=qwen2.5:7b                   # 主要 LLM 模型
 EMBEDDER_MODEL_NAME=nomic-embed-text:v1.5 # 嵌入模型
 OLLAMA_BASE_URL=http://localhost:11434   # Ollama 服務地址
 LLM_TEMPERATURE=0.1                      # LLM 溫度參數

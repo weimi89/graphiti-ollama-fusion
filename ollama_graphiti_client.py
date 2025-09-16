@@ -250,18 +250,50 @@ Example entities to look for:
                                 # 將 entity_type_name 映射到 entity_type
                                 if 'entity_type_name' in entity and 'entity_type' not in entity:
                                     entity['entity_type'] = entity.pop('entity_type_name')
+                                # 處理 summary 字段 - 確保是字符串
+                                if 'summary' in entity:
+                                    if isinstance(entity['summary'], dict):
+                                        # 如果 summary 是字典，提取有用信息
+                                        entity['summary'] = str(entity['summary'].get('description', entity['summary'].get('content', entity.get('name', ''))))
+                                    elif entity['summary'] is None:
+                                        entity['summary'] = entity.get('observation', entity.get('name', ''))
+                                    elif not isinstance(entity['summary'], str):
+                                        entity['summary'] = str(entity['summary'])
+
                                 # 確保有 entity_summary
                                 if 'entity_summary' not in entity:
-                                    entity['entity_summary'] = entity.get('description', entity.get('name', ''))
+                                    entity['entity_summary'] = entity.get('summary', entity.get('description', entity.get('name', '')))
+
+                                # 確保 entity_summary 是字符串
+                                if isinstance(entity['entity_summary'], dict):
+                                    entity['entity_summary'] = str(entity['entity_summary'].get('description', entity['entity_summary'].get('content', entity.get('name', ''))))
+                                elif entity['entity_summary'] is None:
+                                    entity['entity_summary'] = entity.get('name', '')
+
                                 # 確保有 observations（必需字段）
                                 if 'observations' not in entity:
-                                    entity['observations'] = [entity.get('description', f"Related to {entity.get('name', 'entity')}")]
+                                    entity['observations'] = [entity.get('observation', entity.get('description', f"Related to {entity.get('name', 'entity')}"))]
+                                # 確保 observations 是字符串列表
+                                elif isinstance(entity['observations'], str):
+                                    entity['observations'] = [entity['observations']]
+                                elif not isinstance(entity['observations'], list):
+                                    entity['observations'] = [str(entity['observations'])]
+
                                 # 確保有 entity_type_id，預設為 0
                                 if 'entity_type_id' not in entity:
                                     entity['entity_type_id'] = 0
                                 else:
                                     # 強制設為 0 以避免 index out of range
                                     entity['entity_type_id'] = 0
+
+                                # 🆕 新版本 Graphiti 0.20+ 需要 duplicates 欄位
+                                if 'duplicates' not in entity:
+                                    entity['duplicates'] = []
+
+                                # 🆕 新版本可能需要 potential_duplicates 欄位
+                                if 'potential_duplicates' not in entity:
+                                    entity['potential_duplicates'] = []
+
                                 # 移除不需要的字段
                                 for key in ['description', 'score', 'mentioned', 'speaker']:
                                     entity.pop(key, None)
@@ -368,6 +400,24 @@ Example entities to look for:
                         return validated.model_dump()
                     except Exception as e:
                         print(f"⚠️ Pydantic 驗證失敗: {e}")
+
+                        # 🆕 特別處理 entity_resolutions 中的 duplicates 欄位
+                        if 'duplicates' in str(e) and 'entity_resolutions' in str(e):
+                            try:
+                                if 'entity_resolutions' in json_data and isinstance(json_data['entity_resolutions'], list):
+                                    for entity_res in json_data['entity_resolutions']:
+                                        if isinstance(entity_res, dict):
+                                            if 'duplicates' not in entity_res:
+                                                entity_res['duplicates'] = []
+                                            if 'potential_duplicates' not in entity_res:
+                                                entity_res['potential_duplicates'] = []
+
+                                # 重試驗證
+                                validated = response_model.model_validate(json_data)
+                                return validated.model_dump()
+                            except Exception as retry_e:
+                                print(f"⚠️ 重試驗證失敗: {retry_e}")
+
                         # 嘗試創建一個最小有效實例
                         try:
                             minimal_data = {}

@@ -71,8 +71,16 @@ class OllamaEmbedder(EmbedderClient):
                             embeddings_list = result.get("embeddings", [])
                             embedding = embeddings_list[0] if embeddings_list else []
 
+                            # 檢查向量是否包含無效值（NaN, inf, None）
+                            if any(x is None or x != x or abs(x) == float('inf') for x in embedding):
+                                print(f"⚠️ 檢測到無效數值，重新生成向量: '{text[:50]}...'")
+                                # 生成隨機替代向量
+                                import random
+                                embedding = [random.uniform(-0.01, 0.01) for _ in range(self.dimensions)]
+
                             # 確保嵌入向量維度正確
                             if len(embedding) != self.dimensions:
+                                print(f"⚠️ 向量維度不匹配 ({len(embedding)} != {self.dimensions})，調整中...")
                                 # 調整維度（截斷或填充）
                                 if len(embedding) > self.dimensions:
                                     embedding = embedding[:self.dimensions]
@@ -81,8 +89,8 @@ class OllamaEmbedder(EmbedderClient):
 
                             # 檢查是否為零向量並歸一化（確保 cosine similarity 正確）
                             vector_norm = sum(x*x for x in embedding) ** 0.5
-                            if vector_norm == 0.0:
-                                print(f"⚠️ 檢測到零向量，使用隨機小向量替代: '{text[:50]}...'")
+                            if vector_norm == 0.0 or vector_norm < 1e-10:
+                                print(f"⚠️ 檢測到零向量或極小向量(norm={vector_norm})，使用隨機小向量替代: '{text[:50]}...'")
                                 # 生成一個小的隨機向量來避免 cosine similarity 錯誤
                                 import random
                                 embedding = [random.uniform(-0.01, 0.01) for _ in range(self.dimensions)]
@@ -92,6 +100,16 @@ class OllamaEmbedder(EmbedderClient):
                             # 確保向量歸一化（Neo4j cosine similarity 要求單位向量）
                             if vector_norm > 0:
                                 embedding = [x / vector_norm for x in embedding]
+
+                            # 最後驗證向量品質
+                            final_norm = sum(x*x for x in embedding) ** 0.5
+                            if abs(final_norm - 1.0) > 0.01:
+                                print(f"⚠️ 向量歸一化後範數異常 ({final_norm})，重新歸一化...")
+                                if final_norm > 0:
+                                    embedding = [x / final_norm for x in embedding]
+                                else:
+                                    # 如果還是有問題，使用單位向量
+                                    embedding = [1.0] + [0.0] * (self.dimensions - 1)
 
                             embeddings.append(embedding)
                         else:
@@ -153,6 +171,12 @@ class OllamaEmbedder(EmbedderClient):
                         embeddings_list = result.get("embeddings", [])
                         embedding = embeddings_list[0] if embeddings_list else []
 
+                        # 檢查向量是否包含無效值
+                        if any(x is None or x != x or abs(x) == float('inf') for x in embedding):
+                            # 生成隨機替代向量
+                            import random
+                            embedding = [random.uniform(-0.01, 0.01) for _ in range(self.dimensions)]
+
                         # 調整維度
                         if len(embedding) != self.dimensions:
                             if len(embedding) > self.dimensions:
@@ -162,7 +186,7 @@ class OllamaEmbedder(EmbedderClient):
 
                         # 確保向量歸一化
                         vector_norm = sum(x*x for x in embedding) ** 0.5
-                        if vector_norm == 0.0:
+                        if vector_norm == 0.0 or vector_norm < 1e-10:
                             # 生成隨機向量
                             import random
                             embedding = [random.uniform(-0.01, 0.01) for _ in range(self.dimensions)]
@@ -171,6 +195,15 @@ class OllamaEmbedder(EmbedderClient):
                         # 歸一化向量
                         if vector_norm > 0:
                             embedding = [x / vector_norm for x in embedding]
+
+                        # 最終驗證
+                        final_norm = sum(x*x for x in embedding) ** 0.5
+                        if abs(final_norm - 1.0) > 0.01:
+                            if final_norm > 0:
+                                embedding = [x / final_norm for x in embedding]
+                            else:
+                                # 使用單位向量
+                                embedding = [1.0] + [0.0] * (self.dimensions - 1)
 
                         return embedding
                     else:
