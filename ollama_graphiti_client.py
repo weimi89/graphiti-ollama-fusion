@@ -401,22 +401,56 @@ Example entities to look for:
                     except Exception as e:
                         print(f"⚠️ Pydantic 驗證失敗: {e}")
 
-                        # 🆕 特別處理 entity_resolutions 中的 duplicates 欄位
-                        if 'duplicates' in str(e) and 'entity_resolutions' in str(e):
-                            try:
-                                if 'entity_resolutions' in json_data and isinstance(json_data['entity_resolutions'], list):
-                                    for entity_res in json_data['entity_resolutions']:
-                                        if isinstance(entity_res, dict):
-                                            if 'duplicates' not in entity_res:
-                                                entity_res['duplicates'] = []
-                                            if 'potential_duplicates' not in entity_res:
-                                                entity_res['potential_duplicates'] = []
+                        # 🆕 增強的 Pydantic 錯誤修復邏輯
+                        try:
+                            # 預先修復所有常見問題，避免多次重試
 
-                                # 重試驗證
-                                validated = response_model.model_validate(json_data)
-                                return validated.model_dump()
-                            except Exception as retry_e:
-                                print(f"⚠️ 重試驗證失敗: {retry_e}")
+                            # 1. 修復 entity_resolutions 中的 duplicates 欄位缺失問題（通用修復）
+                            if 'entity_resolutions' in json_data and isinstance(json_data['entity_resolutions'], list):
+                                for entity_res in json_data['entity_resolutions']:
+                                    if isinstance(entity_res, dict):
+                                        if 'duplicates' not in entity_res:
+                                            entity_res['duplicates'] = []
+                                        if 'potential_duplicates' not in entity_res:
+                                            entity_res['potential_duplicates'] = []
+
+                            # 2. 修復所有可能的 summary 欄位類型問題（通用修復）
+                            def fix_summary_fields(data):
+                                if isinstance(data, dict):
+                                    for key, value in data.items():
+                                        if key == 'summary' and isinstance(value, dict):
+                                            # 將字典類型的 summary 轉換為字符串
+                                            data[key] = str(value.get('description', value.get('content', value.get('name', str(value)))))
+                                        elif isinstance(value, (dict, list)):
+                                            fix_summary_fields(value)
+                                elif isinstance(data, list):
+                                    for item in data:
+                                        fix_summary_fields(item)
+
+                            fix_summary_fields(json_data)
+
+                            # 3. 通用缺失欄位修復 - 為常見的缺失欄位提供預設值
+                            if hasattr(response_model, '__annotations__'):
+                                for field_name, field_type in response_model.__annotations__.items():
+                                    if field_name not in json_data:
+                                        # 為缺失的欄位提供默認值
+                                        if hasattr(field_type, '__origin__') and field_type.__origin__ == list:
+                                            json_data[field_name] = []
+                                        elif hasattr(field_type, '__origin__') and field_type.__origin__ == dict:
+                                            json_data[field_name] = {}
+                                        elif field_type == bool:
+                                            json_data[field_name] = False
+                                        elif field_type in (int, float):
+                                            json_data[field_name] = 0
+                                        else:
+                                            json_data[field_name] = ""
+
+                            # 重試驗證
+                            validated = response_model.model_validate(json_data)
+                            return validated.model_dump()
+                        except Exception as retry_e:
+                            print(f"⚠️ 增強修復重試失敗: {retry_e}")
+                            # 如果增強修復失敗，嘗試基本修復
 
                         # 嘗試創建一個最小有效實例
                         try:
