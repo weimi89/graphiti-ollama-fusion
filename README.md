@@ -36,6 +36,71 @@ graphiti/
   - `qwen2.5:7b` (LLM)
   - `nomic-embed-text:v1.5` (嵌入)
 
+### 💻 硬體效能建議
+
+選擇合適的模型搭配您的電腦效能，獲得最佳體驗：
+
+#### M1/M2 Mac (8-16GB RAM)
+```bash
+# 推薦組合 - 速度與品質平衡
+ollama pull qwen2.5:1.5b      # LLM (2.5秒回應)
+ollama pull nomic-embed-text:v1.5
+
+# 極速組合 - 優先回應速度
+ollama pull qwen2.5:0.5b      # LLM (1.7秒回應)
+ollama pull nomic-embed-text:v1.5
+
+# 高品質組合 - 16GB+ RAM
+ollama pull qwen2.5:3b        # LLM (4.4秒回應)
+ollama pull nomic-embed-text:v1.5
+```
+
+#### Intel/AMD 桌機 (16GB+ RAM)
+```bash
+# 平衡組合
+ollama pull qwen2.5:3b        # 或 llama3.2:3b
+ollama pull nomic-embed-text:v1.5
+
+# 高性能組合 (32GB+ RAM)
+ollama pull qwen2.5:7b        # 原建議模型
+ollama pull nomic-embed-text:v1.5
+```
+
+#### 效能比較表
+| 模型 | 大小 | 記憶體需求 | 回應時間* | 適用硬體 | 推薦指數 |
+|------|------|------------|----------|----------|----------|
+| **qwen2.5:0.5b** | 397 MB | 2-4 GB | 1.7秒 | 任何配置 | ⭐⭐⭐⭐⭐ |
+| **qwen2.5:1.5b** | 986 MB | 4-8 GB | 2.5秒 | M1+ 8GB | ⭐⭐⭐⭐⭐ |
+| **qwen2.5:3b** | 1.9 GB | 8-12 GB | 4.4秒 | 16GB+ | ⭐⭐⭐⭐ |
+| qwen2.5:7b | 4.7 GB | 16-24 GB | 30+秒 | 32GB+ | ⭐⭐ |
+
+> **⚠️ 重要提醒**：以上數據依個人電腦的測試而有所不同，建議先做好測試再選擇模組。
+
+#### 📊 性能測試指南
+在選擇模型前，建議先測試各模型在您硬體上的實際表現：
+
+```bash
+# 測試各模型回應時間
+time ollama run qwen2.5:0.5b "你好，請簡短回應"
+time ollama run qwen2.5:1.5b "你好，請簡短回應"
+time ollama run qwen2.5:3b "你好，請簡短回應"
+
+# 檢查系統資源使用
+top -l 1 -n 0 | grep -E "CPU|Memory"
+ollama ps  # 查看模型記憶體使用量
+```
+
+#### 切換模型設定
+在配置檔案中修改模型名稱：
+```json
+{
+  "ollama": {
+    "model": "qwen2.5:1.5b",  // 改為適合的模型
+    "base_url": "http://localhost:11434"
+  }
+}
+```
+
 ### 2. 安裝 Python 和 uv
 
 #### Python 3.11+ 安裝
