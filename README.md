@@ -1,124 +1,238 @@
-# Graphiti + Ollama MCP 服務器
+# Graphiti MCP Server
 
-基於 **Graphiti 知識圖譜** 和 **Ollama 本地 LLM** 的 Model Context Protocol (MCP) 服務器，為 AI 助手提供持久記憶功能。
+🇹🇼 **本地化知識圖譜記憶服務** - 整合 Ollama 本地 LLM 與 Graphiti 的企業級 MCP 服務器
 
-## ✨ 特色功能
+## 🌟 特色功能
 
-🧠 **持久記憶** - 透過 Neo4j 知識圖譜儲存跨會話記憶
-🦙 **本地 LLM** - 使用 Ollama 進行實體提取，無需 API 金鑰
-🔍 **語義搜索** - 基於嵌入向量的智能搜索功能
-👥 **多租戶** - 支援群組隔離的記憶管理
-⚡ **實時同步** - MCP 協議確保即時資料同步
-🔧 **簡單部署** - 一鍵啟動，無複雜配置
+- 🧠 **智能記憶管理** - 使用知識圖譜儲存和檢索複雜的記憶關係
+- 🔍 **語意搜尋** - 基於向量嵌入的智能搜尋，理解語意而非僅文字匹配
+- 🏠 **完全本地化** - 無需外部 API，使用 Ollama 本地 LLM 和嵌入模型
+- 🇹🇼 **繁體中文** - 完整的中文界面和回應，專為台灣用戶設計
+- 🏗️ **企業級架構** - 結構化配置、異常處理、日誌系統和監控
 
-## 🏗️ 系統架構
-
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Claude Code   │◄──►│  MCP 服務器       │◄──►│   Neo4j 圖庫    │
-│                 │    │  (FastMCP)       │    │                 │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                    ┌──────────────────┐    ┌─────────────────┐
-                    │  Ollama Client   │◄──►│  Ollama 服務    │
-                    │  (實體提取)       │    │  qwen2.5:7b    │
-                    └──────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                    ┌──────────────────┐
-                    │  Ollama Embedder │
-                    │  nomic-embed-text│
-                    └──────────────────┘
-```
-
-## 🚀 快速開始
-
-### 1. 前置需求
-
-```bash
-# 確認 Python 版本 (需要 3.10+)
-python --version
-
-# 安裝 uv (Python 套件管理器)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 確認 Neo4j 正在運行 (應該已經在 localhost:7687)
-# 檢查連接
-cypher-shell -u neo4j -p YOUR_PASSWORD "RETURN 'Neo4j is running' as status"
-
-# 啟動 Ollama 並安裝模型
-ollama serve
-ollama pull qwen2.5:7b
-ollama pull nomic-embed-text:v1.5
-```
-
-### 2. 環境配置
-
-```bash
-# 複製環境設定檔
-cp .env.example .env
-
-# .env 檔案已經預設配置，包含：
-# NEO4J_PASSWORD=YOUR_PASSWORD (請設定你的 Neo4j 密碼)
-# MODEL_NAME=qwen2.5:7b (Ollama 模型)
-# 請根據你的實際設定修改密碼
-```
-
-### 3. 安裝與啟動
-
-```bash
-# 安裝依賴
-uv sync
-
-# 啟動 MCP 服務器 (STDIO 模式，用於 Claude Desktop)
-uv run graphiti_mcp_server.py --transport stdio
-
-# 或啟動 SSE 模式 (用於 Cursor 等)
-uv run graphiti_mcp_server.py --transport sse --host 0.0.0.0 --port 8000
-```
-
-## 📁 專案結構
+## 🏗️ 專案結構
 
 ```
 graphiti/
-├── 📄 graphiti_mcp_server.py      # 主要 MCP 服務器
-├── 🧲 ollama_embedder.py          # 自定義 Ollama 嵌入器
-├── 🤖 ollama_graphiti_client.py   # 優化的 Ollama 客戶端
-├── ⚙️ .env.example                # 環境配置範本
-├── 📋 pyproject.toml              # Python 專案配置
-├── 📚 docs/                       # 文檔
-│   ├── CLAUDE.md                   # 開發記錄
-│   └── USAGE.md                    # 使用指南
-├── 🧪 tests/                      # 測試文件
-│   ├── test_simple_memory.py       # 基本功能測試
-│   ├── test_mcp_complete.py        # 完整功能測試
-│   ├── test_embedding.py           # 嵌入功能測試
-│   └── ...                         # 其他測試文件
-└── 🔧 tools/                      # 工具腳本
-    ├── debug_ollama.py             # Ollama 調試工具
-    └── performance_diagnose.py     # 性能診斷工具
+├── src/                          # 核心模組
+│   ├── config.py                 # 配置管理系統
+│   ├── exceptions.py             # 結構化異常處理
+│   ├── logging_setup.py          # 日誌記錄系統
+│   ├── ollama_embedder.py        # Ollama 嵌入器
+│   └── ollama_graphiti_client.py # Ollama LLM 客戶端
+├── tools/                        # 實用工具
+├── docs/                         # 文檔
+└── graphiti_mcp_server.py        # 主服務器
 ```
 
-詳細使用說明請參閱 [docs/USAGE.md](docs/USAGE.md)
+## 🚀 快速啟動
 
-## 🔧 MCP 客戶端配置
+### 1. 系統需求
 
-### Claude Desktop 配置
+- **Python**: 3.11+
+- **Neo4j**: 4.0+ (bolt://localhost:7687)
+- **Ollama**: 本地運行 (http://localhost:11434)
+- **必需模型**:
+  - `qwen2.5:7b` (LLM)
+  - `nomic-embed-text:v1.5` (嵌入)
 
-在 `~/.claude/config.json` 中添加：
+### 2. 安裝 Python 和 uv
 
+#### Python 3.11+ 安裝
+
+**macOS:**
+```bash
+# 使用 Homebrew 安裝 (推薦)
+brew install python@3.11
+
+# 或使用 pyenv 管理多版本
+brew install pyenv
+pyenv install 3.11.0
+pyenv global 3.11.0
+
+# 驗證安裝
+python3 --version  # 應顯示 3.11.x
+```
+
+**Windows:**
+```powershell
+# 使用 Chocolatey 安裝
+choco install python --version=3.11.0
+
+# 或使用 Scoop 安裝
+scoop install python
+
+# 或從官網下載安裝
+# https://www.python.org/downloads/windows/
+
+# 驗證安裝
+python --version  # 應顯示 3.11.x
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+# 更新套件列表
+sudo apt update
+
+# 安裝 Python 3.11
+sudo apt install python3.11 python3.11-pip python3.11-venv
+
+# 設定預設版本
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+
+# 驗證安裝
+python3 --version  # 應顯示 3.11.x
+```
+
+#### uv 套件管理器安裝
+
+**macOS/Linux:**
+```bash
+# 使用官方安裝腳本 (推薦)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 或使用 Homebrew (macOS)
+brew install uv
+
+# 或使用 pip 安裝
+pip install uv
+
+# 驗證安裝
+uv --version
+```
+
+**Windows:**
+```powershell
+# 使用 PowerShell 安裝腳本
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# 或使用 Scoop
+scoop install uv
+
+# 或使用 pip 安裝
+pip install uv
+
+# 驗證安裝
+uv --version
+```
+
+### 3. 安裝專案依賴
+
+```bash
+# 克隆專案
+git clone https://github.com/your-username/graphiti-mcp-server.git
+cd graphiti-mcp-server
+
+# 使用 uv 安裝依賴
+uv sync
+
+# 如果沒有 uv，也可以使用傳統方式
+# python -m venv .venv
+# source .venv/bin/activate  # Linux/macOS
+# .venv\Scripts\activate     # Windows
+# pip install -r requirements.txt
+```
+
+#### 安裝其他必需服務
+
+**Neo4j 圖資料庫:**
+```bash
+# macOS (使用 Homebrew)
+brew install neo4j
+brew services start neo4j
+
+# Windows (使用 Chocolatey)
+choco install neo4j-community
+
+# Linux (Ubuntu/Debian)
+wget -O - https://debian.neo4j.com/neotechnology.gpg.key | sudo apt-key add -
+echo 'deb https://debian.neo4j.com stable 4.0' | sudo tee /etc/apt/sources.list.d/neo4j.list
+sudo apt update && sudo apt install neo4j
+
+# Docker 方式 (跨平台)
+docker run -d -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/your_password \
+  neo4j:5
+
+# 驗證安裝 - 瀏覽器開啟 http://localhost:7474
+```
+
+**Ollama 本地 LLM:**
+```bash
+# macOS
+brew install ollama
+ollama serve  # 啟動服務
+
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+ollama serve  # 啟動服務
+
+# Windows - 從官網下載
+# https://ollama.ai/download/windows
+
+# 下載必需模型
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text:v1.5
+
+# 驗證安裝
+ollama list  # 檢查已安裝的模型
+```
+
+### 4. 配置環境
+
+```bash
+# 複製環境變數範例
+cp .env.example .env
+
+# 編輯配置 (設定 Neo4j 密碼等)
+nano .env
+```
+
+### 5. 啟動服務
+
+```bash
+# STDIO 模式 (Claude Desktop 使用)
+uv run python graphiti_mcp_server.py --transport stdio
+
+# SSE 模式 (網頁客戶端使用)
+uv run python graphiti_mcp_server.py --transport sse --port 8000
+
+# 使用自定義配置
+uv run python graphiti_mcp_server.py --config your_config.json --transport sse
+```
+
+## 🔗 MCP 客戶端設定
+
+### 模式選擇
+
+本服務器支援兩種運行模式：
+
+| 模式 | 適用場景 | 優點 | 缺點 |
+|------|----------|------|------|
+| **STDIO** | Claude Desktop, MCP Inspector | 直接整合、穩定 | 僅限本地使用 |
+| **SSE** | 網頁應用、遠端客戶端 | 網路存取、靈活部署 | 需要網路配置 |
+
+---
+
+### 模式一：STDIO 模式（推薦用於 Claude Desktop）
+
+#### Claude Desktop 設定
+
+**配置檔案位置：**
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%/Claude/claude_desktop_config.json`
+
+**完整配置範例：**
 ```json
 {
   "mcpServers": {
     "graphiti-memory": {
-      "transport": "stdio",
-      "command": "/Users/你的用戶名/.local/bin/uv",
+      "command": "uv",
       "args": [
         "run",
-        "--isolated",
-        "--project",
-        ".",
+        "--directory",
+        "/path/to/your/graphiti",
+        "python",
         "graphiti_mcp_server.py",
         "--transport",
         "stdio"
@@ -126,150 +240,562 @@ graphiti/
       "env": {
         "NEO4J_URI": "bolt://localhost:7687",
         "NEO4J_USER": "neo4j",
-        "NEO4J_PASSWORD": "YOUR_PASSWORD"
+        "NEO4J_PASSWORD": "your_neo4j_password",
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "MODEL_NAME": "qwen2.5:7b",
+        "EMBEDDER_MODEL_NAME": "nomic-embed-text:v1.5",
+        "GROUP_ID": "claude_desktop",
+        "SEMAPHORE_LIMIT": "3"
       }
     }
   }
 }
 ```
 
-### Cursor 配置
+**啟動測試：**
+```bash
+# 手動測試 STDIO 模式
+cd /path/to/your/graphiti
+uv run python graphiti_mcp_server.py --transport stdio
 
-在 Cursor 設定中添加：
+# 使用 MCP Inspector 測試
+npx @modelcontextprotocol/inspector uv run python graphiti_mcp_server.py --transport stdio
+```
 
+---
+
+### 模式二：SSE 模式（適用於網頁應用）
+
+#### 基本 SSE 服務器設定
+
+**1. 啟動 SSE 服務器**
+```bash
+# 預設端口 8000
+uv run python graphiti_mcp_server.py --transport sse
+
+# 自定義端口和主機
+uv run python graphiti_mcp_server.py --transport sse --host 0.0.0.0 --port 8080
+
+# 使用配置檔案
+uv run python graphiti_mcp_server.py --config your_config.json --transport sse
+```
+
+**2. 服務器狀態檢查**
+```bash
+# 檢查服務器是否運行
+curl -f http://localhost:8000/health || echo "服務器未運行"
+
+# 查看可用工具
+curl http://localhost:8000/tools
+```
+
+#### Claude Desktop SSE 模式設定
+
+如果你想在 Claude Desktop 中使用 SSE 模式（適用於遠端服務器或容器化部署），可以這樣配置：
+
+**配置檔案位置：**
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%/Claude/claude_desktop_config.json`
+
+**SSE 模式配置範例：**
 ```json
 {
   "mcpServers": {
-    "graphiti-memory": {
-      "transport": "sse",
-      "url": "http://localhost:8000/sse"
+    "graphiti-memory-sse": {
+      "command": "curl",
+      "args": [
+        "-X", "POST",
+        "-H", "Content-Type: application/json",
+        "-d", "{\"method\":\"initialize\",\"params\":{}}",
+        "http://localhost:8000/mcp"
+      ],
+      "env": {
+        "MCP_SERVER_URL": "http://localhost:8000"
+      }
     }
   }
 }
 ```
 
-## 🛠️ 可用工具
-
-| 工具名稱 | 功能描述 | 使用範例 |
-|---------|---------|----------|
-| `add_memory_simple` | 添加記憶到知識圖譜 | 儲存會話內容、學習筆記 |
-| `search_memory_nodes` | 搜索實體節點 | 查找特定人物、概念 |
-| `search_memory_facts` | 搜索關係事實 | 查找實體間關係 |
-| `get_episodes` | 獲取記憶段 | 回顧歷史對話 |
-| `clear_graph` | 清空知識圖譜 | 重置記憶系統 |
-| `test_connection` | 測試連接狀態 | 診斷系統問題 |
-
-## 📊 使用範例
-
-### 添加記憶
-```
-使用 add_memory_simple:
-- name: "專案會議記錄"
-- episode_body: "今天討論了新功能的實作方案，決定使用 React + Node.js 架構"
-- group_id: "project_alpha"
+**遠端服務器 SSE 配置：**
+```json
+{
+  "mcpServers": {
+    "graphiti-memory-remote": {
+      "transport": {
+        "type": "sse",
+        "url": "http://your-server-ip:8000/sse"
+      },
+      "env": {
+        "MCP_API_KEY": "your_api_key_if_needed"
+      }
+    }
+  }
+}
 ```
 
-### 搜索記憶
-```
-使用 search_memory_nodes:
-- query: "React"
-- group_ids: ["project_alpha"]
-→ 找到相關的技術決策和討論記錄
-```
-
-### 查找關係
-```
-使用 search_memory_facts:
-- query: "使用"
-→ 找到 "React 使用於前端開發" 等關係事實
-```
-
-## ⚙️ 環境變數說明
-
-### Neo4j 配置
-```env
-NEO4J_URI=bolt://localhost:7687          # Neo4j 連接 URI
-NEO4J_USER=neo4j                         # Neo4j 使用者名稱
-NEO4J_PASSWORD=YOUR_PASSWORD             # Neo4j 密碼 (請設定你的密碼)
+**使用 Docker 部署的 SSE 配置：**
+```json
+{
+  "mcpServers": {
+    "graphiti-memory-docker": {
+      "transport": {
+        "type": "sse",
+        "url": "http://localhost:8000/sse"
+      },
+      "env": {
+        "DOCKER_CONTAINER": "graphiti-mcp"
+      }
+    }
+  }
+}
 ```
 
-### Ollama 配置
-```env
-MODEL_NAME=qwen2.5:7b                   # 主要 LLM 模型
-EMBEDDER_MODEL_NAME=nomic-embed-text:v1.5 # 嵌入模型
-OLLAMA_BASE_URL=http://localhost:11434   # Ollama 服務地址
-LLM_TEMPERATURE=0.1                      # LLM 溫度參數
+#### 網頁客戶端整合
+
+**JavaScript 客戶端範例：**
+```javascript
+// SSE 連接
+const eventSource = new EventSource('http://localhost:8000/sse');
+
+eventSource.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+    console.log('收到訊息:', data);
+};
+
+// 調用 MCP 工具
+async function addMemory(name, content, groupId = 'web_client') {
+    const response = await fetch('http://localhost:8000/call', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            method: 'tools/call',
+            params: {
+                name: 'add_memory_simple',
+                arguments: {
+                    name: name,
+                    episode_body: content,
+                    group_id: groupId
+                }
+            }
+        })
+    });
+
+    return await response.json();
+}
+
+// 搜尋記憶
+async function searchMemory(query, maxResults = 10) {
+    const response = await fetch('http://localhost:8000/call', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            method: 'tools/call',
+            params: {
+                name: 'search_memory_nodes',
+                arguments: {
+                    query: query,
+                    max_nodes: maxResults
+                }
+            }
+        })
+    });
+
+    return await response.json();
+}
 ```
 
-### 系統配置
-```env
-GROUP_ID=your_namespace                  # 預設群組 ID
-SEMAPHORE_LIMIT=3                        # 並發限制
-GRAPHITI_TELEMETRY_ENABLED=false         # 停用遙測
+#### Docker 部署（SSE 模式）
+
+**Dockerfile 範例：**
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY . .
+
+RUN pip install uv
+RUN uv sync
+
+EXPOSE 8000
+
+CMD ["uv", "run", "python", "graphiti_mcp_server.py", "--transport", "sse", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-## 🔍 故障排除
+**docker-compose.yml 範例：**
+```yaml
+version: '3.8'
+services:
+  graphiti-mcp:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=your_password
+      - OLLAMA_BASE_URL=http://ollama:11434
+    depends_on:
+      - neo4j
+      - ollama
+
+  neo4j:
+    image: neo4j:5
+    ports:
+      - "7687:7687"
+      - "7474:7474"
+    environment:
+      - NEO4J_AUTH=neo4j/your_password
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    command: ["serve"]
+
+volumes:
+  ollama_data:
+```
+
+### 其他 MCP 客戶端設定
+
+#### 1. Inspector 模式（調試用）
+```bash
+# 使用 MCP Inspector 測試
+npx @modelcontextprotocol/inspector uv run python graphiti_mcp_server.py --transport stdio
+```
+
+#### 2. 自定義 MCP 客戶端
+```python
+from mcp import ClientSession, StdioServerParameters
+import asyncio
+
+async def main():
+    server_params = StdioServerParameters(
+        command="uv",
+        args=[
+            "run", "python", "graphiti_mcp_server.py",
+            "--transport", "stdio"
+        ],
+        env={
+            "NEO4J_PASSWORD": "your_password"
+        }
+    )
+
+    async with ClientSession(server_params) as session:
+        # 使用 MCP 工具
+        result = await session.call_tool(
+            "add_memory_simple",
+            {
+                "name": "測試記憶",
+                "episode_body": "這是一個測試記憶片段",
+                "group_id": "test_group"
+            }
+        )
+        print(result)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### 配置檢查
+
+啟動 Claude Desktop 後，你應該能在工具列表中看到以下 MCP 工具：
+
+- `add_memory_simple` - 添加記憶片段
+- `search_memory_nodes` - 搜尋記憶節點
+- `search_memory_facts` - 搜尋記憶事實
+- `get_episodes` - 獲取記憶片段
+- `test_connection` - 測試連接
+- `clear_graph` - 清除圖資料庫
+
+### 故障排除
+
+如果 MCP 連接失敗，請檢查：
+
+1. **路徑設定**
+   ```bash
+   # 確認專案路徑正確
+   which uv
+   cd /path/to/your/graphiti && pwd
+   ```
+
+2. **環境變數**
+   ```bash
+   # 測試環境變數載入
+   echo $NEO4J_PASSWORD
+   ```
+
+3. **服務狀態**
+   ```bash
+   # 檢查 Neo4j 和 Ollama 服務
+   neo4j status
+   ollama list
+   ```
+
+4. **手動測試**
+   ```bash
+   # 手動啟動服務器測試
+   uv run python graphiti_mcp_server.py --transport stdio
+   ```
+
+## 🔧 配置管理
+
+### JSON 配置檔案範例
+
+```json
+{
+  "ollama": {
+    "model": "qwen2.5:7b",
+    "base_url": "http://localhost:11434",
+    "temperature": 0.1
+  },
+  "embedder": {
+    "model": "nomic-embed-text:v1.5",
+    "base_url": "http://localhost:11434",
+    "dimensions": 768
+  },
+  "neo4j": {
+    "uri": "bolt://localhost:7687",
+    "user": "neo4j",
+    "password": "your_neo4j_password"
+  },
+  "logging": {
+    "level": "INFO",
+    "file_path": "logs/graphiti_mcp.log",
+    "backup_count": 30,
+    "rotation_type": "time",
+    "rotation_interval": "midnight"
+  }
+}
+```
+
+### 環境變數配置 (`.env`)
+
+```bash
+# Neo4j 設定
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_neo4j_password
+
+# Ollama 設定
+OLLAMA_BASE_URL=http://localhost:11434
+MODEL_NAME=qwen2.5:7b
+EMBEDDER_MODEL_NAME=nomic-embed-text:v1.5
+
+# Graphiti 設定
+GROUP_ID=your_group_id
+SEMAPHORE_LIMIT=3
+```
+
+## 📚 API 功能
+
+### 記憶管理
+
+- **`add_memory_simple`** - 新增記憶片段到知識圖譜
+  ```json
+  {
+    "name": "學習 Python",
+    "episode_body": "今天學習了 Python 的類別和物件導向程式設計概念",
+    "group_id": "學習記錄"
+  }
+  ```
+
+- **`search_memory_nodes`** - 搜尋記憶節點 (實體)
+  ```json
+  {
+    "query": "Python 程式設計",
+    "max_nodes": 10,
+    "group_ids": ["學習記錄"]
+  }
+  ```
+
+- **`search_memory_facts`** - 搜尋記憶事實 (關係)
+  ```json
+  {
+    "query": "程式語言學習",
+    "max_facts": 10,
+    "group_ids": ["學習記錄"]
+  }
+  ```
+
+- **`get_episodes`** - 獲取最近的記憶片段
+  ```json
+  {
+    "last_n": 5,
+    "group_id": "學習記錄"
+  }
+  ```
+
+### 系統管理
+
+- **`test_connection`** - 測試系統連接狀態
+- **`clear_graph`** - 清除所有圖資料庫資料
+
+## 🔍 搜尋功能詳解
+
+### 語意搜尋特色
+
+- **智能理解**: 不只是關鍵字匹配，能理解查詢的語意
+- **向量嵌入**: 使用 Ollama 嵌入模型進行向量相似度計算
+- **混合搜尋**: 結合關鍵字搜尋和向量搜尋的優勢
+- **相關性排序**: 自動按相關度排序搜尋結果
+
+### 搜尋範例
+
+```bash
+# 搜尋程式相關記憶
+query: "Python 學習"
+# 能找到: "程式設計課程", "編程技巧", "開發經驗" 等相關內容
+
+# 搜尋工作相關事實
+query: "專案管理"
+# 能找到: "團隊協作", "進度追蹤", "需求分析" 等關聯關係
+```
+
+## 📊 監控和日誌
+
+### 結構化日誌
+
+#### 日誌檔案命名規則
+
+系統使用按日期分割的日誌檔案，避免單一檔案過大：
+
+```bash
+logs/
+├── graphiti_mcp_2025-01-15.log  # 今天的日誌
+├── graphiti_mcp_2025-01-14.log  # 昨天的日誌
+├── graphiti_mcp_2025-01-13.log  # 前天的日誌
+└── ...                          # 保留 30 天
+
+# 查看今天的日誌
+tail -f logs/graphiti_mcp_$(date +%Y-%m-%d).log
+
+# 查看所有日誌
+tail -f logs/graphiti_mcp_*.log
+
+# 搜尋特定操作（所有日期）
+grep "add_memory" logs/graphiti_mcp_*.log
+
+# 搜尋今天的特定操作
+grep "add_memory" logs/graphiti_mcp_$(date +%Y-%m-%d).log
+```
+
+#### 日誌輪轉配置
+
+在配置檔案中可以調整日誌輪轉設定：
+
+```json
+{
+  "logging": {
+    "rotation_type": "time",      // "time" 或 "size"
+    "rotation_interval": "midnight", // 輪轉時間點
+    "backup_count": 30,           // 保留檔案數量
+    "max_file_size": 10485760     // 大小輪轉時的檔案大小限制
+  }
+}
+```
+
+**時間輪轉選項：**
+- `midnight` - 每天午夜輪轉 (預設)
+- `H` - 每小時輪轉
+- `D` - 每天輪轉
+- `W0`-`W6` - 每週特定日期輪轉
+
+**大小輪轉：**
+- 檔案達到指定大小時自動輪轉
+- 適合高頻使用的場景
+
+### 性能監控
+
+- ⏱️ **操作執行時間追蹤**
+- 📈 **記憶添加性能指標**
+- 🔍 **Neo4j 查詢性能分析**
+- 🧲 **嵌入生成效能監控**
+
+## 🧪 測試
+
+```bash
+# 運行核心測試
+uv run python -m pytest tests/
+
+# 運行完整集成測試
+uv run python tests/comprehensive_test.py
+
+# 運行性能測試
+uv run python tests/model_performance_test.py
+```
+
+## 🔧 故障排除
 
 ### 常見問題
 
-**Q: 連接失敗怎麼辦？**
-```bash
-# 檢查 Neo4j 是否運行
-docker ps | grep neo4j
+1. **Neo4j 連接失敗**
+   - 檢查 Neo4j 服務是否運行
+   - 確認密碼和連接設定正確
 
-# 檢查 Ollama 是否運行
-curl http://localhost:11434/api/tags
-```
+2. **Ollama 連接失敗**
+   - 確認 Ollama 服務運行: `ollama serve`
+   - 檢查模型是否已下載: `ollama pull qwen2.5:7b`
 
-**Q: 搜索沒有結果？**
-```bash
-# 確認資料已儲存
-cypher-shell -u neo4j -p YOUR_PASSWORD "MATCH (n) RETURN count(n)"
+3. **搜尋無結果**
+   - 確認已有記憶資料
+   - 檢查 group_ids 篩選條件
+   - 查看日誌檔案了解詳細錯誤
 
-# 檢查節點標籤
-cypher-shell -u neo4j -p YOUR_PASSWORD "MATCH (n) RETURN DISTINCT labels(n)"
-```
-
-**Q: Pydantic 驗證錯誤？**
-- 檢查 `ollama_graphiti_client.py` 中的 ID 解析邏輯
-- 確認 Ollama 模型回應格式正確
-
-### 除錯模式
+### 日誌分析
 
 ```bash
-# 啟用除錯模式
-export DEBUG=1
-uv run graphiti_mcp_server.py --transport sse
+# 查看錯誤日誌
+grep "ERROR\|WARN" logs/graphiti_mcp.log
 
-# 檢視詳細日誌
-tail -f /tmp/graphiti_debug.log
+# 監控性能
+grep "duration" logs/graphiti_mcp.log
 ```
 
-## 🎯 最佳實踐
+## 🛠️ 開發工具
 
-### 記憶組織
-- 使用有意義的 `group_id` 進行分類
-- 為不同專案或主題建立獨立群組
-- 定期清理無用的記憶資料
+```bash
+# 性能診斷
+uv run python tools/performance_diagnose.py
 
-### 效能優化
-- 調整 `SEMAPHORE_LIMIT` 控制並發數
-- 使用適合的 LLM 溫度參數
-- 定期重建 Neo4j 索引
+# 結構檢查
+uv run python tools/inspect_schema.py
 
-### 安全建議
-- 設定強密碼保護 Neo4j
-- 避免在記憶中儲存敏感資訊
-- 定期備份知識圖譜資料
+# 狀態報告
+uv run python tools/final_status_report.py
+```
+
+## 🔄 與原版差異
+
+### 優化改進
+
+- 🏗️ **企業級架構**: 模組化設計和結構化異常處理
+- 🇹🇼 **完整中文化**: API 回應和使用者介面全中文
+- ⚡ **性能優化**: 智能配置管理和連接池
+- 📊 **完整監控**: 結構化日誌和性能追蹤
+- 🔍 **改進搜尋**: 使用正確的 Graphiti API 進行語意搜尋
+
+### 保持相容
+
+- ✅ **API 相容**: 與原版 MCP 工具參數完全相容
+- ✅ **功能完整**: 保留所有原版核心功能
+- ✅ **配置彈性**: 支援 JSON 配置和環境變數
+
+## 📜 授權
+
+MIT License
 
 ## 🤝 貢獻
 
 歡迎提交 Issue 和 Pull Request！
 
-## 📄 授權
-
-本專案採用與 Graphiti 主專案相同的授權條款。
-
 ---
 
-**💡 提示**: 這是基於 [Graphiti](https://github.com/getzep/graphiti) 的本地化實現，專為中文使用者和本地 LLM 環境優化。
+**專為台灣開發者打造的本地化知識圖譜解決方案** 🇹🇼

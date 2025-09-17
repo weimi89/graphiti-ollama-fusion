@@ -40,8 +40,8 @@ env/
 *~
 .DS_Store
 
-# Claude Code local settings
-.claude/settings.local.json
+# Claude Code settings
+.claude/
 
 # Testing
 .pytest_cache/
@@ -84,3 +84,38 @@ cython_debug/
 *.local
 temp/
 tmp/
+
+# Graphiti MCP 專案特定檔案
+# 配置檔案包含敏感資訊
+configs/
+.env.production
+
+# Neo4j 密碼和敏感資訊
+*password*
+*secret*
+*key*
+
+# 原版參考檔案和備份
+backups/
+*_原本版.py
+*_backup.py
+*_old.py
+
+# 測試和調試檔案
+tests/
+test_*.py
+debug_*.py
+*_test.json
+
+# Neo4j 本地資料庫檔案（如果有）
+data/
+plugins/
+import/
+
+# Ollama 模型檔案（如果下載到專案中）
+models/
+*.gguf
+
+# 建置和部署檔案
+*.tar.gz
+*.zip

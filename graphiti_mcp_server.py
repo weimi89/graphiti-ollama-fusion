@@ -2,115 +2,177 @@
 """
 Graphiti Ollama MCP Server - 整合 Ollama 本地 LLM 的 MCP 服務器
 基於我們的 Graphiti + Ollama 解決方案
+
+整合 Ollama 本地 LLM 的知識圖譜記憶管理服務
 """
 
 import argparse
 import asyncio
-import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
-from typing import Any, List
+from typing import Any, List, Optional
 
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
+# 導入新的配置和錯誤處理系統
+from src.config import GraphitiConfig, load_config
+from src.exceptions import (
+    GraphitiMCPError, OllamaError, Neo4jError, EmbeddingError,
+    handle_exception, create_error_response, CommonErrors
+)
+from src.logging_setup import (
+    setup_logging, log_system_info, log_config_summary,
+    log_operation_start, log_operation_success, log_operation_error,
+    performance_logger
+)
+
 # 使用我們的自定義 Ollama 組件
-from ollama_graphiti_client import OptimizedOllamaClient
-from ollama_embedder import OllamaEmbedder
+from src.ollama_graphiti_client import OptimizedOllamaClient
+from src.ollama_embedder import OllamaEmbedder
 from graphiti_core import Graphiti
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EpisodicNode
+from graphiti_core.search.search_config_recipes import (
+    NODE_HYBRID_SEARCH_NODE_DISTANCE,
+    NODE_HYBRID_SEARCH_RRF,
+)
+from graphiti_core.search.search_filters import SearchFilters
 
 load_dotenv()
 
+# 全局配置和日誌
+app_config: GraphitiConfig = None
+logger = None
+
 # MCP 工具的參數模型
 class AddMemoryArgs(BaseModel):
-    name: str = Field(description="Name of the episode/memory")
-    episode_body: str = Field(description="Content of the episode/memory")
-    source_description: str = Field(default="MCP Server", description="Source description")
-    group_id: str = Field(default="default", description="Group ID for the memory")
+    name: str = Field(description="記憶片段的名稱")
+    episode_body: str = Field(description="記憶片段的內容")
+    source_description: str = Field(default="MCP Server", description="來源描述")
+    group_id: str = Field(default="default", description="記憶分組 ID")
 
 class SearchNodesArgs(BaseModel):
-    query: str = Field(description="Search query")
-    max_nodes: int = Field(default=10, description="Maximum number of nodes to return")
-    group_ids: List[str] = Field(default_factory=list, description="Group IDs to filter by")
+    query: str = Field(description="搜尋關鍵字")
+    max_nodes: int = Field(default=10, description="返回節點的最大數量")
+    group_ids: List[str] = Field(default_factory=list, description="用於篩選的分組 ID")
 
 class SearchFactsArgs(BaseModel):
-    query: str = Field(description="Search query")
-    max_facts: int = Field(default=10, description="Maximum number of facts to return")
-    group_ids: List[str] = Field(default_factory=list, description="Group IDs to filter by")
+    query: str = Field(description="搜尋關鍵字")
+    max_facts: int = Field(default=10, description="返回事實的最大數量")
+    group_ids: List[str] = Field(default_factory=list, description="用於篩選的分組 ID")
 
 class GetEpisodesArgs(BaseModel):
-    last_n: int = Field(default=10, description="Number of recent episodes to retrieve")
-    group_id: str = Field(default="", description="Group ID to filter by")
+    last_n: int = Field(default=10, description="獲取最近記憶片段的數量")
+    group_id: str = Field(default="", description="用於篩選的分組 ID")
 
 # 全局變量
 graphiti_instance: Graphiti = None
 
+
+def initialize_system(config_path: Optional[str] = None):
+    """初始化系統配置和日誌"""
+    global app_config, logger
+
+    # 載入配置
+    app_config = load_config(config_path)
+
+    # 設置日誌系統
+    log_manager = setup_logging(app_config.logging)
+    logger = log_manager.get_logger("main")
+
+    # 記錄系統啟動信息
+    log_system_info()
+    log_config_summary(app_config.get_summary())
+
+    # 驗證配置
+    if not app_config.validate():
+        logger.warning("配置驗證失敗，某些功能可能無法正常運作")
+    else:
+        logger.info("✅ 系統配置驗證通過")
+
+    return app_config
+
 async def initialize_graphiti():
-    """初始化 Graphiti 實例使用 Ollama"""
-    global graphiti_instance
+    """初始化 Graphiti 實例使用配置系統"""
+    global graphiti_instance, app_config, logger
 
     if graphiti_instance is not None:
         return graphiti_instance
 
-    print("🚀 正在初始化 Graphiti + Ollama MCP 服務器...")
+    start_time = time.time()
+    log_operation_start("initialize_graphiti")
 
     try:
         # 初始化 LLM 客戶端
-        model_name = os.getenv('MODEL_NAME', 'qwen2.5:14b')
-        print(f"📡 使用 LLM 模型: {model_name}")
+        logger.info(f"📡 使用 LLM 模型: {app_config.ollama.model}")
 
         llm_config = LLMConfig(
             api_key="not-needed",
-            model=model_name,
-            base_url=os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434'),
-            temperature=float(os.getenv('LLM_TEMPERATURE', '0.1'))
+            model=app_config.ollama.model,
+            base_url=app_config.ollama.base_url,
+            temperature=app_config.ollama.temperature,
+            max_tokens=app_config.ollama.max_tokens
         )
         llm_client = OptimizedOllamaClient(llm_config)
 
         # 初始化嵌入器
-        embedder_model = os.getenv('EMBEDDER_MODEL_NAME', 'nomic-embed-text:v1.5')
-        print(f"🧲 使用嵌入模型: {embedder_model}")
+        logger.info(f"🧲 使用嵌入模型: {app_config.embedder.model}")
 
         embedder = OllamaEmbedder(
-            model=embedder_model,
-            base_url="http://localhost:11434"
+            model=app_config.embedder.model,
+            base_url=app_config.embedder.base_url,
+            dimensions=app_config.embedder.dimensions
         )
 
         # 測試連接
         connected = await embedder.test_connection()
         if not connected:
-            raise Exception("無法連接到 Ollama 嵌入器")
+            raise CommonErrors.ollama_connection_failed(app_config.embedder.base_url)
 
-        # 初始化 Graphiti
+        # 初始化 Graphiti (注意：Graphiti 不支援 database 參數)
+        logger.info("初始化 Graphiti 核心...")
         graphiti_instance = Graphiti(
-            uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
-            user=os.getenv('NEO4J_USER', 'neo4j'),
-            password=os.getenv('NEO4J_PASSWORD', ''),
+            uri=app_config.neo4j.uri,
+            user=app_config.neo4j.user,
+            password=app_config.neo4j.password,
             llm_client=llm_client,
             embedder=embedder
         )
 
         # 建立索引
+        logger.info("建立 Neo4j 索引和約束...")
         await graphiti_instance.build_indices_and_constraints()
-        print("✅ Graphiti + Ollama MCP 服務器初始化完成")
+
+        duration = time.time() - start_time
+        log_operation_success("initialize_graphiti", duration)
+        logger.info("✅ Graphiti + Ollama MCP 服務器初始化完成")
 
         return graphiti_instance
 
     except Exception as e:
-        print(f"❌ 初始化失敗: {e}")
-        raise
+        duration = time.time() - start_time
+        log_operation_error("initialize_graphiti", e, duration=duration)
+
+        # 轉換為結構化異常
+        if isinstance(e, GraphitiMCPError):
+            raise e
+        else:
+            raise handle_exception(e, "Graphiti 初始化失敗")
 
 # 創建 FastMCP 應用
 mcp = FastMCP("graphiti-ollama-memory")
 
 @mcp.tool()
 async def add_memory_simple(args: AddMemoryArgs) -> dict:
-    """添加記憶到 Graphiti"""
+    """添加記憶到 Graphiti（使用新的錯誤處理系統）"""
+    start_time = time.time()
+    log_operation_start("add_memory", name=args.name, group_id=args.group_id)
+
     try:
         graphiti = await initialize_graphiti()
 
@@ -122,18 +184,42 @@ async def add_memory_simple(args: AddMemoryArgs) -> dict:
             reference_time=datetime.now(timezone.utc)
         )
 
+        duration = time.time() - start_time
+        nodes_count = len(result.node_ids) if hasattr(result, 'node_ids') and result.node_ids else 0
+        edges_count = len(result.edge_ids) if hasattr(result, 'edge_ids') and result.edge_ids else 0
+
+        log_operation_success(
+            "add_memory",
+            duration,
+            episode_id=getattr(result, 'episode_id', None),
+            nodes_extracted=nodes_count,
+            edges_created=edges_count
+        )
+
+        # 記錄性能指標
+        performance_logger.log_memory_add_performance(
+            len(args.episode_body), duration, True
+        )
+
         return {
-            "message": f"Episode '{args.name}' added successfully",
-            "episode_id": result.episode_id if hasattr(result, 'episode_id') else None,
-            "nodes_extracted": len(result.node_ids) if hasattr(result, 'node_ids') and result.node_ids else 0,
-            "edges_created": len(result.edge_ids) if hasattr(result, 'edge_ids') and result.edge_ids else 0
+            "success": True,
+            "message": f"記憶 '{args.name}' 新增成功",
+            "episode_id": getattr(result, 'episode_id', None),
+            "nodes_extracted": nodes_count,
+            "edges_created": edges_count,
+            "duration": round(duration, 2)
         }
 
     except Exception as e:
-        return {
-            "message": f"Error adding episode: {str(e)}",
-            "error": True
-        }
+        duration = time.time() - start_time
+        log_operation_error("add_memory", e, name=args.name, duration=duration)
+
+        # 記錄失敗的性能指標
+        performance_logger.log_memory_add_performance(
+            len(args.episode_body), duration, False
+        )
+
+        return create_error_response(e, "新增記憶失敗")
 
 @mcp.tool()
 async def search_memory_nodes(args: SearchNodesArgs) -> dict:
@@ -141,44 +227,45 @@ async def search_memory_nodes(args: SearchNodesArgs) -> dict:
     try:
         graphiti = await initialize_graphiti()
 
-        # 使用基本的文字搜索（繞過向量搜索問題）
-        query_text = """
-        MATCH (n:Entity)
-        WHERE ($query = '' OR n.name CONTAINS $query OR n.summary CONTAINS $query)
-        AND ($group_ids IS NULL OR n.group_id IN $group_ids)
-        RETURN n.name as name,
-               n.uuid as uuid,
-               n.created_at as created_at,
-               n.summary as summary
-        LIMIT $limit
-        """
+        # 使用 Graphiti 的 _search API 進行語意搜索
+        effective_group_ids = args.group_ids if args.group_ids else []
 
-        group_filter = args.group_ids if args.group_ids else None
-        results = await graphiti.driver.execute_query(
-            query_text,
+        # 配置搜索參數
+        search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
+        search_config.limit = args.max_nodes
+
+        filters = SearchFilters()
+
+        # 使用 Graphiti 的 _search API
+        search_results = await graphiti._search(
             query=args.query,
-            group_ids=group_filter,
-            limit=args.max_nodes
+            config=search_config,
+            group_ids=effective_group_ids,
+            center_node_uuid=None,
+            search_filter=filters,
         )
 
         nodes = []
-        if results and results.records:
-            for record in results.records:
-                nodes.append({
-                    "name": record["name"],
-                    "uuid": record["uuid"],
-                    "created_at": str(record.get("created_at", "")),
-                    "summary": record.get("summary", "")
-                })
+        if search_results.nodes:
+            for node in search_results.nodes:
+                node_data = {
+                    "name": node.name,
+                    "uuid": str(node.uuid),
+                    "created_at": str(node.created_at) if hasattr(node, 'created_at') else "",
+                    "summary": getattr(node, 'summary', '') or '',
+                    "group_id": getattr(node, 'group_id', ''),
+                    "labels": getattr(node, 'labels', [])
+                }
+                nodes.append(node_data)
 
         return {
-            "message": f"Found {len(nodes)} relevant nodes" if nodes else "No relevant nodes found",
+            "message": f"找到 {len(nodes)} 個相關節點" if nodes else "未找到相關節點",
             "nodes": nodes
         }
 
     except Exception as e:
         return {
-            "message": f"Error searching nodes: {str(e)}",
+            "message": f"搜尋節點時發生錯誤: {str(e)}",
             "nodes": [],
             "error": True
         }
@@ -189,48 +276,46 @@ async def search_memory_facts(args: SearchFactsArgs) -> dict:
     try:
         graphiti = await initialize_graphiti()
 
-        # 搜索包含查詢關鍵字的關係事實
-        query_text = """
-        MATCH (a:Entity)-[r]->(b:Entity)
-        WHERE (r.fact IS NOT NULL AND ($query = '' OR r.fact CONTAINS $query))
-        AND ($group_ids IS NULL OR a.group_id IN $group_ids)
-        RETURN r.fact as fact,
-               a.name as source_entity,
-               b.name as target_entity,
-               COALESCE(r.uuid, 'no-uuid') as uuid,
-               r.created_at as created_at,
-               type(r) as relation_type
-        LIMIT $limit
-        """
+        # 使用 Graphiti 的 search API 進行語意搜索
+        effective_group_ids = args.group_ids if args.group_ids else []
 
-        group_filter = args.group_ids if args.group_ids else None
-        results = await graphiti.driver.execute_query(
-            query_text,
+        # 使用 Graphiti 的搜索 API
+        relevant_edges = await graphiti.search(
+            group_ids=effective_group_ids,
             query=args.query,
-            group_ids=group_filter,
-            limit=args.max_facts
+            num_results=args.max_facts
         )
 
         facts = []
-        if results and results.records:
-            for record in results.records:
-                facts.append({
-                    "fact": record["fact"],
-                    "source_entity": record["source_entity"],
-                    "target_entity": record["target_entity"],
-                    "uuid": record["uuid"],
-                    "created_at": str(record.get("created_at", "")),
-                    "relation_type": record.get("relation_type", "UNKNOWN")
-                })
+        for edge in relevant_edges:
+            # 需要檢查 edge 是否是 EntityEdge 且有 fact 屬性
+            if hasattr(edge, 'fact') and edge.fact:
+                fact_data = {
+                    "fact": edge.fact,
+                    "uuid": str(edge.uuid),
+                    "created_at": str(edge.created_at) if hasattr(edge, 'created_at') else "",
+                    "relation_type": type(edge).__name__
+                }
+
+                # 嘗試獲取來源和目標實體名稱
+                if hasattr(edge, 'source_node_uuid') and hasattr(edge, 'target_node_uuid'):
+                    # 可以進一步查詢節點名稱，但為了效能先使用 UUID
+                    fact_data["source_entity"] = str(edge.source_node_uuid)
+                    fact_data["target_entity"] = str(edge.target_node_uuid)
+                else:
+                    fact_data["source_entity"] = "unknown"
+                    fact_data["target_entity"] = "unknown"
+
+                facts.append(fact_data)
 
         return {
-            "message": f"Found {len(facts)} relevant facts" if facts else "No relevant facts found",
+            "message": f"找到 {len(facts)} 個相關事實" if facts else "未找到相關事實",
             "facts": facts
         }
 
     except Exception as e:
         return {
-            "message": f"Error searching facts: {str(e)}",
+            "message": f"搜尋事實時發生錯誤: {str(e)}",
             "facts": [],
             "error": True
         }
@@ -271,13 +356,13 @@ async def get_episodes(args: GetEpisodesArgs) -> dict:
                 })
 
         return {
-            "message": f"Found {len(episodes)} episodes",
+            "message": f"找到 {len(episodes)} 個記憶片段",
             "episodes": episodes
         }
 
     except Exception as e:
         return {
-            "message": f"Error retrieving episodes: {str(e)}",
+            "message": f"獲取記憶片段時發生錯誤: {str(e)}",
             "episodes": [],
             "error": True
         }
@@ -295,12 +380,12 @@ async def clear_graph() -> dict:
         await graphiti.build_indices_and_constraints()
 
         return {
-            "message": "Graph cleared successfully and indices rebuilt"
+            "message": "圖資料庫已清除並重建索引"
         }
 
     except Exception as e:
         return {
-            "message": f"Error clearing graph: {str(e)}",
+            "message": f"清除圖資料庫時發生錯誤: {str(e)}",
             "error": True
         }
 
@@ -318,40 +403,72 @@ async def test_connection() -> dict:
         llm_status = "OK"  # 如果能初始化就表示連接正常
 
         return {
-            "message": "Connection test completed",
+            "message": "連接測試完成",
             "neo4j": neo4j_status,
             "ollama_llm": llm_status,
-            "embedder": "OK"
+            "embedder": "正常"
         }
 
     except Exception as e:
         return {
-            "message": f"Connection test failed: {str(e)}",
+            "message": f"連接測試失敗: {str(e)}",
             "error": True
         }
 
 async def main():
-    """啟動 MCP 服務器"""
+    """啟動 MCP 服務器（使用新配置系統）"""
     parser = argparse.ArgumentParser(description="Graphiti Ollama MCP Server")
-    parser.add_argument("--transport", default="stdio", choices=["stdio", "sse"])
-    parser.add_argument("--host", default="localhost")
-    parser.add_argument("--port", type=int, default=3001)
+    parser.add_argument("--transport", choices=["stdio", "sse"], help="Transport protocol")
+    parser.add_argument("--host", help="Server host")
+    parser.add_argument("--port", type=int, help="Server port")
+    parser.add_argument("--config", help="Configuration file path")
 
     args = parser.parse_args()
 
-    # Set host and port if provided
-    if hasattr(mcp, 'settings'):
-        if args.host != 'localhost':
-            mcp.settings.host = args.host
-        if args.port != 3001:
-            mcp.settings.port = args.port
+    try:
+        # 初始化系統配置
+        # 調整配置檔案路徑
+        config_path = args.config
+        if config_path and not config_path.startswith('/') and not config_path.startswith('configs/'):
+            config_path = f"configs/{config_path}"
 
-    if args.transport == "stdio":
-        # STDIO 模式
-        await mcp.run_stdio_async()
-    elif args.transport == "sse":
-        # SSE 模式
-        await mcp.run_sse_async()
+        config = initialize_system(config_path)
+
+        # 使用命令行參數覆蓋配置
+        if args.transport:
+            config.server.transport = args.transport
+        if args.host:
+            config.server.host = args.host
+        if args.port:
+            config.server.port = args.port
+
+        logger.info(f"🚀 啟動 Graphiti MCP Server")
+        logger.info(f"   傳輸協議: {config.server.transport}")
+        logger.info(f"   服務地址: {config.server.host}:{config.server.port}")
+
+        # 設置 FastMCP 配置
+        if hasattr(mcp, 'settings'):
+            if config.server.host != 'localhost':
+                mcp.settings.host = config.server.host
+            if config.server.port != 3001:
+                mcp.settings.port = config.server.port
+
+        # 啟動服務器
+        if config.server.transport == "stdio":
+            logger.info("啟動 STDIO 模式...")
+            await mcp.run_stdio_async()
+        elif config.server.transport == "sse":
+            logger.info("啟動 SSE 模式...")
+            await mcp.run_sse_async()
+        else:
+            raise ValueError(f"不支援的傳輸協議: {config.server.transport}")
+
+    except Exception as e:
+        if logger:
+            logger.error(f"服務器啟動失敗: {e}")
+        else:
+            print(f"❌ 服務器啟動失敗: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     asyncio.run(main())

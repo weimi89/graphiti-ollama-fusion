@@ -36,24 +36,28 @@ class OllamaEmbedder(EmbedderClient):
         self.dimensions = dimensions
         self.embed_url = f"{self.base_url}/api/embed"
 
-    async def create(self, input_data: str | list[str]) -> list[float] | list[list[float]]:
+    async def create(self, input_data: str | list[str]) -> list[float]:
         """
-        創建嵌入向量（兼容新版本接口）
+        創建嵌入向量（兼容 Graphiti 介面）
 
         Args:
             input_data: 要嵌入的文本（字符串）或文本列表
 
         Returns:
-            單個向量（如果輸入是字符串）或向量列表（如果輸入是列表）
+            單個向量 - 無論輸入格式如何，總是返回第一個結果的向量
         """
-        # 🆕 適配新版本的接口
+        # 🆕 修復：無論輸入格式如何，create() 總是返回單個向量
         if isinstance(input_data, str):
-            # 新版本：單個字符串輸入，返回單個向量
+            # 字符串輸入，嵌入並返回向量
             embeddings = await self._create_embeddings([input_data])
             return embeddings[0] if embeddings else []
         else:
-            # 向後兼容：列表輸入，返回向量列表
-            return await self._create_embeddings(input_data)
+            # 列表輸入，嵌入第一個文本並返回其向量（符合 Graphiti 官方實現）
+            if len(input_data) > 0:
+                embeddings = await self._create_embeddings([input_data[0]])
+                return embeddings[0] if embeddings else []
+            else:
+                return []
 
     async def _create_embeddings(self, input_data: List[str]) -> List[List[float]]:
         """
@@ -260,13 +264,8 @@ class OllamaEmbedder(EmbedderClient):
         Returns:
             嵌入向量列表
         """
-        # 確保 create_batch 總是返回列表格式
-        result = await self.create(input_data)
-        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
-            return result
-        else:
-            # 如果 create 返回單個向量，包裝成列表
-            return [result] if isinstance(result, list) else []
+        # 直接使用內部方法進行批量處理
+        return await self._create_embeddings(input_data)
 
     def get_dimensions(self) -> int:
         """
