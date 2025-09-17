@@ -24,7 +24,7 @@ from graphiti_core import Graphiti
 from graphiti_core.llm_client.client import LLMClient
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.cross_encoder.client import CrossEncoderClient
-from ollama_embedder import OllamaEmbedder
+from .ollama_embedder import OllamaEmbedder
 
 
 class OptimizedOllamaClient(LLMClient):

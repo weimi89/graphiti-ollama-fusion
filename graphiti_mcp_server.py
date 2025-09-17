@@ -36,7 +36,11 @@ from src.ollama_embedder import OllamaEmbedder
 from graphiti_core import Graphiti
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.edges import EntityEdge
-from graphiti_core.nodes import EpisodicNode
+from graphiti_core.nodes import EpisodicNode, EpisodeType
+from graphiti_core.search.search_config_recipes import (
+    NODE_HYBRID_SEARCH_NODE_DISTANCE,
+    NODE_HYBRID_SEARCH_RRF,
+)
 from graphiti_core.search.search_filters import SearchFilters
 
 load_dotenv()
@@ -45,6 +49,10 @@ load_dotenv()
 app_config: GraphitiConfig = None
 logger = None
 graphiti_instance = None  # 快取 Graphiti 實例
+
+# 隊列系統 (從官方版本移植)
+episode_queues: dict[str, asyncio.Queue] = {}
+queue_workers: dict[str, bool] = {}
 
 # 參數模型
 class AddMemoryArgs(BaseModel):
@@ -67,6 +75,35 @@ class GetEpisodesArgs(BaseModel):
     last_n: int = Field(default=10, description="獲取最近記憶片段的數量")
     group_id: str = Field(default="", description="用於篩選的分組 ID")
 
+async def process_episode_queue(group_id: str):
+    """處理特定 group_id 的記憶片段隊列"""
+    global queue_workers
+
+    logging.info(f'Starting episode queue worker for group_id: {group_id}')
+    queue_workers[group_id] = True
+
+    try:
+        while True:
+            # 從隊列獲取下一個處理函數
+            process_func = await episode_queues[group_id].get()
+
+            try:
+                # 處理記憶片段
+                await process_func()
+            except Exception as e:
+                logging.error(f'Error processing queued episode for group_id {group_id}: {str(e)}')
+            finally:
+                # 標記任務完成
+                episode_queues[group_id].task_done()
+    except asyncio.CancelledError:
+        logging.info(f'Episode queue worker for group_id {group_id} was cancelled')
+    except Exception as e:
+        logging.error(f'Unexpected error in queue worker for group_id {group_id}: {str(e)}')
+    finally:
+        queue_workers[group_id] = False
+        logging.info(f'Stopped episode queue worker for group_id: {group_id}')
+
+
 async def initialize_graphiti():
     """初始化 Graphiti 實例（使用快取機制）"""
     global graphiti_instance
@@ -78,13 +115,19 @@ async def initialize_graphiti():
     log_operation_start("initialize_graphiti")
 
     try:
-        # 創建 Ollama LLM 客戶端
-        llm_config = LLMConfig(
-            base_url=app_config.ollama.base_url,
-            model=app_config.ollama.model,
-            temperature=app_config.ollama.temperature
-        )
-        llm_client = OptimizedOllamaClient(config=llm_config)
+        # 嘗試創建 Ollama LLM 客戶端，失敗時設為 None
+        llm_client = None
+        try:
+            llm_config = LLMConfig(
+                base_url=app_config.ollama.base_url,
+                model=app_config.ollama.model,
+                temperature=app_config.ollama.temperature
+            )
+            llm_client = OptimizedOllamaClient(config=llm_config)
+            print("✅ LLM 客戶端初始化成功")
+        except Exception as e:
+            print(f"⚠️ LLM 客戶端初始化失敗，使用 None: {e}")
+            llm_client = None
 
         # 創建 Ollama 嵌入器
         embedder = OllamaEmbedder(
@@ -99,7 +142,8 @@ async def initialize_graphiti():
             user=app_config.neo4j.user,
             password=app_config.neo4j.password,
             llm_client=llm_client,
-            embedder=embedder
+            embedder=embedder,
+            max_coroutines=3  # 限制併發數量避免 IndexError
         )
 
         duration = time.time() - start_time
@@ -122,89 +166,51 @@ mcp = FastMCP("graphiti-ollama-memory")
 
 @mcp.tool()
 async def add_memory_simple(args: AddMemoryArgs) -> dict:
-    """添加記憶到 Graphiti（優化版本）"""
+    """使用安全方法添加記憶 - 完全避開 IndexError 問題"""
     start_time = time.time()
-    log_operation_start("add_memory", name=args.name, group_id=args.group_id)
+    log_operation_start("add_memory_safe", name=args.name[:50])
 
     try:
-        # 輸入驗證和清理
-        clean_name = args.name.strip()[:100]  # 限制標題長度
-        clean_body = args.episode_body.strip()[:2000]  # 限制內容長度
-        clean_group_id = args.group_id.strip() if args.group_id else "default"
+        from src.safe_memory_add import safe_add_memory
 
-        if not clean_name or not clean_body:
-            raise GraphitiMCPError("記憶名稱和內容不能為空")
+        graphiti = await get_graphiti_instance()
 
-        graphiti = await initialize_graphiti()
-
-        # 添加重試機制
-        max_retries = 3
-        last_exception = None
-
-        for attempt in range(max_retries):
-            try:
-                # 生成唯一的源描述以避免衝突
-                unique_source = f"{args.source_description}_{uuid.uuid4().hex[:8]}"
-
-                result = await graphiti.add_episode(
-                    name=clean_name,
-                    episode_body=clean_body,
-                    source_description=unique_source,
-                    group_id=clean_group_id,
-                    reference_time=datetime.now(timezone.utc)
-                )
-
-                # 如果成功，跳出重試循環
-                break
-
-            except (IndexError, KeyError) as e:
-                last_exception = e
-                if attempt < max_retries - 1:
-                    logging.warning(f"添加記憶失敗，嘗試重試 {attempt + 1}/{max_retries}: {e}")
-                    await asyncio.sleep(1.0 * (attempt + 1))  # 指數退避
-                    continue
-                else:
-                    raise e
-            except Exception as e:
-                # 其他異常不重試
-                raise e
+        # 使用安全方法添加記憶 - 直接創建 EpisodicNode
+        result = await safe_add_memory(
+            graphiti,
+            name=args.name,
+            content=args.content,
+            group_id=args.group_id,
+            source_description=args.source_description
+        )
 
         duration = time.time() - start_time
 
-        # 簡化的成功記錄
-        log_operation_success(
-            "add_memory",
-            duration,
-            episode_id=getattr(result, 'episode_id', None)
-        )
-
-        # 記錄性能指標
-        performance_logger.log_memory_add_performance(
-            len(clean_body), duration, True
-        )
-
-        return {
-            "success": True,
-            "message": f"記憶 '{clean_name}' 新增成功",
-            "episode_id": getattr(result, 'episode_id', None),
-            "duration": round(duration, 2),
-            "content_length": len(clean_body)
-        }
+        if result["success"]:
+            log_operation_success("add_memory_safe", duration, name=args.name)
+            return {
+                "success": True,
+                "message": result["message"],
+                "uuid": result["uuid"],
+                "group_id": args.group_id,
+                "processing_time": f"{duration:.2f}s",
+                "method": "safe_direct_node_creation",
+                "note": "使用安全方法，完全避開實體提取以防止 IndexError"
+            }
+        else:
+            log_operation_error("add_memory_safe", Exception(result["error"]), duration=duration)
+            return create_error_response(CommonErrors.OPERATION_FAILED,
+                                       f"安全記憶添加失敗: {result['error']}")
 
     except Exception as e:
         duration = time.time() - start_time
-        log_operation_error("add_memory", e, name=args.name, duration=duration)
-
-        # 記錄失敗的性能指標
-        performance_logger.log_memory_add_performance(
-            len(args.episode_body), duration, False
-        )
-
-        return create_error_response(e, "新增記憶失敗")
+        log_operation_error("add_memory_safe", e, duration=duration)
+        return create_error_response(CommonErrors.OPERATION_FAILED,
+                                   f"記憶添加過程中發生錯誤: {str(e)}")
 
 @mcp.tool()
 async def search_memory_nodes(args: SearchNodesArgs) -> dict:
-    """搜索記憶節點（優化版本）"""
+    """搜索記憶節點"""
     start_time = time.time()
     log_operation_start("search_nodes", query=args.query[:50])
 
@@ -216,12 +222,20 @@ async def search_memory_nodes(args: SearchNodesArgs) -> dict:
             group_ids=args.group_ids or []
         )
 
-        # 執行搜索
-        nodes = await graphiti.search(
+        # 配置搜索
+        search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
+        search_config.limit = min(args.max_nodes, 50)
+
+        # 執行搜索 (使用私有 _search 方法)
+        search_results = await graphiti._search(
             query=args.query,
-            num_results=min(args.max_nodes, 50),  # 限制最大結果數
+            config=search_config,
+            group_ids=args.group_ids or [],
             search_filter=search_filters
         )
+
+        # 從搜索結果中獲取節點
+        nodes = search_results.nodes if search_results.nodes else []
 
         duration = time.time() - start_time
         log_operation_success("search_nodes", duration, result_count=len(nodes))
@@ -251,7 +265,7 @@ async def search_memory_nodes(args: SearchNodesArgs) -> dict:
 
 @mcp.tool()
 async def search_memory_facts(args: SearchFactsArgs) -> dict:
-    """搜索記憶事實（優化版本）"""
+    """搜索記憶事實"""
     start_time = time.time()
     log_operation_start("search_facts", query=args.query[:50])
 
@@ -299,7 +313,7 @@ async def search_memory_facts(args: SearchFactsArgs) -> dict:
 
 @mcp.tool()
 async def get_episodes(args: GetEpisodesArgs) -> dict:
-    """獲取最近的記憶片段（優化版本）"""
+    """獲取最近的記憶片段"""
     start_time = time.time()
     log_operation_start("get_episodes", last_n=args.last_n)
 
@@ -339,7 +353,7 @@ async def get_episodes(args: GetEpisodesArgs) -> dict:
 
 @mcp.tool()
 async def test_connection() -> dict:
-    """測試連接狀態（優化版本）"""
+    """測試連接狀態"""
     try:
         start_time = time.time()
 
@@ -379,7 +393,7 @@ async def test_connection() -> dict:
 
 @mcp.tool()
 async def clear_graph() -> dict:
-    """清除圖資料庫（優化版本）"""
+    """清除圖資料庫"""
     try:
         start_time = time.time()
         graphiti = await initialize_graphiti()

@@ -156,7 +156,7 @@ class OllamaEmbedder(EmbedderClient):
 
     async def create_bulk(self, input_data: List[str], batch_size: int = 10) -> List[List[float]]:
         """
-        批量創建嵌入向量（優化版本）
+        批量創建嵌入向量
 
         Args:
             input_data: 要嵌入的文本列表
