@@ -73,9 +73,15 @@ class GraphitiLogger:
 
             # 根據配置選擇輪轉方式
             if self.config.rotation_type == "time":
+                # 為時間輪轉建立包含日期的檔案名稱
+                today = datetime.now().strftime("%Y-%m-%d")
+                base_name = log_path.stem
+                extension = log_path.suffix
+                dated_log_path = log_path.parent / f"{base_name}_{today}{extension}"
+
                 # 時間輪轉處理器（每天一個新檔案）
                 file_handler = logging.handlers.TimedRotatingFileHandler(
-                    filename=log_path,
+                    filename=dated_log_path,
                     when=self.config.rotation_interval,  # 輪轉時間點
                     interval=1,                          # 間隔
                     backupCount=self.config.backup_count,
@@ -86,11 +92,11 @@ class GraphitiLogger:
 
                 # 設定輪轉檔案的命名格式
                 if self.config.rotation_interval == "midnight":
-                    file_handler.suffix = "_%Y-%m-%d.log"
+                    file_handler.suffix = "_%Y-%m-%d"
                 elif self.config.rotation_interval == "H":
-                    file_handler.suffix = "_%Y-%m-%d_%H.log"
+                    file_handler.suffix = "_%Y-%m-%d_%H"
                 else:
-                    file_handler.suffix = "_%Y-%m-%d.log"
+                    file_handler.suffix = "_%Y-%m-%d"
 
                 rotation_info = f"時間輪轉: {self.config.rotation_interval}，保留 {self.config.backup_count} 個檔案"
 
@@ -114,12 +120,7 @@ class GraphitiLogger:
 
             # 顯示日誌檔案資訊
             if self.config.rotation_type == "time":
-                today = datetime.now().strftime("%Y-%m-%d")
-                log_dir = log_path.parent
-                base_name = log_path.stem
-                extension = log_path.suffix
-                current_log_file = log_dir / f"{base_name}_{today}{extension}"
-                logging.info(f"日誌檔案設置完成: {current_log_file}")
+                logging.info(f"日誌檔案設置完成: {dated_log_path}")
             else:
                 logging.info(f"日誌檔案設置完成: {log_path}")
 

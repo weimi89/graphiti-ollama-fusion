@@ -162,6 +162,10 @@ class GraphitiConfig:
         # 日誌配置
         config.logging.level = os.getenv("LOG_LEVEL", config.logging.level)
         config.logging.file_path = os.getenv("LOG_FILE", config.logging.file_path)
+        config.logging.rotation_type = os.getenv("LOG_ROTATION_TYPE", config.logging.rotation_type)
+        config.logging.rotation_interval = os.getenv("LOG_ROTATION_INTERVAL", config.logging.rotation_interval)
+        if os.getenv("LOG_BACKUP_COUNT"):
+            config.logging.backup_count = int(os.getenv("LOG_BACKUP_COUNT"))
 
         # Graphiti 特定設定
         if os.getenv("SEARCH_LIMIT"):

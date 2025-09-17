@@ -306,11 +306,24 @@ uv run python graphiti_mcp_server.py --config your_config.json --transport sse
         "NEO4J_URI": "bolt://localhost:7687",
         "NEO4J_USER": "neo4j",
         "NEO4J_PASSWORD": "your_neo4j_password",
-        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "NEO4J_DATABASE": "graphiti-db",
+        "OPENAI_API_KEY": "ollama",
+        "OPENAI_BASE_URL": "http://localhost:11434/v1",
         "MODEL_NAME": "qwen2.5:7b",
         "EMBEDDER_MODEL_NAME": "nomic-embed-text:v1.5",
         "GROUP_ID": "claude_desktop",
-        "SEMAPHORE_LIMIT": "3"
+        "SEMAPHORE_LIMIT": "3",
+        "LOG_FILE": "logs/graphiti_mcp_server.log",
+        "LOG_LEVEL": "INFO",
+        "OLLAMA_MODEL": "qwen2.5:7b",
+        "OLLAMA_TEMPERATURE": "0.1",
+        "OLLAMA_EMBEDDING_MODEL": "nomic-embed-text:v1.5",
+        "OLLAMA_EMBEDDING_DIMENSIONS": "768",
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "SEARCH_LIMIT": "20",
+        "ENABLE_DEDUPLICATION": "true",
+        "PYDANTIC_VALIDATION_FIXES": "true",
+        "COSINE_SIMILARITY_THRESHOLD": "0.8"
       }
     }
   }
@@ -644,19 +657,108 @@ if __name__ == "__main__":
 ### 環境變數配置 (`.env`)
 
 ```bash
-# Neo4j 設定
+# ======================
+# Neo4j 圖資料庫配置
+# ======================
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_neo4j_password
+NEO4J_DATABASE=graphiti-db
 
-# Ollama 設定
-OLLAMA_BASE_URL=http://localhost:11434
+# ======================
+# Ollama LLM 配置
+# ======================
+# 覆蓋 OpenAI 設定，使用 Ollama
+OPENAI_API_KEY=ollama
+OPENAI_BASE_URL=http://localhost:11434/v1
+
+# 推薦的 LLM 模型
 MODEL_NAME=qwen2.5:7b
+SMALL_MODEL_NAME=qwen2.5:7b
+
+# 嵌入模型（必須安裝）
 EMBEDDER_MODEL_NAME=nomic-embed-text:v1.5
 
-# Graphiti 設定
+# ======================
+# Graphiti 配置
+# ======================
+# 記憶分組 ID
 GROUP_ID=your_group_id
+
+# 並發限制（本地 LLM 建議較低值）
 SEMAPHORE_LIMIT=3
+
+# 關閉遙測
+GRAPHITI_TELEMETRY_ENABLED=false
+
+# ======================
+# 進階配置
+# ======================
+# Ollama 服務器地址
+OLLAMA_BASE_URL=http://localhost:11434
+
+# LLM 溫度設定（0.0-1.0）
+LLM_TEMPERATURE=0.1
+
+# ======================
+# 日誌配置
+# ======================
+# 日誌檔案路徑
+LOG_FILE=logs/graphiti_mcp_server.log
+LOG_LEVEL=INFO
+
+# 日誌輪轉設定
+LOG_ROTATION_TYPE=time
+LOG_ROTATION_INTERVAL=midnight
+LOG_BACKUP_COUNT=30
+
+# ======================
+# 其他重要設定
+# ======================
+# Ollama 模型設定（對應 config.py 中的變數名）
+OLLAMA_MODEL=qwen2.5:7b
+OLLAMA_TEMPERATURE=0.1
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text:v1.5
+OLLAMA_EMBEDDING_DIMENSIONS=768
+OLLAMA_EMBEDDING_BASE_URL=http://localhost:11434
+
+# 搜尋限制
+SEARCH_LIMIT=20
+
+# 功能開關
+ENABLE_DEDUPLICATION=true
+PYDANTIC_VALIDATION_FIXES=true
+
+# 相似度閾值
+COSINE_SIMILARITY_THRESHOLD=0.8
+```
+
+## 📋 日誌檔案管理
+
+### 日誌檔案命名格式
+
+系統使用每日輪轉的日誌檔案，命名格式如下：
+
+```
+logs/
+├── graphiti_mcp_server_2025-09-17.log    # 當前日期的日誌
+├── graphiti_mcp_server_2025-09-16.log    # 前一天的日誌
+├── graphiti_mcp_server_2025-09-15.log    # 更早的日誌
+└── ... (保留30天)
+```
+
+**命名規則：**
+- 基本格式：`graphiti_mcp_server_YYYY-MM-DD.log`
+- 每日午夜自動輪轉
+- 保留30天的歷史檔案
+- 自動清理過期檔案
+
+**設定選項：**
+```bash
+# 日誌輪轉配置
+LOG_ROTATION_TYPE=time          # 時間輪轉
+LOG_ROTATION_INTERVAL=midnight  # 每日午夜
+LOG_BACKUP_COUNT=30            # 保留30天
 ```
 
 ## 📚 API 功能
