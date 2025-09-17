@@ -36,10 +36,6 @@ from graphiti_core import Graphiti
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EpisodicNode
-from graphiti_core.search.search_config_recipes import (
-    NODE_HYBRID_SEARCH_NODE_DISTANCE,
-    NODE_HYBRID_SEARCH_RRF,
-)
 from graphiti_core.search.search_filters import SearchFilters
 
 load_dotenv()
@@ -82,19 +78,18 @@ async def initialize_graphiti():
 
     try:
         # 創建 Ollama LLM 客戶端
-        llm_client = OptimizedOllamaClient(
+        llm_config = LLMConfig(
             base_url=app_config.ollama.base_url,
             model=app_config.ollama.model,
-            temperature=app_config.ollama.temperature,
-            timeout=30.0  # 增加超時時間
+            temperature=app_config.ollama.temperature
         )
+        llm_client = OptimizedOllamaClient(config=llm_config)
 
         # 創建 Ollama 嵌入器
         embedder = OllamaEmbedder(
-            model_name=app_config.embedder.model,
+            model=app_config.embedder.model,
             base_url=app_config.embedder.base_url,
-            dimensions=app_config.embedder.dimensions,
-            timeout=30.0  # 增加超時時間
+            dimensions=app_config.embedder.dimensions
         )
 
         # 創建 Graphiti 實例
@@ -103,8 +98,7 @@ async def initialize_graphiti():
             user=app_config.neo4j.user,
             password=app_config.neo4j.password,
             llm_client=llm_client,
-            embedder=embedder,
-            search_config=NODE_HYBRID_SEARCH_RRF  # 使用 RRF 搜索配置
+            embedder=embedder
         )
 
         duration = time.time() - start_time
@@ -222,11 +216,10 @@ async def search_memory_nodes(args: SearchNodesArgs) -> dict:
         )
 
         # 執行搜索
-        nodes = await graphiti.search_nodes(
+        nodes = await graphiti.search(
             query=args.query,
-            limit=min(args.max_nodes, 50),  # 限制最大結果數
-            search_config=NODE_HYBRID_SEARCH_RRF,
-            filters=search_filters
+            num_results=min(args.max_nodes, 50),  # 限制最大結果數
+            search_filter=search_filters
         )
 
         duration = time.time() - start_time
@@ -270,10 +263,10 @@ async def search_memory_facts(args: SearchFactsArgs) -> dict:
         )
 
         # 執行搜索
-        edges = await graphiti.search_edges(
+        edges = await graphiti.search(
             query=args.query,
-            limit=min(args.max_facts, 50),  # 限制最大結果數
-            filters=search_filters
+            num_results=min(args.max_facts, 50),  # 限制最大結果數
+            search_filter=search_filters
         )
 
         duration = time.time() - start_time
