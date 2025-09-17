@@ -120,7 +120,7 @@ uv --version
 
 ```bash
 # 克隆專案
-git clone https://github.com/your-username/graphiti-mcp-server.git
+git clone https://github.com/weimi89/graphiti-ollama-fusion.git
 cd graphiti-mcp-server
 
 # 使用 uv 安裝依賴
