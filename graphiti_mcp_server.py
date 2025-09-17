@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Graphiti Ollama MCP Server - 優化版本
+Graphiti Ollama MCP Server
 解決索引錯誤和提升穩定性
 """
 
@@ -411,7 +411,7 @@ def main():
     """主程序入口點"""
     global app_config, logger
 
-    parser = argparse.ArgumentParser(description="Graphiti Ollama MCP Server - 優化版本")
+    parser = argparse.ArgumentParser(description="Graphiti Ollama MCP Server")
     parser.add_argument("--transport", default="stdio", choices=["stdio", "sse"])
     parser.add_argument("--config", help="配置檔案路徑")
     parser.add_argument("--host", default="localhost", help="SSE 模式主機地址")
@@ -428,9 +428,19 @@ def main():
 
         # 記錄系統信息
         log_system_info()
-        log_config_summary(app_config)
 
-        logger.info("✅ Graphiti + Ollama MCP 服務器初始化完成（優化版本）")
+        # 轉換配置為字典格式
+        config_dict = {
+            "ollama_model": app_config.ollama.model,
+            "neo4j_uri": app_config.neo4j.uri,
+            "embedder_model": app_config.embedder.model,
+            "log_level": app_config.logging.level
+        }
+        log_config_summary(config_dict)
+
+        import logging
+        main_logger = logging.getLogger("main")
+        main_logger.info("✅ Graphiti + Ollama MCP 服務器初始化完成")
 
         # 根據傳輸方式運行
         if args.transport == "stdio":
@@ -439,10 +449,14 @@ def main():
             mcp.run_sse(host=args.host, port=args.port)
 
     except KeyboardInterrupt:
-        logger.info("👋 服務器已停止")
+        import logging
+        main_logger = logging.getLogger("main")
+        main_logger.info("👋 服務器已停止")
         sys.exit(0)
     except Exception as e:
-        logger.error(f"❌ 服務器啟動失敗: {e}")
+        import logging
+        error_logger = logging.getLogger("main")
+        error_logger.error(f"❌ 服務器啟動失敗: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
