@@ -185,15 +185,12 @@ async def add_memory_simple(args: AddMemoryArgs) -> dict:
         )
 
         duration = time.time() - start_time
-        nodes_count = len(result.node_ids) if hasattr(result, 'node_ids') and result.node_ids else 0
-        edges_count = len(result.edge_ids) if hasattr(result, 'edge_ids') and result.edge_ids else 0
 
+        # 簡化的成功記錄，不提取複雜統計信息
         log_operation_success(
             "add_memory",
             duration,
-            episode_id=getattr(result, 'episode_id', None),
-            nodes_extracted=nodes_count,
-            edges_created=edges_count
+            episode_id=getattr(result, 'episode_id', None)
         )
 
         # 記錄性能指標
@@ -205,8 +202,6 @@ async def add_memory_simple(args: AddMemoryArgs) -> dict:
             "success": True,
             "message": f"記憶 '{args.name}' 新增成功",
             "episode_id": getattr(result, 'episode_id', None),
-            "nodes_extracted": nodes_count,
-            "edges_created": edges_count,
             "duration": round(duration, 2)
         }
 
@@ -246,17 +241,31 @@ async def search_memory_nodes(args: SearchNodesArgs) -> dict:
         )
 
         nodes = []
-        if search_results.nodes:
-            for node in search_results.nodes:
-                node_data = {
-                    "name": node.name,
-                    "uuid": str(node.uuid),
-                    "created_at": str(node.created_at) if hasattr(node, 'created_at') else "",
-                    "summary": getattr(node, 'summary', '') or '',
-                    "group_id": getattr(node, 'group_id', ''),
-                    "labels": getattr(node, 'labels', [])
-                }
-                nodes.append(node_data)
+        if search_results and hasattr(search_results, 'nodes') and search_results.nodes:
+            try:
+                for node in search_results.nodes:
+                    try:
+                        # 安全地提取節點資訊
+                        node_data = {
+                            "name": getattr(node, 'name', '未知名稱'),
+                            "uuid": str(getattr(node, 'uuid', '')),
+                            "created_at": str(getattr(node, 'created_at', '')) if hasattr(node, 'created_at') else "",
+                            "summary": getattr(node, 'summary', '') or '',
+                            "group_id": getattr(node, 'group_id', ''),
+                            "labels": getattr(node, 'labels', []) if hasattr(node, 'labels') else []
+                        }
+
+                        # 確保 labels 是列表
+                        if not isinstance(node_data["labels"], list):
+                            node_data["labels"] = []
+
+                        nodes.append(node_data)
+                    except (AttributeError, TypeError, IndexError) as node_error:
+                        logger.warning(f"處理節點時發生錯誤: {node_error}")
+                        continue
+            except (TypeError, AttributeError) as nodes_error:
+                logger.warning(f"處理節點列表時發生錯誤: {nodes_error}")
+                nodes = []
 
         return {
             "message": f"找到 {len(nodes)} 個相關節點" if nodes else "未找到相關節點",
@@ -287,26 +296,38 @@ async def search_memory_facts(args: SearchFactsArgs) -> dict:
         )
 
         facts = []
-        for edge in relevant_edges:
-            # 需要檢查 edge 是否是 EntityEdge 且有 fact 屬性
-            if hasattr(edge, 'fact') and edge.fact:
-                fact_data = {
-                    "fact": edge.fact,
-                    "uuid": str(edge.uuid),
-                    "created_at": str(edge.created_at) if hasattr(edge, 'created_at') else "",
-                    "relation_type": type(edge).__name__
-                }
+        if relevant_edges:
+            try:
+                for edge in relevant_edges:
+                    try:
+                        # 安全地檢查 edge 是否有 fact 屬性
+                        if hasattr(edge, 'fact') and getattr(edge, 'fact', None):
+                            fact_data = {
+                                "fact": getattr(edge, 'fact', ''),
+                                "uuid": str(getattr(edge, 'uuid', '')),
+                                "created_at": str(getattr(edge, 'created_at', '')) if hasattr(edge, 'created_at') else "",
+                                "relation_type": type(edge).__name__ if edge else "unknown"
+                            }
 
-                # 嘗試獲取來源和目標實體名稱
-                if hasattr(edge, 'source_node_uuid') and hasattr(edge, 'target_node_uuid'):
-                    # 可以進一步查詢節點名稱，但為了效能先使用 UUID
-                    fact_data["source_entity"] = str(edge.source_node_uuid)
-                    fact_data["target_entity"] = str(edge.target_node_uuid)
-                else:
-                    fact_data["source_entity"] = "unknown"
-                    fact_data["target_entity"] = "unknown"
+                            # 安全地獲取來源和目標實體名稱
+                            try:
+                                if hasattr(edge, 'source_node_uuid') and hasattr(edge, 'target_node_uuid'):
+                                    fact_data["source_entity"] = str(getattr(edge, 'source_node_uuid', ''))
+                                    fact_data["target_entity"] = str(getattr(edge, 'target_node_uuid', ''))
+                                else:
+                                    fact_data["source_entity"] = "unknown"
+                                    fact_data["target_entity"] = "unknown"
+                            except (AttributeError, TypeError):
+                                fact_data["source_entity"] = "unknown"
+                                fact_data["target_entity"] = "unknown"
 
-                facts.append(fact_data)
+                            facts.append(fact_data)
+                    except (AttributeError, TypeError, IndexError) as edge_error:
+                        logger.warning(f"處理事實邊時發生錯誤: {edge_error}")
+                        continue
+            except (TypeError, AttributeError) as edges_error:
+                logger.warning(f"處理事實列表時發生錯誤: {edges_error}")
+                facts = []
 
         return {
             "message": f"找到 {len(facts)} 個相關事實" if facts else "未找到相關事實",
