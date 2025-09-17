@@ -22,10 +22,14 @@ graphiti/
 │   └── ollama_graphiti_client.py # Ollama LLM 客戶端
 ├── tools/                        # 實用工具
 ├── docs/                         # 文檔
+│   └── 使用工具的指令.md          # 工具使用指令和最佳實踐
+├── logs/                         # 日誌檔案
 └── graphiti_mcp_server.py        # 主服務器
 ```
 
 ## 🚀 快速啟動
+
+> **📖 重要提醒：** 設定完成後，請務必閱讀 [使用工具的指令](docs/使用工具的指令.md) 以了解如何正確使用 Graphiti MCP 工具！
 
 ### 1. 系統需求
 
@@ -42,16 +46,16 @@ graphiti/
 
 #### M1/M2 Mac (8-16GB RAM)
 ```bash
-# 推薦組合 - 速度與品質平衡
-ollama pull qwen2.5:1.5b      # LLM (2.5秒回應)
+# 🏆 最佳推薦組合 - 速度與品質完美平衡
+ollama pull qwen2.5:3b        # LLM (0.72秒回應，品質很好)
 ollama pull nomic-embed-text:v1.5
 
-# 極速組合 - 優先回應速度
-ollama pull qwen2.5:0.5b      # LLM (1.7秒回應)
+# ⚡ 極速組合 - 優先回應速度
+ollama pull qwen2.5:0.5b      # LLM (0.68秒回應，基本品質)
 ollama pull nomic-embed-text:v1.5
 
-# 高品質組合 - 16GB+ RAM
-ollama pull qwen2.5:3b        # LLM (4.4秒回應)
+# 💎 高品質組合 - 專業用途
+ollama pull qwen2.5:7b        # LLM (1.50秒回應，優秀品質)
 ollama pull nomic-embed-text:v1.5
 ```
 
@@ -67,12 +71,17 @@ ollama pull nomic-embed-text:v1.5
 ```
 
 #### 效能比較表
-| 模型 | 大小 | 記憶體需求 | 回應時間* | 適用硬體 | 推薦指數 |
-|------|------|------------|----------|----------|----------|
-| **qwen2.5:0.5b** | 397 MB | 2-4 GB | 1.7秒 | 任何配置 | ⭐⭐⭐⭐⭐ |
-| **qwen2.5:1.5b** | 986 MB | 4-8 GB | 2.5秒 | M1+ 8GB | ⭐⭐⭐⭐⭐ |
-| **qwen2.5:3b** | 1.9 GB | 8-12 GB | 4.4秒 | 16GB+ | ⭐⭐⭐⭐ |
-| qwen2.5:7b | 4.7 GB | 16-24 GB | 30+秒 | 32GB+ | ⭐⭐ |
+| 模型 | 大小 | GPU記憶體 | 回應時間* | 回應品質 | 推薦指數 |
+|------|------|----------|----------|----------|----------|
+| **qwen2.5:0.5b** | 397 MB | 1.3 GB | 0.68秒 | 基本 | ⭐⭐⭐⭐⭐ |
+| **qwen2.5:1.5b** | 986 MB | 1.9 GB | 0.71秒 | 良好 | ⭐⭐⭐⭐⭐ |
+| **qwen2.5:3b** | 1.9 GB | 2.0 GB | 0.72秒 | 很好 | ⭐⭐⭐⭐⭐ |
+| **qwen2.5:7b** | 4.7 GB | 4.0+ GB | 1.50秒 | 優秀 | ⭐⭐⭐⭐ |
+| llama3.2:1b | 1.3 GB | 1.5 GB | 1.03秒 | 中等 | ⭐⭐⭐ |
+| gemma3:1b | 815 MB | 1.9 GB | 0.87秒 | 良好 | ⭐⭐⭐⭐ |
+| deepseek-r1:1.5b | 1.1 GB | 2.0 GB | 2.31秒† | 分析型 | ⭐⭐⭐ |
+
+> **註：** *實測於 M2 MacBook Pro，† R1模型包含思考過程較慢
 
 > **⚠️ 重要提醒**：以上數據依個人電腦的測試而有所不同，建議先做好測試再選擇模組。
 
@@ -279,9 +288,11 @@ uv run python graphiti_mcp_server.py --config your_config.json --transport sse
 
 ---
 
-### 模式一：STDIO 模式（推薦用於 Claude Desktop）
+### 模式一：STDIO 模式（適用於 Claude Desktop CLI）
 
-#### Claude Desktop 設定
+> **⚠️ 重要：** STDIO 模式僅適用於 **Claude Desktop CLI** 版本，不適用於 IDE 整合。
+
+#### Claude Desktop CLI 設定
 
 **配置檔案位置：**
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
@@ -305,7 +316,7 @@ uv run python graphiti_mcp_server.py --config your_config.json --transport sse
       "env": {
         "NEO4J_URI": "bolt://localhost:7687",
         "NEO4J_USER": "neo4j",
-        "NEO4J_PASSWORD": "your_neo4j_password",
+        "NEO4J_PASSWORD": "your_password",
         "NEO4J_DATABASE": "graphiti-db",
         "OPENAI_API_KEY": "ollama",
         "OPENAI_BASE_URL": "http://localhost:11434/v1",
@@ -762,6 +773,24 @@ LOG_BACKUP_COUNT=30            # 保留30天
 ```
 
 ## 📚 API 功能
+
+### 🔧 使用工具指令
+
+**重要：** 在使用 Graphiti MCP 工具之前，請先閱讀 **[使用工具的指令](docs/使用工具的指令.md)**。
+
+該文件包含：
+- **搜索優先原則** - 開始任務前先搜索相關資訊
+- **資訊儲存規範** - 如何正確儲存偏好、程序和事實
+- **工作流程指引** - 最佳實踐和注意事項
+- **工具使用範例** - 實際操作示範
+
+**關鍵原則：**
+```
+1. 開始前先搜索：search_memory_nodes + search_memory_facts
+2. 立即儲存重要資訊：add_memory_simple
+3. 遵循發現的偏好和程序
+4. 維持記憶的一致性和完整性
+```
 
 ### 記憶管理
 
