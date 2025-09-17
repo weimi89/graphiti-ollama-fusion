@@ -6,6 +6,7 @@ Graphiti Ollama MCP Server
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 import time
@@ -159,7 +160,7 @@ async def add_memory_simple(args: AddMemoryArgs) -> dict:
             except (IndexError, KeyError) as e:
                 last_exception = e
                 if attempt < max_retries - 1:
-                    logger.warning(f"添加記憶失敗，嘗試重試 {attempt + 1}/{max_retries}: {e}")
+                    logging.warning(f"添加記憶失敗，嘗試重試 {attempt + 1}/{max_retries}: {e}")
                     await asyncio.sleep(1.0 * (attempt + 1))  # 指數退避
                     continue
                 else:
