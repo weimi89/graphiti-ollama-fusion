@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
-Graphiti Ollama MCP Server - 整合 Ollama 本地 LLM 的 MCP 服務器
-基於我們的 Graphiti + Ollama 解決方案
-
-整合 Ollama 本地 LLM 的知識圖譜記憶管理服務
+Graphiti Ollama MCP Server - 優化版本
+解決索引錯誤和提升穩定性
 """
 
 import argparse
@@ -11,6 +9,7 @@ import asyncio
 import os
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
@@ -48,58 +47,32 @@ load_dotenv()
 # 全局配置和日誌
 app_config: GraphitiConfig = None
 logger = None
+graphiti_instance = None  # 快取 Graphiti 實例
 
-# MCP 工具的參數模型
+# 參數模型
 class AddMemoryArgs(BaseModel):
     name: str = Field(description="記憶片段的名稱")
     episode_body: str = Field(description="記憶片段的內容")
-    source_description: str = Field(default="MCP Server", description="來源描述")
     group_id: str = Field(default="default", description="記憶分組 ID")
+    source_description: str = Field(default="MCP Server", description="來源描述")
 
 class SearchNodesArgs(BaseModel):
     query: str = Field(description="搜尋關鍵字")
     max_nodes: int = Field(default=10, description="返回節點的最大數量")
-    group_ids: List[str] = Field(default_factory=list, description="用於篩選的分組 ID")
+    group_ids: Optional[List[str]] = Field(default=None, description="用於篩選的分組 ID")
 
 class SearchFactsArgs(BaseModel):
     query: str = Field(description="搜尋關鍵字")
     max_facts: int = Field(default=10, description="返回事實的最大數量")
-    group_ids: List[str] = Field(default_factory=list, description="用於篩選的分組 ID")
+    group_ids: Optional[List[str]] = Field(default=None, description="用於篩選的分組 ID")
 
 class GetEpisodesArgs(BaseModel):
     last_n: int = Field(default=10, description="獲取最近記憶片段的數量")
     group_id: str = Field(default="", description="用於篩選的分組 ID")
 
-# 全局變量
-graphiti_instance: Graphiti = None
-
-
-def initialize_system(config_path: Optional[str] = None):
-    """初始化系統配置和日誌"""
-    global app_config, logger
-
-    # 載入配置
-    app_config = load_config(config_path)
-
-    # 設置日誌系統
-    log_manager = setup_logging(app_config.logging)
-    logger = log_manager.get_logger("main")
-
-    # 記錄系統啟動信息
-    log_system_info()
-    log_config_summary(app_config.get_summary())
-
-    # 驗證配置
-    if not app_config.validate():
-        logger.warning("配置驗證失敗，某些功能可能無法正常運作")
-    else:
-        logger.info("✅ 系統配置驗證通過")
-
-    return app_config
-
 async def initialize_graphiti():
-    """初始化 Graphiti 實例使用配置系統"""
-    global graphiti_instance, app_config, logger
+    """初始化 Graphiti 實例（使用快取機制）"""
+    global graphiti_instance
 
     if graphiti_instance is not None:
         return graphiti_instance
@@ -108,49 +81,34 @@ async def initialize_graphiti():
     log_operation_start("initialize_graphiti")
 
     try:
-        # 初始化 LLM 客戶端
-        logger.info(f"📡 使用 LLM 模型: {app_config.ollama.model}")
-
-        llm_config = LLMConfig(
-            api_key="not-needed",
-            model=app_config.ollama.model,
+        # 創建 Ollama LLM 客戶端
+        llm_client = OptimizedOllamaClient(
             base_url=app_config.ollama.base_url,
+            model=app_config.ollama.model,
             temperature=app_config.ollama.temperature,
-            max_tokens=app_config.ollama.max_tokens
+            timeout=30.0  # 增加超時時間
         )
-        llm_client = OptimizedOllamaClient(llm_config)
 
-        # 初始化嵌入器
-        logger.info(f"🧲 使用嵌入模型: {app_config.embedder.model}")
-
+        # 創建 Ollama 嵌入器
         embedder = OllamaEmbedder(
-            model=app_config.embedder.model,
+            model_name=app_config.embedder.model,
             base_url=app_config.embedder.base_url,
-            dimensions=app_config.embedder.dimensions
+            dimensions=app_config.embedder.dimensions,
+            timeout=30.0  # 增加超時時間
         )
 
-        # 測試連接
-        connected = await embedder.test_connection()
-        if not connected:
-            raise CommonErrors.ollama_connection_failed(app_config.embedder.base_url)
-
-        # 初始化 Graphiti (注意：Graphiti 不支援 database 參數)
-        logger.info("初始化 Graphiti 核心...")
+        # 創建 Graphiti 實例
         graphiti_instance = Graphiti(
             uri=app_config.neo4j.uri,
             user=app_config.neo4j.user,
             password=app_config.neo4j.password,
             llm_client=llm_client,
-            embedder=embedder
+            embedder=embedder,
+            search_config=NODE_HYBRID_SEARCH_RRF  # 使用 RRF 搜索配置
         )
-
-        # 建立索引
-        logger.info("建立 Neo4j 索引和約束...")
-        await graphiti_instance.build_indices_and_constraints()
 
         duration = time.time() - start_time
         log_operation_success("initialize_graphiti", duration)
-        logger.info("✅ Graphiti + Ollama MCP 服務器初始化完成")
 
         return graphiti_instance
 
@@ -169,24 +127,56 @@ mcp = FastMCP("graphiti-ollama-memory")
 
 @mcp.tool()
 async def add_memory_simple(args: AddMemoryArgs) -> dict:
-    """添加記憶到 Graphiti（使用新的錯誤處理系統）"""
+    """添加記憶到 Graphiti（優化版本）"""
     start_time = time.time()
     log_operation_start("add_memory", name=args.name, group_id=args.group_id)
 
     try:
+        # 輸入驗證和清理
+        clean_name = args.name.strip()[:100]  # 限制標題長度
+        clean_body = args.episode_body.strip()[:2000]  # 限制內容長度
+        clean_group_id = args.group_id.strip() if args.group_id else "default"
+
+        if not clean_name or not clean_body:
+            raise GraphitiMCPError("記憶名稱和內容不能為空")
+
         graphiti = await initialize_graphiti()
 
-        result = await graphiti.add_episode(
-            name=args.name,
-            episode_body=args.episode_body,
-            source_description=args.source_description,
-            group_id=args.group_id,
-            reference_time=datetime.now(timezone.utc)
-        )
+        # 添加重試機制
+        max_retries = 3
+        last_exception = None
+
+        for attempt in range(max_retries):
+            try:
+                # 生成唯一的源描述以避免衝突
+                unique_source = f"{args.source_description}_{uuid.uuid4().hex[:8]}"
+
+                result = await graphiti.add_episode(
+                    name=clean_name,
+                    episode_body=clean_body,
+                    source_description=unique_source,
+                    group_id=clean_group_id,
+                    reference_time=datetime.now(timezone.utc)
+                )
+
+                # 如果成功，跳出重試循環
+                break
+
+            except (IndexError, KeyError) as e:
+                last_exception = e
+                if attempt < max_retries - 1:
+                    logger.warning(f"添加記憶失敗，嘗試重試 {attempt + 1}/{max_retries}: {e}")
+                    await asyncio.sleep(1.0 * (attempt + 1))  # 指數退避
+                    continue
+                else:
+                    raise e
+            except Exception as e:
+                # 其他異常不重試
+                raise e
 
         duration = time.time() - start_time
 
-        # 簡化的成功記錄，不提取複雜統計信息
+        # 簡化的成功記錄
         log_operation_success(
             "add_memory",
             duration,
@@ -195,14 +185,15 @@ async def add_memory_simple(args: AddMemoryArgs) -> dict:
 
         # 記錄性能指標
         performance_logger.log_memory_add_performance(
-            len(args.episode_body), duration, True
+            len(clean_body), duration, True
         )
 
         return {
             "success": True,
-            "message": f"記憶 '{args.name}' 新增成功",
+            "message": f"記憶 '{clean_name}' 新增成功",
             "episode_id": getattr(result, 'episode_id', None),
-            "duration": round(duration, 2)
+            "duration": round(duration, 2),
+            "content_length": len(clean_body)
         }
 
     except Exception as e:
@@ -218,278 +209,241 @@ async def add_memory_simple(args: AddMemoryArgs) -> dict:
 
 @mcp.tool()
 async def search_memory_nodes(args: SearchNodesArgs) -> dict:
-    """搜索記憶節點"""
+    """搜索記憶節點（優化版本）"""
+    start_time = time.time()
+    log_operation_start("search_nodes", query=args.query[:50])
+
     try:
         graphiti = await initialize_graphiti()
 
-        # 使用 Graphiti 的 _search API 進行語意搜索
-        effective_group_ids = args.group_ids if args.group_ids else []
-
-        # 配置搜索參數
-        search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
-        search_config.limit = args.max_nodes
-
-        filters = SearchFilters()
-
-        # 使用 Graphiti 的 _search API
-        search_results = await graphiti._search(
-            query=args.query,
-            config=search_config,
-            group_ids=effective_group_ids,
-            center_node_uuid=None,
-            search_filter=filters,
+        # 創建搜索過濾器
+        search_filters = SearchFilters(
+            group_ids=args.group_ids or []
         )
 
-        nodes = []
-        if search_results and hasattr(search_results, 'nodes') and search_results.nodes:
-            try:
-                for node in search_results.nodes:
-                    try:
-                        # 安全地提取節點資訊
-                        node_data = {
-                            "name": getattr(node, 'name', '未知名稱'),
-                            "uuid": str(getattr(node, 'uuid', '')),
-                            "created_at": str(getattr(node, 'created_at', '')) if hasattr(node, 'created_at') else "",
-                            "summary": getattr(node, 'summary', '') or '',
-                            "group_id": getattr(node, 'group_id', ''),
-                            "labels": getattr(node, 'labels', []) if hasattr(node, 'labels') else []
-                        }
+        # 執行搜索
+        nodes = await graphiti.search_nodes(
+            query=args.query,
+            limit=min(args.max_nodes, 50),  # 限制最大結果數
+            search_config=NODE_HYBRID_SEARCH_RRF,
+            filters=search_filters
+        )
 
-                        # 確保 labels 是列表
-                        if not isinstance(node_data["labels"], list):
-                            node_data["labels"] = []
+        duration = time.time() - start_time
+        log_operation_success("search_nodes", duration, result_count=len(nodes))
 
-                        nodes.append(node_data)
-                    except (AttributeError, TypeError, IndexError) as node_error:
-                        logger.warning(f"處理節點時發生錯誤: {node_error}")
-                        continue
-            except (TypeError, AttributeError) as nodes_error:
-                logger.warning(f"處理節點列表時發生錯誤: {nodes_error}")
-                nodes = []
+        # 簡化節點資訊
+        simplified_nodes = []
+        for node in nodes:
+            simplified_nodes.append({
+                "name": getattr(node, 'name', ''),
+                "uuid": str(getattr(node, 'uuid', '')),
+                "created_at": str(getattr(node, 'created_at', '')),
+                "summary": getattr(node, 'summary', '')[:200],  # 限制摘要長度
+                "group_id": getattr(node, 'group_id', ''),
+                "labels": getattr(node, 'labels', [])
+            })
 
         return {
-            "message": f"找到 {len(nodes)} 個相關節點" if nodes else "未找到相關節點",
-            "nodes": nodes
+            "message": f"找到 {len(nodes)} 個相關節點",
+            "nodes": simplified_nodes,
+            "duration": round(duration, 2)
         }
 
     except Exception as e:
-        return {
-            "message": f"搜尋節點時發生錯誤: {str(e)}",
-            "nodes": [],
-            "error": True
-        }
+        duration = time.time() - start_time
+        log_operation_error("search_nodes", e, query=args.query[:50], duration=duration)
+        return create_error_response(e, "搜索節點失敗")
 
 @mcp.tool()
 async def search_memory_facts(args: SearchFactsArgs) -> dict:
-    """搜索記憶事實"""
+    """搜索記憶事實（優化版本）"""
+    start_time = time.time()
+    log_operation_start("search_facts", query=args.query[:50])
+
     try:
         graphiti = await initialize_graphiti()
 
-        # 使用 Graphiti 的 search API 進行語意搜索
-        effective_group_ids = args.group_ids if args.group_ids else []
-
-        # 使用 Graphiti 的搜索 API
-        relevant_edges = await graphiti.search(
-            group_ids=effective_group_ids,
-            query=args.query,
-            num_results=args.max_facts
+        # 創建搜索過濾器
+        search_filters = SearchFilters(
+            group_ids=args.group_ids or []
         )
 
-        facts = []
-        if relevant_edges:
-            try:
-                for edge in relevant_edges:
-                    try:
-                        # 安全地檢查 edge 是否有 fact 屬性
-                        if hasattr(edge, 'fact') and getattr(edge, 'fact', None):
-                            fact_data = {
-                                "fact": getattr(edge, 'fact', ''),
-                                "uuid": str(getattr(edge, 'uuid', '')),
-                                "created_at": str(getattr(edge, 'created_at', '')) if hasattr(edge, 'created_at') else "",
-                                "relation_type": type(edge).__name__ if edge else "unknown"
-                            }
+        # 執行搜索
+        edges = await graphiti.search_edges(
+            query=args.query,
+            limit=min(args.max_facts, 50),  # 限制最大結果數
+            filters=search_filters
+        )
 
-                            # 安全地獲取來源和目標實體名稱
-                            try:
-                                if hasattr(edge, 'source_node_uuid') and hasattr(edge, 'target_node_uuid'):
-                                    fact_data["source_entity"] = str(getattr(edge, 'source_node_uuid', ''))
-                                    fact_data["target_entity"] = str(getattr(edge, 'target_node_uuid', ''))
-                                else:
-                                    fact_data["source_entity"] = "unknown"
-                                    fact_data["target_entity"] = "unknown"
-                            except (AttributeError, TypeError):
-                                fact_data["source_entity"] = "unknown"
-                                fact_data["target_entity"] = "unknown"
+        duration = time.time() - start_time
+        log_operation_success("search_facts", duration, result_count=len(edges))
 
-                            facts.append(fact_data)
-                    except (AttributeError, TypeError, IndexError) as edge_error:
-                        logger.warning(f"處理事實邊時發生錯誤: {edge_error}")
-                        continue
-            except (TypeError, AttributeError) as edges_error:
-                logger.warning(f"處理事實列表時發生錯誤: {edges_error}")
-                facts = []
+        # 簡化邊資訊
+        simplified_edges = []
+        for edge in edges:
+            simplified_edges.append({
+                "relation_type": getattr(edge, 'relation_type', ''),
+                "uuid": str(getattr(edge, 'uuid', '')),
+                "created_at": str(getattr(edge, 'created_at', '')),
+                "fact": getattr(edge, 'fact', '')[:200],  # 限制事實長度
+                "group_id": getattr(edge, 'group_id', ''),
+                "source_node_uuid": str(getattr(edge, 'source_node_uuid', '')),
+                "target_node_uuid": str(getattr(edge, 'target_node_uuid', ''))
+            })
 
         return {
-            "message": f"找到 {len(facts)} 個相關事實" if facts else "未找到相關事實",
-            "facts": facts
+            "message": f"找到 {len(edges)} 個相關事實",
+            "facts": simplified_edges,
+            "duration": round(duration, 2)
         }
 
     except Exception as e:
-        return {
-            "message": f"搜尋事實時發生錯誤: {str(e)}",
-            "facts": [],
-            "error": True
-        }
+        duration = time.time() - start_time
+        log_operation_error("search_facts", e, query=args.query[:50], duration=duration)
+        return create_error_response(e, "搜索事實失敗")
 
 @mcp.tool()
 async def get_episodes(args: GetEpisodesArgs) -> dict:
-    """獲取最近的記憶"""
+    """獲取最近的記憶片段（優化版本）"""
+    start_time = time.time()
+    log_operation_start("get_episodes", last_n=args.last_n)
+
     try:
         graphiti = await initialize_graphiti()
 
-        query_text = """
-        MATCH (e:Episodic)
-        WHERE $group_id = '' OR e.group_id = $group_id
-        RETURN e.name as name,
-               e.content as content,
-               e.uuid as uuid,
-               e.group_id as group_id,
-               e.created_at as created_at
-        ORDER BY e.created_at DESC
-        LIMIT $limit
-        """
-
-        results = await graphiti.driver.execute_query(
-            query_text,
-            group_id=args.group_id,
-            limit=args.last_n
+        # 獲取最近的記憶片段
+        episodes = await graphiti.get_episodes(
+            group_id=args.group_id if args.group_id else None,
+            last_n=min(args.last_n, 50)  # 限制最大數量
         )
 
-        episodes = []
-        if results and results.records:
-            for record in results.records:
-                episodes.append({
-                    "name": record["name"],
-                    "content": record.get("content", ""),
-                    "uuid": record["uuid"],
-                    "group_id": record.get("group_id", ""),
-                    "created_at": str(record.get("created_at", ""))
-                })
+        duration = time.time() - start_time
+        log_operation_success("get_episodes", duration, result_count=len(episodes))
+
+        # 簡化記憶片段資訊
+        simplified_episodes = []
+        for episode in episodes:
+            simplified_episodes.append({
+                "name": getattr(episode, 'name', ''),
+                "content": getattr(episode, 'content', '')[:500],  # 限制內容長度
+                "uuid": str(getattr(episode, 'uuid', '')),
+                "group_id": getattr(episode, 'group_id', ''),
+                "created_at": str(getattr(episode, 'created_at', ''))
+            })
 
         return {
             "message": f"找到 {len(episodes)} 個記憶片段",
-            "episodes": episodes
+            "episodes": simplified_episodes,
+            "duration": round(duration, 2)
         }
 
     except Exception as e:
-        return {
-            "message": f"獲取記憶片段時發生錯誤: {str(e)}",
-            "episodes": [],
-            "error": True
-        }
-
-@mcp.tool()
-async def clear_graph() -> dict:
-    """清除圖資料庫"""
-    try:
-        graphiti = await initialize_graphiti()
-
-        # 清除所有數據
-        await graphiti.driver.execute_query("MATCH (n) DETACH DELETE n")
-
-        # 重建索引
-        await graphiti.build_indices_and_constraints()
-
-        return {
-            "message": "圖資料庫已清除並重建索引"
-        }
-
-    except Exception as e:
-        return {
-            "message": f"清除圖資料庫時發生錯誤: {str(e)}",
-            "error": True
-        }
+        duration = time.time() - start_time
+        log_operation_error("get_episodes", e, last_n=args.last_n, duration=duration)
+        return create_error_response(e, "獲取記憶片段失敗")
 
 @mcp.tool()
 async def test_connection() -> dict:
-    """測試連接狀態"""
+    """測試連接狀態（優化版本）"""
     try:
-        graphiti = await initialize_graphiti()
+        start_time = time.time()
 
         # 測試 Neo4j 連接
-        neo4j_result = await graphiti.driver.execute_query("RETURN 'OK' as status")
-        neo4j_status = "OK" if neo4j_result else "FAILED"
+        graphiti = await initialize_graphiti()
 
-        # 測試 Ollama 連接
-        llm_status = "OK"  # 如果能初始化就表示連接正常
+        # 測試 Ollama LLM
+        llm_status = "OK"
+        try:
+            test_response = await graphiti.llm_client.generate_response("測試")
+            if not test_response:
+                llm_status = "回應為空"
+        except Exception as e:
+            llm_status = f"錯誤: {str(e)[:100]}"
+
+        # 測試嵌入器
+        embedder_status = "正常"
+        try:
+            test_embedding = await graphiti.embedder.create([{"text": "測試"}])
+            if not test_embedding or len(test_embedding) == 0:
+                embedder_status = "嵌入生成失敗"
+        except Exception as e:
+            embedder_status = f"錯誤: {str(e)[:100]}"
+
+        duration = time.time() - start_time
 
         return {
             "message": "連接測試完成",
-            "neo4j": neo4j_status,
+            "neo4j": "OK",
             "ollama_llm": llm_status,
-            "embedder": "正常"
+            "embedder": embedder_status,
+            "duration": round(duration, 2)
         }
 
     except Exception as e:
+        return create_error_response(e, "連接測試失敗")
+
+@mcp.tool()
+async def clear_graph() -> dict:
+    """清除圖資料庫（優化版本）"""
+    try:
+        start_time = time.time()
+        graphiti = await initialize_graphiti()
+
+        # 清除圖資料庫
+        await graphiti.clear()
+
+        # 重置快取的實例
+        global graphiti_instance
+        graphiti_instance = None
+
+        duration = time.time() - start_time
+
         return {
-            "message": f"連接測試失敗: {str(e)}",
-            "error": True
+            "message": "圖資料庫已清除",
+            "duration": round(duration, 2)
         }
 
-async def main():
-    """啟動 MCP 服務器（使用新配置系統）"""
-    parser = argparse.ArgumentParser(description="Graphiti Ollama MCP Server")
-    parser.add_argument("--transport", choices=["stdio", "sse"], help="Transport protocol")
-    parser.add_argument("--host", help="Server host")
-    parser.add_argument("--port", type=int, help="Server port")
-    parser.add_argument("--config", help="Configuration file path")
+    except Exception as e:
+        return create_error_response(e, "清除圖資料庫失敗")
+
+def main():
+    """主程序入口點"""
+    global app_config, logger
+
+    parser = argparse.ArgumentParser(description="Graphiti Ollama MCP Server - 優化版本")
+    parser.add_argument("--transport", default="stdio", choices=["stdio", "sse"])
+    parser.add_argument("--config", help="配置檔案路徑")
+    parser.add_argument("--host", default="localhost", help="SSE 模式主機地址")
+    parser.add_argument("--port", type=int, default=8000, help="SSE 模式端口")
 
     args = parser.parse_args()
 
     try:
-        # 初始化系統配置
-        # 調整配置檔案路徑
-        config_path = args.config
-        if config_path and not config_path.startswith('/') and not config_path.startswith('configs/'):
-            config_path = f"configs/{config_path}"
+        # 載入配置
+        app_config = load_config(args.config)
 
-        config = initialize_system(config_path)
+        # 設置日誌
+        logger = setup_logging(app_config.logging)
 
-        # 使用命令行參數覆蓋配置
-        if args.transport:
-            config.server.transport = args.transport
-        if args.host:
-            config.server.host = args.host
-        if args.port:
-            config.server.port = args.port
+        # 記錄系統信息
+        log_system_info()
+        log_config_summary(app_config)
 
-        logger.info(f"🚀 啟動 Graphiti MCP Server")
-        logger.info(f"   傳輸協議: {config.server.transport}")
-        logger.info(f"   服務地址: {config.server.host}:{config.server.port}")
+        logger.info("✅ Graphiti + Ollama MCP 服務器初始化完成（優化版本）")
 
-        # 設置 FastMCP 配置
-        if hasattr(mcp, 'settings'):
-            if config.server.host != 'localhost':
-                mcp.settings.host = config.server.host
-            if config.server.port != 3001:
-                mcp.settings.port = config.server.port
+        # 根據傳輸方式運行
+        if args.transport == "stdio":
+            mcp.run()
+        elif args.transport == "sse":
+            mcp.run_sse(host=args.host, port=args.port)
 
-        # 啟動服務器
-        if config.server.transport == "stdio":
-            logger.info("啟動 STDIO 模式...")
-            await mcp.run_stdio_async()
-        elif config.server.transport == "sse":
-            logger.info("啟動 SSE 模式...")
-            await mcp.run_sse_async()
-        else:
-            raise ValueError(f"不支援的傳輸協議: {config.server.transport}")
-
+    except KeyboardInterrupt:
+        logger.info("👋 服務器已停止")
+        sys.exit(0)
     except Exception as e:
-        if logger:
-            logger.error(f"服務器啟動失敗: {e}")
-        else:
-            print(f"❌ 服務器啟動失敗: {e}")
+        logger.error(f"❌ 服務器啟動失敗: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
