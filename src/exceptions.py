@@ -293,3 +293,15 @@ class CommonErrors:
                 "suggestion": "檢查數據結構或啟用自動修復功能"
             }
         )
+
+    @staticmethod
+    def operation_failed(operation: str, reason: str) -> GraphitiMCPError:
+        return GraphitiMCPError(
+            f"操作 '{operation}' 失敗: {reason}",
+            error_code="OPERATION_FAILED",
+            details={
+                "operation": operation,
+                "reason": reason,
+                "suggestion": "檢查操作參數或系統狀態"
+            }
+        )

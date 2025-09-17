@@ -173,13 +173,13 @@ async def add_memory_simple(args: AddMemoryArgs) -> dict:
     try:
         from src.safe_memory_add import safe_add_memory
 
-        graphiti = await get_graphiti_instance()
+        graphiti = await initialize_graphiti()
 
         # 使用安全方法添加記憶 - 直接創建 EpisodicNode
         result = await safe_add_memory(
             graphiti,
             name=args.name,
-            content=args.content,
+            content=args.episode_body,
             group_id=args.group_id,
             source_description=args.source_description
         )
@@ -199,14 +199,16 @@ async def add_memory_simple(args: AddMemoryArgs) -> dict:
             }
         else:
             log_operation_error("add_memory_safe", Exception(result["error"]), duration=duration)
-            return create_error_response(CommonErrors.OPERATION_FAILED,
-                                       f"安全記憶添加失敗: {result['error']}")
+            return create_error_response(
+                CommonErrors.operation_failed("add_memory_safe", result["error"]),
+                f"安全記憶添加失敗: {result['error']}")
 
     except Exception as e:
         duration = time.time() - start_time
         log_operation_error("add_memory_safe", e, duration=duration)
-        return create_error_response(CommonErrors.OPERATION_FAILED,
-                                   f"記憶添加過程中發生錯誤: {str(e)}")
+        return create_error_response(
+            CommonErrors.operation_failed("add_memory_safe", str(e)),
+            f"記憶添加過程中發生錯誤: {str(e)}")
 
 @mcp.tool()
 async def search_memory_nodes(args: SearchNodesArgs) -> dict:
