@@ -426,6 +426,7 @@ def main():
     parser.add_argument("--config", help="配置檔案路徑")
     parser.add_argument("--host", default="localhost", help="SSE 模式主機地址")
     parser.add_argument("--port", type=int, default=8000, help="SSE 模式端口")
+    parser.add_argument("--group-id", help="圖形命名空間 ID，用於組織相關數據")
 
     args = parser.parse_args()
 
@@ -454,9 +455,11 @@ def main():
 
         # 根據傳輸方式運行
         if args.transport == "stdio":
-            mcp.run()
+            import asyncio
+            asyncio.run(mcp.run_stdio_async())
         elif args.transport == "sse":
-            mcp.run_sse(host=args.host, port=args.port)
+            import asyncio
+            asyncio.run(mcp.run_sse_async())
 
     except KeyboardInterrupt:
         import logging
