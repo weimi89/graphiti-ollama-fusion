@@ -54,26 +54,7 @@ graphiti_instance = None  # 快取 Graphiti 實例
 episode_queues: dict[str, asyncio.Queue] = {}
 queue_workers: dict[str, bool] = {}
 
-# 參數模型
-class AddMemoryArgs(BaseModel):
-    name: str = Field(description="記憶片段的名稱")
-    episode_body: str = Field(description="記憶片段的內容")
-    group_id: str = Field(default="default", description="記憶分組 ID")
-    source_description: str = Field(default="MCP Server", description="來源描述")
-
-class SearchNodesArgs(BaseModel):
-    query: str = Field(description="搜尋關鍵字")
-    max_nodes: int = Field(default=10, description="返回節點的最大數量")
-    group_ids: Optional[List[str]] = Field(default=None, description="用於篩選的分組 ID")
-
-class SearchFactsArgs(BaseModel):
-    query: str = Field(description="搜尋關鍵字")
-    max_facts: int = Field(default=10, description="返回事實的最大數量")
-    group_ids: Optional[List[str]] = Field(default=None, description="用於篩選的分組 ID")
-
-class GetEpisodesArgs(BaseModel):
-    last_n: int = Field(default=10, description="獲取最近記憶片段的數量")
-    group_id: str = Field(default="", description="用於篩選的分組 ID")
+# MCP 工具不再需要 Pydantic 模型參數，已改為標準函數參數
 
 async def process_episode_queue(group_id: str):
     """處理特定 group_id 的記憶片段隊列"""
@@ -165,10 +146,22 @@ async def initialize_graphiti():
 mcp = FastMCP("graphiti-ollama-memory")
 
 @mcp.tool()
-async def add_memory_simple(args: AddMemoryArgs) -> dict:
-    """使用安全方法添加記憶 - 完全避開 IndexError 問題"""
+async def add_memory_simple(
+    name: str,
+    episode_body: str,
+    group_id: str = "default",
+    source_description: str = "MCP Server"
+) -> dict:
+    """使用安全方法添加記憶 - 完全避開 IndexError 問題
+    
+    Args:
+        name: 記憶片段的名稱
+        episode_body: 記憶片段的內容
+        group_id: 記憶分組 ID (預設: default)
+        source_description: 來源描述 (預設: MCP Server)
+    """
     start_time = time.time()
-    log_operation_start("add_memory_safe", name=args.name[:50])
+    log_operation_start("add_memory_safe", name=name[:50])
 
     try:
         from src.safe_memory_add import safe_add_memory
@@ -178,21 +171,21 @@ async def add_memory_simple(args: AddMemoryArgs) -> dict:
         # 使用安全方法添加記憶 - 直接創建 EpisodicNode
         result = await safe_add_memory(
             graphiti,
-            name=args.name,
-            content=args.episode_body,
-            group_id=args.group_id,
-            source_description=args.source_description
+            name=name,
+            content=episode_body,
+            group_id=group_id,
+            source_description=source_description
         )
 
         duration = time.time() - start_time
 
         if result["success"]:
-            log_operation_success("add_memory_safe", duration, name=args.name)
+            log_operation_success("add_memory_safe", duration, name=name)
             return {
                 "success": True,
                 "message": result["message"],
                 "uuid": result["uuid"],
-                "group_id": args.group_id,
+                "group_id": group_id,
                 "processing_time": f"{duration:.2f}s",
                 "method": "safe_direct_node_creation",
                 "note": "使用安全方法，完全避開實體提取以防止 IndexError"
@@ -211,28 +204,38 @@ async def add_memory_simple(args: AddMemoryArgs) -> dict:
             f"記憶添加過程中發生錯誤: {str(e)}")
 
 @mcp.tool()
-async def search_memory_nodes(args: SearchNodesArgs) -> dict:
-    """搜索記憶節點"""
+async def search_memory_nodes(
+    query: str,
+    max_nodes: int = 10,
+    group_ids: Optional[List[str]] = None
+) -> dict:
+    """搜索記憶節點
+    
+    Args:
+        query: 搜尋關鍵字
+        max_nodes: 返回節點的最大數量 (預設: 10)
+        group_ids: 用於篩選的分組 ID (預設: None)
+    """
     start_time = time.time()
-    log_operation_start("search_nodes", query=args.query[:50])
+    log_operation_start("search_nodes", query=query[:50])
 
     try:
         graphiti = await initialize_graphiti()
 
         # 創建搜索過濾器
         search_filters = SearchFilters(
-            group_ids=args.group_ids or []
+            group_ids=group_ids or []
         )
 
         # 配置搜索
         search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
-        search_config.limit = min(args.max_nodes, 50)
+        search_config.limit = min(max_nodes, 50)
 
         # 執行搜索 (使用私有 _search 方法)
         search_results = await graphiti._search(
-            query=args.query,
+            query=query,
             config=search_config,
-            group_ids=args.group_ids or [],
+            group_ids=group_ids or [],
             search_filter=search_filters
         )
 
@@ -262,27 +265,37 @@ async def search_memory_nodes(args: SearchNodesArgs) -> dict:
 
     except Exception as e:
         duration = time.time() - start_time
-        log_operation_error("search_nodes", e, query=args.query[:50], duration=duration)
+        log_operation_error("search_nodes", e, query=query[:50], duration=duration)
         return create_error_response(e, "搜索節點失敗")
 
 @mcp.tool()
-async def search_memory_facts(args: SearchFactsArgs) -> dict:
-    """搜索記憶事實"""
+async def search_memory_facts(
+    query: str,
+    max_facts: int = 10,
+    group_ids: Optional[List[str]] = None
+) -> dict:
+    """搜索記憶事實
+    
+    Args:
+        query: 搜尋關鍵字
+        max_facts: 返回事實的最大數量 (預設: 10)
+        group_ids: 用於篩選的分組 ID (預設: None)
+    """
     start_time = time.time()
-    log_operation_start("search_facts", query=args.query[:50])
+    log_operation_start("search_facts", query=query[:50])
 
     try:
         graphiti = await initialize_graphiti()
 
         # 創建搜索過濾器
         search_filters = SearchFilters(
-            group_ids=args.group_ids or []
+            group_ids=group_ids or []
         )
 
         # 執行搜索
         edges = await graphiti.search(
-            query=args.query,
-            num_results=min(args.max_facts, 50),  # 限制最大結果數
+            query=query,
+            num_results=min(max_facts, 50),  # 限制最大結果數
             search_filter=search_filters
         )
 
@@ -310,22 +323,30 @@ async def search_memory_facts(args: SearchFactsArgs) -> dict:
 
     except Exception as e:
         duration = time.time() - start_time
-        log_operation_error("search_facts", e, query=args.query[:50], duration=duration)
+        log_operation_error("search_facts", e, query=query[:50], duration=duration)
         return create_error_response(e, "搜索事實失敗")
 
 @mcp.tool()
-async def get_episodes(args: GetEpisodesArgs) -> dict:
-    """獲取最近的記憶片段"""
+async def get_episodes(
+    last_n: int = 10,
+    group_id: str = ""
+) -> dict:
+    """獲取最近的記憶片段
+    
+    Args:
+        last_n: 獲取最近記憶片段的數量 (預設: 10)
+        group_id: 用於篩選的分組 ID (預設: "")
+    """
     start_time = time.time()
-    log_operation_start("get_episodes", last_n=args.last_n)
+    log_operation_start("get_episodes", last_n=last_n)
 
     try:
         graphiti = await initialize_graphiti()
 
         # 獲取最近的記憶片段
         episodes = await graphiti.get_episodes(
-            group_id=args.group_id if args.group_id else None,
-            last_n=min(args.last_n, 50)  # 限制最大數量
+            group_id=group_id if group_id else None,
+            last_n=min(last_n, 50)  # 限制最大數量
         )
 
         duration = time.time() - start_time
