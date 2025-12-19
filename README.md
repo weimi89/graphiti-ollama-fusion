@@ -33,12 +33,25 @@ graphiti/
 
 ### 1. 系統需求
 
-- **Python**: 3.11+
+- **Python**: 3.10+ (推薦 3.11+)
 - **Neo4j**: 4.0+ (bolt://localhost:7687)
 - **Ollama**: 本地運行 (http://localhost:11434)
+- **Node.js**: 18+ (用於 pm2 背景執行)
 - **必需模型**:
   - `qwen2.5:7b` (LLM)
   - `nomic-embed-text:v1.5` (嵌入)
+
+### 核心依賴版本 (2025-12-19 更新)
+
+| 套件 | 版本 | 說明 |
+|------|------|------|
+| mcp | >=1.24.0 | Model Context Protocol SDK |
+| openai | >=2.14.0 | OpenAI API 客戶端 |
+| graphiti-core | >=0.24.3 | Graphiti 知識圖譜核心 |
+| azure-identity | >=1.25.1 | Azure 身份驗證 |
+| aiohttp | >=3.13.2 | 異步 HTTP 客戶端 |
+| uvicorn | >=0.38.0 | ASGI 服務器 |
+| psutil | >=7.1.3 | 系統監控 |
 
 ### 💻 硬體效能建議
 
@@ -273,7 +286,86 @@ uv run python graphiti_mcp_server.py --transport sse --port 8000
 
 # 使用自定義配置
 uv run python graphiti_mcp_server.py --config your_config.json --transport sse
+
+# 🆕 使用 pm2 背景執行 (推薦)
+pm2 start ecosystem.config.cjs
 ```
+
+## 🚀 pm2 背景執行設置 (推薦)
+
+使用 pm2 可以讓 MCP server 在背景持續運行，無需手動開啟終端視窗。
+
+### 1. 安裝 pm2
+
+```bash
+npm install -g pm2
+```
+
+### 2. 啟動服務
+
+```bash
+# 啟動背景服務
+pm2 start ecosystem.config.cjs
+
+# 查看狀態
+pm2 status
+
+# 查看日誌
+pm2 logs graphiti-mcp-sse
+
+# 重啟服務
+pm2 restart graphiti-mcp-sse
+
+# 停止服務
+pm2 stop graphiti-mcp-sse
+```
+
+### 3. 設置開機自動啟動
+
+```bash
+# 保存當前進程列表
+pm2 save
+
+# 生成開機啟動腳本 (根據系統提示執行)
+pm2 startup
+```
+
+### 4. ecosystem.config.cjs 配置
+
+專案已包含 `ecosystem.config.cjs` 配置檔案：
+
+```javascript
+module.exports = {
+  apps: [
+    {
+      name: 'graphiti-mcp-sse',
+      script: '/path/to/uv',
+      args: 'run python graphiti_mcp_server.py --transport sse --host 0.0.0.0 --port 8000',
+      cwd: '/path/to/graphiti',
+      interpreter: 'none',
+      autorestart: true,
+      max_restarts: 10,
+      max_memory_restart: '500M',
+    }
+  ]
+};
+```
+
+### 5. Claude Code SSE 配置
+
+使用 pm2 背景執行後，在 Claude Code 的 MCP 配置中使用 SSE 連接：
+
+```json
+{
+  "mcpServers": {
+    "graphiti-memory": {
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+```
+
+---
 
 ## 🔗 MCP 客戶端設定
 
@@ -954,6 +1046,38 @@ grep "ERROR\|WARN" logs/graphiti_mcp.log
 # 監控性能
 grep "duration" logs/graphiti_mcp.log
 ```
+
+### pm2 相關問題
+
+1. **pm2 服務未啟動**
+   ```bash
+   # 檢查 pm2 狀態
+   pm2 status
+   
+   # 重啟服務
+   pm2 restart graphiti-mcp-sse
+   
+   # 查看錯誤日誌
+   pm2 logs graphiti-mcp-sse --err --lines 50
+   ```
+
+2. **端口被佔用**
+   ```bash
+   # 檢查端口使用
+   lsof -i :8000
+   
+   # 終止佔用進程
+   kill -9 $(lsof -t -i :8000)
+   ```
+
+3. **SSE 連接失敗**
+   ```bash
+   # 測試 SSE 端點
+   curl -N http://localhost:8000/sse
+   
+   # 檢查服務是否正常
+   pm2 logs graphiti-mcp-sse --lines 20
+   ```
 
 ## 🛠️ 開發工具
 

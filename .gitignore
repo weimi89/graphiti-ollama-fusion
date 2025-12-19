@@ -118,3 +118,6 @@ models/
 # 建置和部署檔案
 *.tar.gz
 *.zip
+
+uv.lock
+logs/*
