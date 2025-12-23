@@ -344,8 +344,9 @@ async def get_episodes(
         graphiti = await initialize_graphiti()
 
         # 獲取最近的記憶片段
-        episodes = await graphiti.get_episodes(
-            group_id=group_id if group_id else None,
+        episodes = await graphiti.retrieve_episodes(
+            reference_time=datetime.now(timezone.utc),
+            group_ids=[group_id] if group_id else None,
             last_n=min(last_n, 50)  # 限制最大數量
         )
 
@@ -371,7 +372,7 @@ async def get_episodes(
 
     except Exception as e:
         duration = time.time() - start_time
-        log_operation_error("get_episodes", e, last_n=args.last_n, duration=duration)
+        log_operation_error("get_episodes", e, last_n=last_n, duration=duration)
         return create_error_response(e, "獲取記憶片段失敗")
 
 @mcp.tool()
@@ -386,7 +387,10 @@ async def test_connection() -> dict:
         # 測試 Ollama LLM
         llm_status = "OK"
         try:
-            test_response = await graphiti.llm_client.generate_response("測試")
+            # 使用正確的訊息列表格式
+            test_response = await graphiti.llm_client.generate_response([
+                {"role": "user", "content": "請回答：1+1=?"}
+            ])
             if not test_response:
                 llm_status = "回應為空"
         except Exception as e:

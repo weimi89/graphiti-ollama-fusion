@@ -117,6 +117,10 @@ class OptimizedOllamaClient(LLMClient):
         **kwargs
     ) -> Any:
         """生成響應"""
+        # 類型檢查：如果傳入的是字串，自動轉換為訊息列表格式
+        if isinstance(messages, str):
+            messages = [{"role": "user", "content": messages}]
+
         # 轉換消息格式
         ollama_messages = []
         for msg in messages:
