@@ -1,23 +1,63 @@
 #!/usr/bin/env python3
 """
-Graphiti MCP Server Exception Classes
-提供結構化的異常處理和錯誤分類
+Graphiti MCP Server 異常處理模組
+=================================
+
+提供結構化的異常類別和錯誤處理工具。
+
+此模組定義了 Graphiti MCP Server 專用的異常階層，
+支援錯誤分類、詳細資訊追蹤和 JSON 序列化。
+
+異常階層：
+    GraphitiMCPError（基礎類別）
+    ├── ConfigurationError   - 配置錯誤
+    ├── ConnectionError      - 連接錯誤
+    ├── OllamaError          - Ollama 服務錯誤
+    ├── EmbeddingError       - 嵌入向量錯誤
+    ├── CosineSimilarityError - 餘弦相似度計算錯誤
+    ├── Neo4jError           - Neo4j 資料庫錯誤
+    ├── GraphitiAPIError     - Graphiti API 錯誤
+    ├── ValidationError      - 資料驗證錯誤
+    │   └── PydanticValidationError - Pydantic 驗證錯誤
+    ├── MemoryError          - 記憶處理錯誤
+    └── SearchError          - 搜索錯誤
 """
 
-from typing import Optional, Dict, Any
 import traceback
+from typing import Any, Dict, Optional
 
 
 class GraphitiMCPError(Exception):
-    """Graphiti MCP 基礎異常類"""
+    """
+    Graphiti MCP 基礎異常類別。
+
+    所有 Graphiti MCP 相關的異常都繼承自此類別，
+    提供統一的錯誤資訊格式和序列化功能。
+
+    Attributes:
+        message: 錯誤訊息
+        error_code: 錯誤代碼
+        details: 額外的錯誤詳情
+        cause: 原始異常（如有）
+        traceback_str: 堆疊追蹤字串
+    """
 
     def __init__(
         self,
         message: str,
         error_code: str = "GRAPHITI_ERROR",
         details: Optional[Dict[str, Any]] = None,
-        cause: Optional[Exception] = None
+        cause: Optional[Exception] = None,
     ):
+        """
+        初始化異常。
+
+        Args:
+            message: 錯誤訊息
+            error_code: 錯誤代碼
+            details: 額外的錯誤詳情
+            cause: 原始異常
+        """
         super().__init__(message)
         self.message = message
         self.error_code = error_code
@@ -26,12 +66,17 @@ class GraphitiMCPError(Exception):
         self.traceback_str = traceback.format_exc() if cause else None
 
     def to_dict(self) -> Dict[str, Any]:
-        """轉換為字典格式（用於 JSON 響應）"""
+        """
+        轉換為字典格式（用於 JSON 響應）。
+
+        Returns:
+            dict: 包含錯誤資訊的字典
+        """
         error_dict = {
             "error": True,
             "error_code": self.error_code,
             "message": self.message,
-            "details": self.details
+            "details": self.details,
         }
 
         if self.cause:
@@ -43,265 +88,362 @@ class GraphitiMCPError(Exception):
 
         return error_dict
 
-    def __str__(self):
-        base = f"[{self.error_code}] {self.message}"
+    def __str__(self) -> str:
+        """返回格式化的錯誤字串。"""
+        parts = [f"[{self.error_code}] {self.message}"]
+
         if self.details:
-            base += f" | Details: {self.details}"
+            parts.append(f"Details: {self.details}")
+
         if self.cause:
-            base += f" | Caused by: {self.cause}"
-        return base
+            parts.append(f"Caused by: {self.cause}")
+
+        return " | ".join(parts)
+
+
+# =============================================================================
+# 特定異常類別
+# =============================================================================
 
 
 class ConfigurationError(GraphitiMCPError):
-    """配置相關錯誤"""
+    """
+    配置相關錯誤。
 
-    def __init__(self, message: str, config_field: Optional[str] = None, **kwargs):
-        super().__init__(
-            message,
-            error_code="CONFIG_ERROR",
-            details={"config_field": config_field} if config_field else {},
-            **kwargs
-        )
+    當配置檔案無效、缺少必要設定或設定值不正確時拋出。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        config_field: Optional[str] = None,
+        **kwargs,
+    ):
+        details = {"config_field": config_field} if config_field else {}
+        super().__init__(message, error_code="CONFIG_ERROR", details=details, **kwargs)
 
 
 class ConnectionError(GraphitiMCPError):
-    """連接相關錯誤"""
+    """
+    連接相關錯誤。
 
-    def __init__(self, message: str, service: str, endpoint: Optional[str] = None, **kwargs):
-        super().__init__(
-            message,
-            error_code="CONNECTION_ERROR",
-            details={"service": service, "endpoint": endpoint},
-            **kwargs
-        )
+    當無法建立與外部服務的連接時拋出。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        service: str,
+        endpoint: Optional[str] = None,
+        **kwargs,
+    ):
+        details = {"service": service, "endpoint": endpoint}
+        super().__init__(message, error_code="CONNECTION_ERROR", details=details, **kwargs)
 
 
 class OllamaError(GraphitiMCPError):
-    """Ollama 服務相關錯誤"""
+    """
+    Ollama 服務相關錯誤。
 
-    def __init__(self, message: str, model: Optional[str] = None, operation: Optional[str] = None, **kwargs):
-        super().__init__(
-            message,
-            error_code="OLLAMA_ERROR",
-            details={"model": model, "operation": operation},
-            **kwargs
-        )
+    當 Ollama API 請求失敗或模型不可用時拋出。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        model: Optional[str] = None,
+        operation: Optional[str] = None,
+        **kwargs,
+    ):
+        details = kwargs.pop("details", {})
+        details.update({"model": model, "operation": operation})
+        super().__init__(message, error_code="OLLAMA_ERROR", details=details, **kwargs)
 
 
 class EmbeddingError(GraphitiMCPError):
-    """嵌入向量相關錯誤"""
+    """
+    嵌入向量相關錯誤。
 
-    def __init__(self, message: str, text_length: Optional[int] = None, vector_dim: Optional[int] = None, **kwargs):
-        super().__init__(
-            message,
-            error_code="EMBEDDING_ERROR",
-            details={"text_length": text_length, "vector_dim": vector_dim},
-            **kwargs
-        )
+    當嵌入向量生成失敗或向量格式不正確時拋出。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        text_length: Optional[int] = None,
+        vector_dim: Optional[int] = None,
+        **kwargs,
+    ):
+        details = {"text_length": text_length, "vector_dim": vector_dim}
+        super().__init__(message, error_code="EMBEDDING_ERROR", details=details, **kwargs)
 
 
 class CosineSimilarityError(GraphitiMCPError):
-    """Cosine Similarity 計算錯誤"""
+    """
+    Cosine Similarity 計算錯誤。
+
+    當向量格式不正確導致相似度計算失敗時拋出。
+    """
 
     def __init__(
         self,
         message: str,
         search_vector_type: Optional[str] = None,
         search_vector_shape: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ):
-        super().__init__(
-            message,
-            error_code="COSINE_SIMILARITY_ERROR",
-            details={
+        details = kwargs.pop("details", {})
+        details.update(
+            {
                 "search_vector_type": search_vector_type,
-                "search_vector_shape": search_vector_shape
-            },
-            **kwargs
+                "search_vector_shape": search_vector_shape,
+            }
+        )
+        super().__init__(
+            message, error_code="COSINE_SIMILARITY_ERROR", details=details, **kwargs
         )
 
 
 class Neo4jError(GraphitiMCPError):
-    """Neo4j 資料庫相關錯誤"""
+    """
+    Neo4j 資料庫相關錯誤。
 
-    def __init__(self, message: str, query: Optional[str] = None, parameters: Optional[Dict] = None, **kwargs):
-        super().__init__(
-            message,
-            error_code="NEO4J_ERROR",
-            details={"query": query, "parameters": parameters},
-            **kwargs
-        )
+    當資料庫連接失敗或查詢執行錯誤時拋出。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        query: Optional[str] = None,
+        parameters: Optional[Dict] = None,
+        **kwargs,
+    ):
+        details = kwargs.pop("details", {})
+        details.update({"query": query, "parameters": parameters})
+        super().__init__(message, error_code="NEO4J_ERROR", details=details, **kwargs)
 
 
 class GraphitiAPIError(GraphitiMCPError):
-    """Graphiti API 相關錯誤"""
+    """
+    Graphiti API 相關錯誤。
 
-    def __init__(self, message: str, operation: str, episode_id: Optional[str] = None, **kwargs):
-        super().__init__(
-            message,
-            error_code="GRAPHITI_API_ERROR",
-            details={"operation": operation, "episode_id": episode_id},
-            **kwargs
-        )
+    當 Graphiti 核心 API 呼叫失敗時拋出。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        operation: str,
+        episode_id: Optional[str] = None,
+        **kwargs,
+    ):
+        details = {"operation": operation, "episode_id": episode_id}
+        super().__init__(message, error_code="GRAPHITI_API_ERROR", details=details, **kwargs)
 
 
 class ValidationError(GraphitiMCPError):
-    """數據驗證錯誤"""
+    """
+    資料驗證錯誤。
 
-    def __init__(self, message: str, field: Optional[str] = None, value: Optional[Any] = None, **kwargs):
-        super().__init__(
-            message,
-            error_code="VALIDATION_ERROR",
-            details={"field": field, "value": str(value) if value is not None else None},
-            **kwargs
-        )
+    當輸入資料不符合預期格式時拋出。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        field: Optional[str] = None,
+        value: Optional[Any] = None,
+        **kwargs,
+    ):
+        details = {
+            "field": field,
+            "value": str(value) if value is not None else None,
+        }
+        super().__init__(message, error_code="VALIDATION_ERROR", details=details, **kwargs)
 
 
 class PydanticValidationError(ValidationError):
-    """Pydantic 驗證錯誤"""
+    """
+    Pydantic 驗證錯誤。
 
-    def __init__(self, message: str, validation_errors: Optional[list] = None, **kwargs):
-        super().__init__(
-            message,
-            field="pydantic_validation",
-            **kwargs
-        )
+    當 Pydantic 模型驗證失敗時拋出。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        validation_errors: Optional[list] = None,
+        **kwargs,
+    ):
+        super().__init__(message, field="pydantic_validation", **kwargs)
+        self.error_code = "PYDANTIC_VALIDATION_ERROR"
+
         if validation_errors:
             self.details["validation_errors"] = validation_errors
-        self.error_code = "PYDANTIC_VALIDATION_ERROR"
 
 
 class MemoryError(GraphitiMCPError):
-    """記憶處理相關錯誤"""
+    """
+    記憶處理相關錯誤。
 
-    def __init__(self, message: str, memory_type: str, memory_id: Optional[str] = None, **kwargs):
-        super().__init__(
-            message,
-            error_code="MEMORY_ERROR",
-            details={"memory_type": memory_type, "memory_id": memory_id},
-            **kwargs
-        )
+    當記憶添加、檢索或刪除操作失敗時拋出。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        memory_type: str,
+        memory_id: Optional[str] = None,
+        **kwargs,
+    ):
+        details = {"memory_type": memory_type, "memory_id": memory_id}
+        super().__init__(message, error_code="MEMORY_ERROR", details=details, **kwargs)
 
 
 class SearchError(GraphitiMCPError):
-    """搜索相關錯誤"""
+    """
+    搜索相關錯誤。
 
-    def __init__(self, message: str, search_type: str, search_query: Optional[str] = None, **kwargs):
-        super().__init__(
-            message,
-            error_code="SEARCH_ERROR",
-            details={"search_type": search_type, "search_query": search_query},
-            **kwargs
-        )
+    當搜索操作失敗時拋出。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        search_type: str,
+        search_query: Optional[str] = None,
+        **kwargs,
+    ):
+        details = {"search_type": search_type, "search_query": search_query}
+        super().__init__(message, error_code="SEARCH_ERROR", details=details, **kwargs)
 
 
+# =============================================================================
 # 異常處理工具函數
+# =============================================================================
+
+
 def handle_exception(exc: Exception, context: str = "") -> GraphitiMCPError:
-    """將一般異常轉換為 Graphiti 異常"""
+    """
+    將一般異常轉換為 Graphiti 異常。
+
+    根據異常訊息內容自動分類異常類型。
+
+    Args:
+        exc: 原始異常
+        context: 額外的上下文資訊
+
+    Returns:
+        GraphitiMCPError: 對應類型的 Graphiti 異常
+    """
     if isinstance(exc, GraphitiMCPError):
         return exc
 
-    # 根據異常類型進行分類
-    if "neo4j" in str(exc).lower() or "bolt" in str(exc).lower():
-        return Neo4jError(
-            f"Neo4j 操作失敗: {str(exc)}",
-            cause=exc
-        )
+    exc_str = str(exc).lower()
 
-    if "ollama" in str(exc).lower():
-        return OllamaError(
-            f"Ollama 服務錯誤: {str(exc)}",
-            cause=exc
-        )
+    # 根據異常內容分類
+    if "neo4j" in exc_str or "bolt" in exc_str:
+        return Neo4jError(f"Neo4j 操作失敗: {exc}", cause=exc)
 
-    if "embed" in str(exc).lower() or "vector" in str(exc).lower():
-        return EmbeddingError(
-            f"嵌入向量錯誤: {str(exc)}",
-            cause=exc
-        )
+    if "ollama" in exc_str:
+        return OllamaError(f"Ollama 服務錯誤: {exc}", cause=exc)
 
-    if "cosine" in str(exc).lower() or "similarity" in str(exc).lower():
-        return CosineSimilarityError(
-            f"Cosine Similarity 錯誤: {str(exc)}",
-            cause=exc
-        )
+    if "embed" in exc_str or "vector" in exc_str:
+        return EmbeddingError(f"嵌入向量錯誤: {exc}", cause=exc)
 
-    if "validation" in str(exc).lower() or "pydantic" in str(exc).lower():
-        return PydanticValidationError(
-            f"驗證錯誤: {str(exc)}",
-            cause=exc
-        )
+    if "cosine" in exc_str or "similarity" in exc_str:
+        return CosineSimilarityError(f"Cosine Similarity 錯誤: {exc}", cause=exc)
+
+    if "validation" in exc_str or "pydantic" in exc_str:
+        return PydanticValidationError(f"驗證錯誤: {exc}", cause=exc)
 
     # 預設處理
-    return GraphitiMCPError(
-        f"{context}: {str(exc)}" if context else str(exc),
-        error_code="UNKNOWN_ERROR",
-        cause=exc
-    )
+    message = f"{context}: {exc}" if context else str(exc)
+    return GraphitiMCPError(message, error_code="UNKNOWN_ERROR", cause=exc)
 
 
 def create_error_response(exc: Exception, context: str = "") -> Dict[str, Any]:
-    """創建標準化的錯誤響應"""
+    """
+    建立標準化的錯誤響應。
+
+    Args:
+        exc: 異常物件
+        context: 額外的上下文資訊
+
+    Returns:
+        dict: 標準化的錯誤響應字典
+    """
     graphiti_error = handle_exception(exc, context)
     return graphiti_error.to_dict()
 
 
+# =============================================================================
 # 預定義的常見錯誤
+# =============================================================================
+
+
 class CommonErrors:
-    """常見錯誤的預定義類"""
+    """
+    常見錯誤的工廠類別。
+
+    提供建立常見錯誤的便利方法。
+    """
 
     @staticmethod
     def ollama_connection_failed(base_url: str) -> OllamaError:
+        """建立 Ollama 連接失敗錯誤。"""
         return OllamaError(
-            f"無法連接到 Ollama 服務",
-            details={"base_url": base_url, "suggestion": "請確認 Ollama 服務正在運行"}
+            "無法連接到 Ollama 服務",
+            details={"base_url": base_url, "suggestion": "請確認 Ollama 服務正在運行"},
         )
 
     @staticmethod
     def neo4j_connection_failed(uri: str) -> Neo4jError:
+        """建立 Neo4j 連接失敗錯誤。"""
         return Neo4jError(
-            f"無法連接到 Neo4j 資料庫",
-            details={"uri": uri, "suggestion": "請確認 Neo4j 服務正在運行並檢查連接參數"}
+            "無法連接到 Neo4j 資料庫",
+            details={"uri": uri, "suggestion": "請確認 Neo4j 服務正在運行並檢查連接參數"},
         )
 
     @staticmethod
     def model_not_found(model_name: str) -> OllamaError:
+        """建立模型未找到錯誤。"""
         return OllamaError(
             f"模型 '{model_name}' 未找到",
             model=model_name,
-            details={"suggestion": f"請使用 'ollama pull {model_name}' 下載模型"}
+            details={"suggestion": f"請使用 'ollama pull {model_name}' 下載模型"},
         )
 
     @staticmethod
     def invalid_vector_format(vector_type: str, expected: str) -> CosineSimilarityError:
+        """建立無效向量格式錯誤。"""
         return CosineSimilarityError(
-            f"無效的向量格式",
+            "無效的向量格式",
             search_vector_type=vector_type,
-            details={
-                "expected": expected,
-                "suggestion": "檢查嵌入器接口返回的向量格式"
-            }
+            details={"expected": expected, "suggestion": "檢查嵌入器接口返回的向量格式"},
         )
 
     @staticmethod
     def pydantic_field_missing(field_name: str, model_class: str) -> PydanticValidationError:
+        """建立 Pydantic 欄位缺失錯誤。"""
         return PydanticValidationError(
             f"必需欄位 '{field_name}' 缺失",
             details={
                 "field": field_name,
                 "model_class": model_class,
-                "suggestion": "檢查數據結構或啟用自動修復功能"
-            }
+                "suggestion": "檢查數據結構或啟用自動修復功能",
+            },
         )
 
     @staticmethod
     def operation_failed(operation: str, reason: str) -> GraphitiMCPError:
+        """建立操作失敗錯誤。"""
         return GraphitiMCPError(
             f"操作 '{operation}' 失敗: {reason}",
             error_code="OPERATION_FAILED",
             details={
                 "operation": operation,
                 "reason": reason,
-                "suggestion": "檢查操作參數或系統狀態"
-            }
+                "suggestion": "檢查操作參數或系統狀態",
+            },
         )

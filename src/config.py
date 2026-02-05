@@ -1,22 +1,50 @@
 #!/usr/bin/env python3
 """
-Graphiti MCP Server Configuration Management
-基於原始官網版本的配置架構，提供結構化的配置管理
+Graphiti MCP Server 配置管理模組
+================================
+
+提供結構化的配置管理，支援從環境變數和配置檔案載入設定。
+
+主要功能：
+    - 各組件配置類別（Ollama、Neo4j、日誌、伺服器）
+    - 配置驗證機制
+    - 環境變數與檔案載入
+    - 配置序列化與反序列化
+
+使用範例：
+    >>> from src.config import load_config
+    >>> config = load_config()  # 從環境變數載入
+    >>> config = load_config("config.json")  # 從檔案載入
 """
 
-import os
-from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List
-from pathlib import Path
 import json
 import logging
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# 配置資料類別
+# ============================================================================
+
+
 @dataclass
 class OllamaConfig:
-    """Ollama LLM 配置"""
+    """
+    Ollama LLM 服務配置。
+
+    Attributes:
+        model: 使用的模型名稱
+        base_url: Ollama API 端點
+        temperature: 生成溫度（0.0-2.0）
+        max_tokens: 最大輸出 token 數
+        timeout: 請求超時時間（秒）
+    """
+
     model: str = "qwen2.5:7b"
     base_url: str = "http://localhost:11434"
     temperature: float = 0.1
@@ -24,17 +52,32 @@ class OllamaConfig:
     timeout: int = 120
 
     def validate(self) -> bool:
-        """驗證 Ollama 配置"""
+        """
+        驗證配置是否有效。
+
+        Returns:
+            bool: 配置有效返回 True
+        """
         if not self.model or not self.base_url:
             return False
-        if not (0.0 <= self.temperature <= 2.0):
+        if not 0.0 <= self.temperature <= 2.0:
             return False
         return True
 
 
 @dataclass
 class OllamaEmbedderConfig:
-    """Ollama 嵌入器配置"""
+    """
+    Ollama 嵌入器配置。
+
+    Attributes:
+        model: 嵌入模型名稱
+        base_url: Ollama API 端點
+        dimensions: 嵌入向量維度
+        batch_size: 批次處理大小
+        timeout: 請求超時時間（秒）
+    """
+
     model: str = "nomic-embed-text:v1.5"
     base_url: str = "http://localhost:11434"
     dimensions: int = 768
@@ -42,7 +85,7 @@ class OllamaEmbedderConfig:
     timeout: int = 60
 
     def validate(self) -> bool:
-        """驗證嵌入器配置"""
+        """驗證配置是否有效。"""
         if not self.model or not self.base_url:
             return False
         if self.dimensions <= 0 or self.batch_size <= 0:
@@ -52,7 +95,19 @@ class OllamaEmbedderConfig:
 
 @dataclass
 class Neo4jConfig:
-    """Neo4j 資料庫配置"""
+    """
+    Neo4j 資料庫配置。
+
+    Attributes:
+        uri: 資料庫連接 URI
+        user: 使用者名稱
+        password: 密碼
+        database: 資料庫名稱
+        max_connection_lifetime: 連接最大存活時間（秒）
+        max_connection_pool_size: 連接池最大大小
+        connection_timeout: 連接超時時間（秒）
+    """
+
     uri: str = "bolt://localhost:7687"
     user: str = "neo4j"
     password: str = "password"
@@ -62,7 +117,7 @@ class Neo4jConfig:
     connection_timeout: int = 30
 
     def validate(self) -> bool:
-        """驗證 Neo4j 配置"""
+        """驗證配置是否有效。"""
         if not self.uri or not self.user or not self.password:
             return False
         if not self.database:
@@ -72,55 +127,96 @@ class Neo4jConfig:
 
 @dataclass
 class LoggingConfig:
-    """日誌配置"""
+    """
+    日誌配置。
+
+    Attributes:
+        level: 日誌級別
+        format: 日誌格式
+        file_path: 日誌檔案路徑
+        max_file_size: 檔案大小輪轉閾值（位元組）
+        backup_count: 保留的備份檔案數量
+        console_output: 是否輸出到控制台
+        rotation_type: 輪轉類型（"time" 或 "size"）
+        rotation_interval: 時間輪轉間隔
+    """
+
     level: str = "INFO"
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     file_path: Optional[str] = None
-    max_file_size: int = 10 * 1024 * 1024  # 10MB (備用，現在使用時間輪轉)
-    backup_count: int = 30  # 保留 30 天的日誌檔案
+    max_file_size: int = 10 * 1024 * 1024  # 10MB
+    backup_count: int = 30
     console_output: bool = True
-    rotation_type: str = "time"  # "time" 或 "size"
-    rotation_interval: str = "midnight"  # 輪轉時間點
+    rotation_type: str = "time"
+    rotation_interval: str = "midnight"
+
+    # 有效的配置選項
+    VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+    VALID_ROTATION_TYPES = {"time", "size"}
+    VALID_INTERVALS = {"midnight", "H", "D", "W0", "W1", "W2", "W3", "W4", "W5", "W6"}
 
     def validate(self) -> bool:
-        """驗證日誌配置"""
-        valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        valid_rotation_types = ["time", "size"]
-        valid_intervals = ["midnight", "H", "D", "W0", "W1", "W2", "W3", "W4", "W5", "W6"]
-
-        if self.level.upper() not in valid_levels:
+        """驗證配置是否有效。"""
+        if self.level.upper() not in self.VALID_LEVELS:
             return False
-        if self.rotation_type not in valid_rotation_types:
+        if self.rotation_type not in self.VALID_ROTATION_TYPES:
             return False
-        if self.rotation_type == "time" and self.rotation_interval not in valid_intervals:
+        if self.rotation_type == "time" and self.rotation_interval not in self.VALID_INTERVALS:
             return False
         if self.backup_count < 1:
             return False
-
         return True
 
 
 @dataclass
 class ServerConfig:
-    """MCP 伺服器配置"""
+    """
+    MCP 伺服器配置。
+
+    Attributes:
+        host: 綁定的主機地址
+        port: 監聽端口
+        transport: 傳輸模式（sse, stdio, http）
+        cors_origins: CORS 允許的來源
+        max_request_size: 最大請求大小（位元組）
+    """
+
     host: str = "0.0.0.0"
     port: int = 8000
     transport: str = "sse"
     cors_origins: List[str] = field(default_factory=lambda: ["*"])
     max_request_size: int = 10 * 1024 * 1024  # 10MB
 
+    VALID_TRANSPORTS = {"sse", "stdio", "http"}
+
     def validate(self) -> bool:
-        """驗證伺服器配置"""
-        if not (1 <= self.port <= 65535):
+        """驗證配置是否有效。"""
+        if not 1 <= self.port <= 65535:
             return False
-        if self.transport not in ["sse", "stdio"]:
+        if self.transport not in self.VALID_TRANSPORTS:
             return False
         return True
 
 
 @dataclass
 class GraphitiConfig:
-    """完整的 Graphiti 配置"""
+    """
+    完整的 Graphiti 應用程式配置。
+
+    整合所有子配置模組，提供統一的配置管理介面。
+
+    Attributes:
+        ollama: Ollama LLM 配置
+        embedder: 嵌入器配置
+        neo4j: Neo4j 資料庫配置
+        logging: 日誌配置
+        server: 伺服器配置
+        search_limit: 搜索結果上限
+        enable_deduplication: 是否啟用去重
+        pydantic_validation_fixes: 是否啟用 Pydantic 驗證修復
+        cosine_similarity_threshold: 餘弦相似度閾值
+    """
+
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     embedder: OllamaEmbedderConfig = field(default_factory=OllamaEmbedderConfig)
     neo4j: Neo4jConfig = field(default_factory=Neo4jConfig)
@@ -135,18 +231,36 @@ class GraphitiConfig:
 
     @classmethod
     def from_env(cls) -> "GraphitiConfig":
-        """從環境變數載入配置"""
+        """
+        從環境變數載入配置。
+
+        環境變數對應關係：
+            - OLLAMA_MODEL, OLLAMA_BASE_URL, OLLAMA_TEMPERATURE
+            - OLLAMA_EMBEDDING_MODEL, OLLAMA_EMBEDDING_BASE_URL, OLLAMA_EMBEDDING_DIMENSIONS
+            - NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE
+            - SERVER_HOST, SERVER_PORT, SERVER_TRANSPORT
+            - LOG_LEVEL, LOG_FILE, LOG_ROTATION_TYPE, LOG_ROTATION_INTERVAL
+
+        Returns:
+            GraphitiConfig: 載入的配置實例
+        """
         config = cls()
 
         # Ollama 配置
         config.ollama.model = os.getenv("OLLAMA_MODEL", config.ollama.model)
         config.ollama.base_url = os.getenv("OLLAMA_BASE_URL", config.ollama.base_url)
-        config.ollama.temperature = float(os.getenv("OLLAMA_TEMPERATURE", config.ollama.temperature))
+        config.ollama.temperature = float(
+            os.getenv("OLLAMA_TEMPERATURE", config.ollama.temperature)
+        )
 
         # 嵌入器配置
         config.embedder.model = os.getenv("OLLAMA_EMBEDDING_MODEL", config.embedder.model)
-        config.embedder.base_url = os.getenv("OLLAMA_EMBEDDING_BASE_URL", config.embedder.base_url)
-        config.embedder.dimensions = int(os.getenv("OLLAMA_EMBEDDING_DIMENSIONS", config.embedder.dimensions))
+        config.embedder.base_url = os.getenv(
+            "OLLAMA_EMBEDDING_BASE_URL", config.embedder.base_url
+        )
+        config.embedder.dimensions = int(
+            os.getenv("OLLAMA_EMBEDDING_DIMENSIONS", config.embedder.dimensions)
+        )
 
         # Neo4j 配置
         config.neo4j.uri = os.getenv("NEO4J_URI", config.neo4j.uri)
@@ -162,65 +276,55 @@ class GraphitiConfig:
         # 日誌配置
         config.logging.level = os.getenv("LOG_LEVEL", config.logging.level)
         config.logging.file_path = os.getenv("LOG_FILE", config.logging.file_path)
-        config.logging.rotation_type = os.getenv("LOG_ROTATION_TYPE", config.logging.rotation_type)
-        config.logging.rotation_interval = os.getenv("LOG_ROTATION_INTERVAL", config.logging.rotation_interval)
+        config.logging.rotation_type = os.getenv(
+            "LOG_ROTATION_TYPE", config.logging.rotation_type
+        )
+        config.logging.rotation_interval = os.getenv(
+            "LOG_ROTATION_INTERVAL", config.logging.rotation_interval
+        )
+
         if os.getenv("LOG_BACKUP_COUNT"):
             config.logging.backup_count = int(os.getenv("LOG_BACKUP_COUNT"))
 
         # Graphiti 特定設定
-        if os.getenv("SEARCH_LIMIT"):
-            config.search_limit = int(os.getenv("SEARCH_LIMIT"))
-        if os.getenv("ENABLE_DEDUPLICATION"):
-            config.enable_deduplication = os.getenv("ENABLE_DEDUPLICATION").lower() == "true"
-        if os.getenv("PYDANTIC_VALIDATION_FIXES"):
-            config.pydantic_validation_fixes = os.getenv("PYDANTIC_VALIDATION_FIXES").lower() == "true"
-        if os.getenv("COSINE_SIMILARITY_THRESHOLD"):
-            config.cosine_similarity_threshold = float(os.getenv("COSINE_SIMILARITY_THRESHOLD"))
+        _load_graphiti_settings(config)
 
         return config
 
     @classmethod
     def from_file(cls, config_path: str) -> "GraphitiConfig":
-        """從配置檔案載入配置"""
+        """
+        從 JSON 配置檔案載入配置。
+
+        Args:
+            config_path: 配置檔案路徑
+
+        Returns:
+            GraphitiConfig: 載入的配置實例（檔案不存在時返回預設配置）
+        """
         config_file = Path(config_path)
         if not config_file.exists():
             logger.warning(f"配置檔案不存在: {config_path}，使用預設配置")
             return cls()
 
         try:
-            with open(config_file, 'r', encoding='utf-8') as f:
+            with open(config_file, "r", encoding="utf-8") as f:
                 config_data = json.load(f)
 
             config = cls()
-
-            # 載入各個配置區塊
-            if "ollama" in config_data:
-                for key, value in config_data["ollama"].items():
-                    if hasattr(config.ollama, key):
-                        setattr(config.ollama, key, value)
-
-            if "embedder" in config_data:
-                for key, value in config_data["embedder"].items():
-                    if hasattr(config.embedder, key):
-                        setattr(config.embedder, key, value)
-
-            if "neo4j" in config_data:
-                for key, value in config_data["neo4j"].items():
-                    if hasattr(config.neo4j, key):
-                        setattr(config.neo4j, key, value)
-
-            if "logging" in config_data:
-                for key, value in config_data["logging"].items():
-                    if hasattr(config.logging, key):
-                        setattr(config.logging, key, value)
-
-            if "server" in config_data:
-                for key, value in config_data["server"].items():
-                    if hasattr(config.server, key):
-                        setattr(config.server, key, value)
+            _apply_config_section(config.ollama, config_data.get("ollama", {}))
+            _apply_config_section(config.embedder, config_data.get("embedder", {}))
+            _apply_config_section(config.neo4j, config_data.get("neo4j", {}))
+            _apply_config_section(config.logging, config_data.get("logging", {}))
+            _apply_config_section(config.server, config_data.get("server", {}))
 
             # 載入 Graphiti 特定設定
-            for key in ["search_limit", "enable_deduplication", "pydantic_validation_fixes", "cosine_similarity_threshold"]:
+            for key in [
+                "search_limit",
+                "enable_deduplication",
+                "pydantic_validation_fixes",
+                "cosine_similarity_threshold",
+            ]:
                 if key in config_data:
                     setattr(config, key, config_data[key])
 
@@ -232,13 +336,18 @@ class GraphitiConfig:
             return cls()
 
     def validate(self) -> bool:
-        """驗證所有配置"""
+        """
+        驗證所有配置。
+
+        Returns:
+            bool: 所有配置都有效返回 True
+        """
         validations = [
             ("Ollama", self.ollama.validate()),
             ("Embedder", self.embedder.validate()),
             ("Neo4j", self.neo4j.validate()),
             ("Logging", self.logging.validate()),
-            ("Server", self.server.validate())
+            ("Server", self.server.validate()),
         ]
 
         all_valid = True
@@ -250,7 +359,18 @@ class GraphitiConfig:
         return all_valid
 
     def save_to_file(self, config_path: str) -> bool:
-        """將配置保存到檔案"""
+        """
+        將配置保存到 JSON 檔案。
+
+        Args:
+            config_path: 目標檔案路徑
+
+        Returns:
+            bool: 保存成功返回 True
+
+        Note:
+            密碼欄位會被遮蔽為 "***"
+        """
         try:
             config_data = {
                 "ollama": {
@@ -258,14 +378,14 @@ class GraphitiConfig:
                     "base_url": self.ollama.base_url,
                     "temperature": self.ollama.temperature,
                     "max_tokens": self.ollama.max_tokens,
-                    "timeout": self.ollama.timeout
+                    "timeout": self.ollama.timeout,
                 },
                 "embedder": {
                     "model": self.embedder.model,
                     "base_url": self.embedder.base_url,
                     "dimensions": self.embedder.dimensions,
                     "batch_size": self.embedder.batch_size,
-                    "timeout": self.embedder.timeout
+                    "timeout": self.embedder.timeout,
                 },
                 "neo4j": {
                     "uri": self.neo4j.uri,
@@ -274,7 +394,7 @@ class GraphitiConfig:
                     "database": self.neo4j.database,
                     "max_connection_lifetime": self.neo4j.max_connection_lifetime,
                     "max_connection_pool_size": self.neo4j.max_connection_pool_size,
-                    "connection_timeout": self.neo4j.connection_timeout
+                    "connection_timeout": self.neo4j.connection_timeout,
                 },
                 "logging": {
                     "level": self.logging.level,
@@ -282,25 +402,25 @@ class GraphitiConfig:
                     "file_path": self.logging.file_path,
                     "max_file_size": self.logging.max_file_size,
                     "backup_count": self.logging.backup_count,
-                    "console_output": self.logging.console_output
+                    "console_output": self.logging.console_output,
                 },
                 "server": {
                     "host": self.server.host,
                     "port": self.server.port,
                     "transport": self.server.transport,
                     "cors_origins": self.server.cors_origins,
-                    "max_request_size": self.server.max_request_size
+                    "max_request_size": self.server.max_request_size,
                 },
                 "search_limit": self.search_limit,
                 "enable_deduplication": self.enable_deduplication,
                 "pydantic_validation_fixes": self.pydantic_validation_fixes,
-                "cosine_similarity_threshold": self.cosine_similarity_threshold
+                "cosine_similarity_threshold": self.cosine_similarity_threshold,
             }
 
             config_file = Path(config_path)
             config_file.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(config_file, 'w', encoding='utf-8') as f:
+            with open(config_file, "w", encoding="utf-8") as f:
                 json.dump(config_data, f, indent=2, ensure_ascii=False)
 
             logger.info(f"配置已保存至: {config_path}")
@@ -311,7 +431,12 @@ class GraphitiConfig:
             return False
 
     def get_summary(self) -> Dict[str, Any]:
-        """獲取配置摘要（用於日誌記錄）"""
+        """
+        獲取配置摘要（用於日誌記錄）。
+
+        Returns:
+            dict: 不含敏感資訊的配置摘要
+        """
         return {
             "ollama_model": self.ollama.model,
             "embedder_model": self.embedder.model,
@@ -322,12 +447,62 @@ class GraphitiConfig:
             "log_level": self.logging.level,
             "search_limit": self.search_limit,
             "deduplication_enabled": self.enable_deduplication,
-            "pydantic_fixes_enabled": self.pydantic_validation_fixes
+            "pydantic_fixes_enabled": self.pydantic_validation_fixes,
         }
 
 
+# ============================================================================
+# 輔助函數
+# ============================================================================
+
+
+def _apply_config_section(target: Any, source: Dict[str, Any]) -> None:
+    """
+    將配置字典套用到目標物件。
+
+    Args:
+        target: 目標配置物件
+        source: 來源配置字典
+    """
+    for key, value in source.items():
+        if hasattr(target, key):
+            setattr(target, key, value)
+
+
+def _load_graphiti_settings(config: GraphitiConfig) -> None:
+    """
+    從環境變數載入 Graphiti 特定設定。
+
+    Args:
+        config: 配置物件
+    """
+    if os.getenv("SEARCH_LIMIT"):
+        config.search_limit = int(os.getenv("SEARCH_LIMIT"))
+
+    if os.getenv("ENABLE_DEDUPLICATION"):
+        config.enable_deduplication = os.getenv("ENABLE_DEDUPLICATION").lower() == "true"
+
+    if os.getenv("PYDANTIC_VALIDATION_FIXES"):
+        config.pydantic_validation_fixes = (
+            os.getenv("PYDANTIC_VALIDATION_FIXES").lower() == "true"
+        )
+
+    if os.getenv("COSINE_SIMILARITY_THRESHOLD"):
+        config.cosine_similarity_threshold = float(os.getenv("COSINE_SIMILARITY_THRESHOLD"))
+
+
 def load_config(config_path: Optional[str] = None) -> GraphitiConfig:
-    """載入配置的便利函數"""
+    """
+    載入配置的便利函數。
+
+    優先從指定的配置檔案載入，若檔案不存在則從環境變數載入。
+
+    Args:
+        config_path: 可選的配置檔案路徑
+
+    Returns:
+        GraphitiConfig: 載入並驗證的配置實例
+    """
     if config_path and Path(config_path).exists():
         config = GraphitiConfig.from_file(config_path)
     else:
@@ -339,5 +514,5 @@ def load_config(config_path: Optional[str] = None) -> GraphitiConfig:
     return config
 
 
-# 預設配置實例
+# 預設配置實例（供模組直接使用）
 default_config = GraphitiConfig()
