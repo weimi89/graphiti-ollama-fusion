@@ -11,9 +11,12 @@ Graphiti Web 管理介面 REST API
 - Group 管理
 """
 
+import asyncio
 import json
 import logging
 import os
+import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Coroutine, Any
@@ -24,6 +27,33 @@ from starlette.routing import Route, Mount
 from starlette.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# 簡易速率限制器（記憶體內，按 IP）
+# ---------------------------------------------------------------------------
+
+# 搜尋超時秒數
+SEARCH_TIMEOUT = 30
+
+class _RateLimiter:
+    """每分鐘每 IP 最多 N 次請求的簡易速率限制器。"""
+
+    def __init__(self, max_requests: int = 15, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window = window_seconds
+        self._hits: dict[str, list[float]] = defaultdict(list)
+
+    def is_allowed(self, ip: str) -> bool:
+        now = time.monotonic()
+        hits = self._hits[ip]
+        # 清除過期的記錄
+        self._hits[ip] = [t for t in hits if now - t < self.window]
+        if len(self._hits[ip]) >= self.max_requests:
+            return False
+        self._hits[ip].append(now)
+        return True
+
+_search_limiter = _RateLimiter(max_requests=15, window_seconds=60)
 
 # 專案根目錄下的 web/ 資料夾
 WEB_DIR = Path(__file__).parent.parent / "web"
@@ -299,28 +329,40 @@ def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_delete_episode(request: Request) -> JSONResponse:
-        """刪除記憶片段。"""
+        """刪除記憶片段（事務性：連帶清理關聯邊）。"""
         try:
-            from graphiti_core.nodes import EpisodicNode
-
             uuid = request.path_params["uuid"]
             graphiti = await get_graphiti_fn()
-            node = await EpisodicNode.get_by_uuid(graphiti.driver, uuid)
-            await node.delete(graphiti.driver)
-            return JSONResponse({"success": True, "message": f"記憶片段 {uuid} 已刪除"})
+            # 使用 Cypher 事務確保一致性：同時刪除節點和關聯邊
+            query = """
+            MATCH (e:Episodic {uuid: $uuid})
+            OPTIONAL MATCH (e)-[r]-()
+            DELETE r, e
+            RETURN count(e) AS deleted
+            """
+            records, _, _ = await graphiti.driver.execute_query(query, uuid_=uuid)
+            deleted = records[0]["deleted"] if records else 0
+            if deleted == 0:
+                return JSONResponse({"error": f"記憶片段 {uuid} 不存在"}, status_code=404)
+            return JSONResponse({"success": True, "message": f"記憶片段 {uuid} 已刪除（含關聯邊）"})
         except Exception as e:
             logger.error(f"API delete episode error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_delete_fact(request: Request) -> JSONResponse:
-        """刪除事實。"""
+        """刪除事實（事務性）。"""
         try:
-            from graphiti_core.edges import EntityEdge
-
             uuid = request.path_params["uuid"]
             graphiti = await get_graphiti_fn()
-            edge = await EntityEdge.get_by_uuid(graphiti.driver, uuid)
-            await edge.delete(graphiti.driver)
+            query = """
+            MATCH ()-[r:RELATES_TO {uuid: $uuid}]-()
+            DELETE r
+            RETURN count(r) AS deleted
+            """
+            records, _, _ = await graphiti.driver.execute_query(query, uuid_=uuid)
+            deleted = records[0]["deleted"] if records else 0
+            if deleted == 0:
+                return JSONResponse({"error": f"事實 {uuid} 不存在"}, status_code=404)
             return JSONResponse({"success": True, "message": f"事實 {uuid} 已刪除"})
         except Exception as e:
             logger.error(f"API delete fact error: {e}")
@@ -340,8 +382,14 @@ def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_search_nodes(request: Request) -> JSONResponse:
-        """向量搜尋節點。"""
+        """向量搜尋節點（含速率限制和超時）。"""
         try:
+            client_ip = request.client.host if request.client else "unknown"
+            if not _search_limiter.is_allowed(client_ip):
+                return JSONResponse(
+                    {"error": "搜尋請求過於頻繁，請稍後再試"}, status_code=429
+                )
+
             from graphiti_core.search.search_config_recipes import NODE_HYBRID_SEARCH_RRF
             from graphiti_core.search.search_filters import SearchFilters
 
@@ -357,11 +405,14 @@ def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -
             search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
             search_config.limit = limit
 
-            results = await graphiti.search_(
-                query=q,
-                config=search_config,
-                group_ids=group_ids,
-                search_filter=SearchFilters(),
+            results = await asyncio.wait_for(
+                graphiti.search_(
+                    query=q,
+                    config=search_config,
+                    group_ids=group_ids,
+                    search_filter=SearchFilters(),
+                ),
+                timeout=SEARCH_TIMEOUT,
             )
 
             nodes = []
@@ -376,13 +427,22 @@ def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -
                 })
 
             return JSONResponse({"nodes": nodes, "query": q, "total": len(nodes)})
+        except asyncio.TimeoutError:
+            logger.warning(f"搜尋節點超時 ({SEARCH_TIMEOUT}s): {q}")
+            return JSONResponse({"error": "搜尋超時，請縮小查詢範圍"}, status_code=504)
         except Exception as e:
             logger.error(f"API search nodes error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_search_facts(request: Request) -> JSONResponse:
-        """向量搜尋事實。"""
+        """向量搜尋事實（含速率限制和超時）。"""
         try:
+            client_ip = request.client.host if request.client else "unknown"
+            if not _search_limiter.is_allowed(client_ip):
+                return JSONResponse(
+                    {"error": "搜尋請求過於頻繁，請稍後再試"}, status_code=429
+                )
+
             q = request.query_params.get("q", "").strip()
             if not q:
                 return JSONResponse({"error": "缺少搜尋參數 q"}, status_code=400)
@@ -392,15 +452,17 @@ def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -
             limit = min(int(request.query_params.get("limit", "10")), 50)
 
             graphiti = await get_graphiti_fn()
-            edges = await graphiti.search(
-                query=q,
-                group_ids=group_ids,
-                num_results=limit,
+            edges = await asyncio.wait_for(
+                graphiti.search(
+                    query=q,
+                    group_ids=group_ids,
+                    num_results=limit,
+                ),
+                timeout=SEARCH_TIMEOUT,
             )
 
             facts = []
             for e in edges:
-                invalid_at = getattr(e, "invalid_at", None)
                 facts.append({
                     "uuid": str(getattr(e, "uuid", "")),
                     "name": getattr(e, "name", ""),
@@ -412,6 +474,9 @@ def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -
                 })
 
             return JSONResponse({"facts": facts, "query": q, "total": len(facts)})
+        except asyncio.TimeoutError:
+            logger.warning(f"搜尋事實超時 ({SEARCH_TIMEOUT}s): {q}")
+            return JSONResponse({"error": "搜尋超時，請縮小查詢範圍"}, status_code=504)
         except Exception as e:
             logger.error(f"API search facts error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)

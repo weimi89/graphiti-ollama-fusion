@@ -298,10 +298,24 @@ async def add_memory_simple(
                 graphiti, name, episode_body, group_id, source_description, source, start_time
             )
         else:
-            return await _add_memory_full_mode(
-                graphiti, name, episode_body, group_id, source_description,
-                episode_type, episode_uuid, source, start_time
-            )
+            try:
+                return await _add_memory_full_mode(
+                    graphiti, name, episode_body, group_id, source_description,
+                    episode_type, episode_uuid, source, start_time
+                )
+            except Exception as full_err:
+                # 完整模式失敗，自動降級到安全模式
+                logger.warning(
+                    f"完整模式失敗，自動降級到安全模式: {str(full_err)[:200]}"
+                )
+                safe_result = await _add_memory_safe_mode(
+                    graphiti, name, episode_body, group_id,
+                    source_description, source, start_time
+                )
+                safe_result["mode_used"] = "safe"
+                safe_result["fallback_reason"] = str(full_err)[:200]
+                safe_result["note"] = "完整模式失敗，已自動降級到安全模式保底"
+                return safe_result
 
     except Exception as e:
         duration = time.time() - start_time
@@ -694,11 +708,11 @@ async def test_connection() -> dict:
 
         graphiti = await initialize_graphiti()
 
-        # 測試 LLM
-        llm_status = await _test_llm(graphiti)
-
-        # 測試嵌入器
-        embedder_status = await _test_embedder(graphiti)
+        # 並行測試 LLM 和嵌入器
+        llm_status, embedder_status = await asyncio.gather(
+            _test_llm(graphiti),
+            _test_embedder(graphiti),
+        )
 
         duration = time.time() - start_time
 

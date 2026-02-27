@@ -383,6 +383,15 @@ body {
     word-break: break-word;
 }
 
+.card-detail {
+    overflow: hidden;
+    transition: max-height 0.2s ease;
+}
+
+.hidden {
+    display: none;
+}
+
 .card-meta {
     display: flex;
     align-items: center;

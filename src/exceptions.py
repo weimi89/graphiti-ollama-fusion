@@ -84,7 +84,9 @@ class GraphitiMCPError(Exception):
             error_dict["cause_type"] = type(self.cause).__name__
 
         if self.traceback_str:
-            error_dict["traceback"] = self.traceback_str
+            # 限制 traceback 長度，避免回應過大
+            tb = self.traceback_str
+            error_dict["traceback"] = tb[:1000] + "..." if len(tb) > 1000 else tb
 
         return error_dict
 
@@ -327,7 +329,7 @@ def handle_exception(exc: Exception, context: str = "") -> GraphitiMCPError:
     """
     將一般異常轉換為 Graphiti 異常。
 
-    根據異常訊息內容自動分類異常類型。
+    優先透過異常類型分類，其次透過異常訊息內容分類。
 
     Args:
         exc: 原始異常
@@ -339,23 +341,41 @@ def handle_exception(exc: Exception, context: str = "") -> GraphitiMCPError:
     if isinstance(exc, GraphitiMCPError):
         return exc
 
+    # 1. 優先透過異常類型分類
+    exc_type_name = type(exc).__module__ + "." + type(exc).__qualname__
+
+    # Neo4j 驅動異常
+    if "neo4j" in exc_type_name.lower():
+        return Neo4jError(f"Neo4j 操作失敗: {exc}", cause=exc)
+
+    # aiohttp / 連接異常（使用 builtins.ConnectionError 判斷）
+    import builtins
+    if isinstance(exc, (builtins.ConnectionError, OSError)):
+        return OllamaError(f"連接錯誤: {exc}", cause=exc)
+
+    # Pydantic 驗證異常
+    if "pydantic" in exc_type_name.lower() or "ValidationError" in type(exc).__name__:
+        return PydanticValidationError(f"驗證錯誤: {exc}", cause=exc)
+
+    # asyncio 超時
+    if isinstance(exc, TimeoutError):
+        return OllamaError(f"操作超時: {exc}", cause=exc)
+
+    # 2. 回退到訊息文字分類（僅在類型無法判定時）
     exc_str = str(exc).lower()
 
-    # 根據異常內容分類
     if "neo4j" in exc_str or "bolt" in exc_str:
         return Neo4jError(f"Neo4j 操作失敗: {exc}", cause=exc)
 
     if "ollama" in exc_str:
         return OllamaError(f"Ollama 服務錯誤: {exc}", cause=exc)
 
-    if "embed" in exc_str or "vector" in exc_str:
-        return EmbeddingError(f"嵌入向量錯誤: {exc}", cause=exc)
-
     if "cosine" in exc_str or "similarity" in exc_str:
         return CosineSimilarityError(f"Cosine Similarity 錯誤: {exc}", cause=exc)
 
-    if "validation" in exc_str or "pydantic" in exc_str:
-        return PydanticValidationError(f"驗證錯誤: {exc}", cause=exc)
+    # 注意：只有明確的嵌入錯誤場景才歸類，避免 "embedding 已完成" 被誤判
+    if ("embed" in exc_str and "error" in exc_str) or "vector" in exc_str:
+        return EmbeddingError(f"嵌入向量錯誤: {exc}", cause=exc)
 
     # 預設處理
     message = f"{context}: {exc}" if context else str(exc)

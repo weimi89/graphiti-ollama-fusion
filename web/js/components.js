@@ -23,6 +23,9 @@ const Components = {
                     <div class="stat-label">記憶片段</div>
                 </div>
             </div>
+            <div style="text-align:right;margin-bottom:1rem">
+                <button class="btn btn-primary" onclick="App.exportJSON()">匯出 JSON</button>
+            </div>
 
             <div class="dashboard-section">
                 <div class="section-title">最近的實體節點</div>
@@ -92,10 +95,18 @@ const Components = {
         return `
             <div class="card card-entity">
                 <div class="card-header">
-                    <div class="card-title">${this._esc(node.name || '(unnamed)')}</div>
+                    <div class="card-title" style="cursor:pointer" onclick="App.toggleDetail('${node.uuid}')">${this._esc(node.name || '(unnamed)')}</div>
                     <span class="card-tag entity">Entity${labels.length ? ' / ' + labels.join(', ') : ''}</span>
                 </div>
                 ${node.summary ? `<div class="card-body">${this._esc(node.summary)}</div>` : ''}
+                <div id="detail-${node.uuid}" class="card-detail hidden">
+                    <div class="card-body" style="opacity:0.7;font-size:0.85em">
+                        <strong>UUID:</strong> ${node.uuid}<br>
+                        <strong>Group:</strong> ${this._esc(node.group_id)}<br>
+                        <strong>Labels:</strong> ${(node.labels || []).join(', ')}<br>
+                        <strong>Created:</strong> ${this._time(node.created_at)}
+                    </div>
+                </div>
                 <div class="card-meta">
                     <span title="Group ID">${this._esc(node.group_id)}</span>
                     <span title="建立時間">${this._time(node.created_at)}</span>

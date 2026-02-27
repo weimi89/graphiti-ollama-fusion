@@ -73,11 +73,32 @@ const API = {
         return this._delete(`/api/groups/${encodeURIComponent(groupId)}`);
     },
 
-    // 內部方法
-    async _get(url) {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
+    /** 導出所有資料為 JSON */
+    async exportData({ groupId = '' } = {}) {
+        const [nodes, facts, episodes] = await Promise.all([
+            this.nodes({ groupId, limit: 9999 }),
+            this.facts({ groupId, limit: 9999 }),
+            this.episodes({ groupId, limit: 9999 }),
+        ]);
+        return { nodes: nodes.nodes, facts: facts.facts, episodes: episodes.episodes };
+    },
+
+    // 內部方法（含重試）
+    async _get(url, retries = 2) {
+        for (let i = 0; i <= retries; i++) {
+            try {
+                const res = await fetch(url);
+                if (res.status === 429) {
+                    await new Promise(r => setTimeout(r, 2000 * (i + 1)));
+                    continue;
+                }
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return await res.json();
+            } catch (err) {
+                if (i === retries) throw err;
+                await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+            }
+        }
     },
 
     async _delete(url) {

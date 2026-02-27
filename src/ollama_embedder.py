@@ -21,11 +21,18 @@ Ollama 嵌入器模組
 """
 
 import asyncio
+import logging
+import math
 import random
 from typing import List, Union
 
 import aiohttp
 from graphiti_core.embedder.client import EmbedderClient
+
+logger = logging.getLogger(__name__)
+
+# 嵌入請求超時（秒）
+EMBED_TIMEOUT = 30
 
 
 class OllamaEmbedder(EmbedderClient):
@@ -96,22 +103,26 @@ class OllamaEmbedder(EmbedderClient):
         return await self._create_embeddings(input_data)
 
     async def create_bulk(
-        self, input_data: List[str], batch_size: int = 10
+        self, input_data: List[str], batch_size: int = 0
     ) -> List[List[float]]:
         """
         批量建立嵌入向量（支援並發處理）。
 
         將輸入分批處理以避免過載 Ollama 服務。
+        batch_size=0 時自動根據文本平均長度動態決定批次大小。
 
         Args:
             input_data: 要嵌入的文本列表
-            batch_size: 每批處理的文本數量（並發請求數）
+            batch_size: 每批處理的文本數量（0=自動）
 
         Returns:
             List[List[float]]: 嵌入向量列表
         """
         if not input_data:
             return []
+
+        if batch_size <= 0:
+            batch_size = self._compute_batch_size(input_data)
 
         embeddings = []
 
@@ -124,6 +135,20 @@ class OllamaEmbedder(EmbedderClient):
                 embeddings.extend(batch_results)
 
         return embeddings
+
+    @staticmethod
+    def _compute_batch_size(texts: List[str]) -> int:
+        """根據文本平均長度動態計算批次大小。"""
+        if not texts:
+            return 10
+        avg_len = sum(len(t) for t in texts) / len(texts)
+        if avg_len < 100:
+            return 30
+        if avg_len < 300:
+            return 15
+        if avg_len < 800:
+            return 8
+        return 4
 
     def get_dimensions(self) -> int:
         """
@@ -145,7 +170,7 @@ class OllamaEmbedder(EmbedderClient):
             async with aiohttp.ClientSession() as session:
                 async with session.get(f"{self.base_url}/api/tags") as response:
                     if response.status != 200:
-                        print(f"Ollama 連接失敗，狀態碼: {response.status}")
+                        logger.warning(f"Ollama 連接失敗，狀態碼: {response.status}")
                         return False
 
                     result = await response.json()
@@ -153,15 +178,15 @@ class OllamaEmbedder(EmbedderClient):
                     model_names = [m.get("name", "") for m in models]
 
                     if self.model in model_names:
-                        print(f"Ollama 嵌入器連接成功，模型 {self.model} 可用")
+                        logger.info(f"Ollama 嵌入器連接成功，模型 {self.model} 可用")
                         return True
                     else:
-                        print(f"Ollama 連接成功，但模型 {self.model} 未找到")
-                        print(f"可用模型: {', '.join(model_names)}")
+                        logger.warning(f"Ollama 連接成功，但模型 {self.model} 未找到")
+                        logger.warning(f"可用模型: {', '.join(model_names)}")
                         return False
 
         except Exception as e:
-            print(f"無法連接到 Ollama: {e}")
+            logger.error(f"無法連接到 Ollama: {e}")
             return False
 
     async def get_model_info(self) -> dict:
@@ -228,6 +253,7 @@ class OllamaEmbedder(EmbedderClient):
                 self.embed_url,
                 json=payload,
                 headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=EMBED_TIMEOUT),
             ) as response:
                 if response.status == 200:
                     result = await response.json()
@@ -236,11 +262,11 @@ class OllamaEmbedder(EmbedderClient):
                     return self._normalize_embedding(embedding, text)
                 else:
                     error_text = await response.text()
-                    print(f"Ollama 嵌入錯誤 (狀態 {response.status}): {error_text}")
+                    logger.warning(f"Ollama 嵌入錯誤 (狀態 {response.status}): {error_text[:200]}")
                     return self._create_fallback_embedding()
 
         except Exception as e:
-            print(f"嵌入請求失敗: {e}")
+            logger.warning(f"嵌入請求失敗: {e}")
             return self._create_fallback_embedding()
 
     def _normalize_embedding(
@@ -260,7 +286,7 @@ class OllamaEmbedder(EmbedderClient):
         """
         # 檢查無效值（NaN, inf, None）
         if self._has_invalid_values(embedding):
-            print(f"檢測到無效數值，重新生成向量: '{text[:50]}...'")
+            logger.debug(f"檢測到無效數值，重新生成向量: '{text[:50]}...'")
             embedding = self._create_random_embedding()
 
         # 調整維度
@@ -274,7 +300,7 @@ class OllamaEmbedder(EmbedderClient):
     def _has_invalid_values(self, embedding: List[float]) -> bool:
         """檢查向量是否包含無效值。"""
         return any(
-            x is None or x != x or abs(x) == float("inf") for x in embedding
+            x is None or math.isnan(x) or math.isinf(x) for x in embedding
         )
 
     def _adjust_dimensions(
@@ -285,10 +311,10 @@ class OllamaEmbedder(EmbedderClient):
             return embedding
 
         if len(embedding) > self.dimensions:
-            print(f"向量維度過大 ({len(embedding)} > {self.dimensions})，截斷中...")
+            logger.debug(f"向量維度過大 ({len(embedding)} > {self.dimensions})，截斷中...")
             return embedding[: self.dimensions]
         else:
-            print(f"向量維度不足 ({len(embedding)} < {self.dimensions})，填充中...")
+            logger.debug(f"向量維度不足 ({len(embedding)} < {self.dimensions})，填充中...")
             return embedding + [0.0] * (self.dimensions - len(embedding))
 
     def _ensure_unit_vector(
@@ -299,7 +325,7 @@ class OllamaEmbedder(EmbedderClient):
 
         # 處理零向量或極小向量
         if vector_norm < 1e-10:
-            print(f"檢測到零向量或極小向量，使用隨機向量替代: '{text[:50]}...'")
+            logger.debug(f"檢測到零向量或極小向量，使用隨機向量替代: '{text[:50]}...'")
             embedding = self._create_random_embedding()
             vector_norm = self._compute_norm(embedding)
 
@@ -310,7 +336,7 @@ class OllamaEmbedder(EmbedderClient):
         # 驗證歸一化結果
         final_norm = self._compute_norm(embedding)
         if abs(final_norm - 1.0) > 0.01:
-            print(f"向量歸一化後範數異常 ({final_norm})，重新歸一化...")
+            logger.debug(f"向量歸一化後範數異常 ({final_norm})，重新歸一化...")
             if final_norm > 0:
                 embedding = [x / final_norm for x in embedding]
             else:

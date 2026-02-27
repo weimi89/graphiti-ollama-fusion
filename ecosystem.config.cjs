@@ -15,16 +15,20 @@ module.exports = {
         HOME: HOME,
         // 如果需要，可以在這裡添加其他環境變數
       },
-      // 日誌設定
+      // 日誌設定（含輪轉）
       out_file: './logs/pm2-out.log',
       error_file: './logs/pm2-error.log',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs: true,
+      max_size: '10M',
+      retain: 5,
       // 進程管理
       autorestart: true,
       max_restarts: 10,
       restart_delay: 5000,
       watch: false,
+      listen_timeout: 10000,
+      kill_timeout: 5000,
       // 資源限制
       max_memory_restart: '500M',
     }

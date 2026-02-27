@@ -22,6 +22,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
@@ -29,6 +30,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import aiohttp
+
+logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
 
 from graphiti_core import Graphiti
@@ -67,7 +70,7 @@ class OptimizedOllamaClient(LLMClient):
         self.base_url = config.base_url or "http://localhost:11434"
         self.model = config.model if config.model else "llama3.2:3b"
         self.temperature = config.temperature if config.temperature is not None else 0.0
-        print(f"    使用模型: {self.model}")
+        logger.info(f"    使用模型: {self.model}")
 
     async def _generate_response(
         self,
@@ -136,10 +139,10 @@ class OptimizedOllamaClient(LLMClient):
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(2**attempt)
                 else:
-                    print(f"所有重試都失敗: {e}")
+                    logger.error(f"所有重試都失敗: {e}")
 
         # 返回預設值
-        return self._create_empty_response(response_model)
+        return self._create_fallback_response(response_model)
 
     # =========================================================================
     # 私有方法
@@ -161,33 +164,81 @@ class OptimizedOllamaClient(LLMClient):
         return ollama_messages
 
     async def _make_request(
-        self, messages: List[Dict[str, str]], json_mode: bool = False
+        self, messages: List[Dict[str, str]], json_mode: bool = False,
+        max_retries: int = 3, timeout: int = 120,
     ) -> str:
-        """發送請求到 Ollama API。"""
-        async with aiohttp.ClientSession() as session:
-            payload = {
-                "model": self.model,
-                "messages": messages,
-                "stream": False,
-                "temperature": self.temperature,
-                "options": {"temperature": self.temperature, "num_predict": 4096},
-            }
+        """
+        發送請求到 Ollama API，含指數退避重試。
 
-            if json_mode:
-                payload["format"] = "json"
+        Args:
+            messages: 訊息列表
+            json_mode: 是否要求 JSON 格式回應
+            max_retries: 最大重試次數
+            timeout: 請求超時秒數
+        """
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "temperature": self.temperature,
+            "options": {"temperature": self.temperature, "num_predict": 4096},
+        }
 
-            url = f"{self.base_url}/api/chat"
+        if json_mode:
+            payload["format"] = "json"
 
-            async with session.post(
-                url, json=payload, timeout=aiohttp.ClientTimeout(total=120)
-            ) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    return result.get("message", {}).get("content", "")
+        url = f"{self.base_url}/api/chat"
+
+        for attempt in range(max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        url, json=payload,
+                        timeout=aiohttp.ClientTimeout(total=timeout),
+                    ) as response:
+                        if response.status == 200:
+                            result = await response.json()
+                            return result.get("message", {}).get("content", "")
+                        elif response.status in (503, 429):
+                            # 服務暫時不可用或速率限制，重試
+                            error_text = await response.text()
+                            wait = 2 ** attempt
+                            logger.warning(
+                                f"Ollama 暫時不可用 (HTTP {response.status})，"
+                                f"{wait}s 後重試 ({attempt+1}/{max_retries}): {error_text[:100]}"
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        else:
+                            error_text = await response.text()
+                            logger.error(f"Ollama 錯誤 (HTTP {response.status}): {error_text[:200]}")
+                            return ""
+
+            except asyncio.TimeoutError:
+                wait = 2 ** attempt
+                logger.warning(
+                    f"Ollama 請求超時 ({timeout}s)，"
+                    f"{wait}s 後重試 ({attempt+1}/{max_retries})"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(wait)
                 else:
-                    error_text = await response.text()
-                    print(f"Ollama 錯誤: {error_text}")
+                    logger.error(f"Ollama 請求在 {max_retries} 次重試後仍超時")
                     return ""
+
+            except aiohttp.ClientError as e:
+                wait = 2 ** attempt
+                logger.warning(
+                    f"Ollama 連線錯誤: {e}，"
+                    f"{wait}s 後重試 ({attempt+1}/{max_retries})"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error(f"Ollama 連線在 {max_retries} 次重試後仍失敗: {e}")
+                    return ""
+
+        return ""
 
     async def _generate_structured_response(
         self, messages: List[Dict[str, str]], response_model: Any
@@ -202,7 +253,7 @@ class OptimizedOllamaClient(LLMClient):
         response_text = await self._make_request(messages, json_mode=True)
 
         if not response_text:
-            return self._create_empty_response(response_model)
+            return self._create_fallback_response(response_model)
 
         # 解析 JSON
         json_data = self._extract_json_from_response(response_text)
@@ -359,22 +410,26 @@ IMPORTANT:
 
     def _fix_edge_fields(self, edge: Dict, json_data: Dict) -> Dict:
         """修復單一邊的欄位。"""
+        entities = json_data.get("extracted_entities", [])
+
         # 來源 ID 映射
-        for src_key in ["source_id", "subject_id"]:
+        for src_key in ["source_id", "subject_id", "source", "subject"]:
             if src_key in edge and "source_entity_id" not in edge:
                 edge["source_entity_id"] = edge.pop(src_key)
 
-        if "source_entity_id" not in edge:
-            edge["source_entity_id"] = 0
-
         # 目標 ID 映射
-        for tgt_key in ["target_id", "object_id"]:
+        for tgt_key in ["target_id", "object_id", "target", "object"]:
             if tgt_key in edge and "target_entity_id" not in edge:
                 edge["target_entity_id"] = edge.pop(tgt_key)
 
-        if "target_entity_id" not in edge:
-            entities = json_data.get("extracted_entities", [])
-            edge["target_entity_id"] = 1 if len(entities) > 1 else 0
+        # 嘗試透過名稱查找實體索引（比盲目預設 0/1 更準確）
+        edge["source_entity_id"] = self._resolve_entity_id(
+            edge.get("source_entity_id"), entities, fallback=0
+        )
+        edge["target_entity_id"] = self._resolve_entity_id(
+            edge.get("target_entity_id"), entities,
+            fallback=min(1, len(entities) - 1) if entities else 0,
+        )
 
         # 關係類型映射
         for rel_key in ["relationship", "predicate"]:
@@ -384,10 +439,6 @@ IMPORTANT:
         if "relation_type" not in edge:
             edge["relation_type"] = "RELATES_TO"
 
-        # 修復 ID 欄位為整數
-        edge["source_entity_id"] = self._parse_entity_id(edge.get("source_entity_id"), 0)
-        edge["target_entity_id"] = self._parse_entity_id(edge.get("target_entity_id"), 1)
-
         # 確保必要欄位
         edge.setdefault("fact", edge.get("relation_type", "relates to"))
         edge.setdefault("fact_embedding", None)
@@ -396,27 +447,64 @@ IMPORTANT:
 
         return edge
 
-    def _parse_entity_id(self, value: Any, default: int) -> int:
-        """解析實體 ID 為整數。"""
-        if value is None:
-            return default
+    def _resolve_entity_id(
+        self, value: Any, entities: List[Dict], fallback: int = 0
+    ) -> int:
+        """
+        將 LLM 返回的實體引用解析為正確的整數索引。
 
+        支援多種格式：整數、"ENTITY_X"、實體名稱字串。
+        優先透過名稱匹配實體列表，比盲目使用預設值更準確。
+
+        Args:
+            value: LLM 返回的實體引用（int / str / None）
+            entities: 已提取的實體列表
+            fallback: 所有匹配失敗時的預設值
+
+        Returns:
+            int: 實體在列表中的索引（已確保在有效範圍內）
+        """
+        max_idx = max(len(entities) - 1, 0)
+
+        if value is None:
+            return min(fallback, max_idx)
+
+        # 整數：直接使用（夾緊到有效範圍）
         if isinstance(value, int):
-            return value
+            return max(0, min(value, max_idx))
 
         if isinstance(value, str):
-            # 處理 "ENTITY_0" 格式
+            # 格式 "ENTITY_0"
             if value.startswith("ENTITY_"):
                 try:
-                    return int(value.replace("ENTITY_", ""))
+                    idx = int(value.replace("ENTITY_", ""))
+                    return max(0, min(idx, max_idx))
                 except ValueError:
-                    return default
-            try:
-                return int(value)
-            except ValueError:
-                return default
+                    pass
 
-        return default
+            # 純數字字串
+            try:
+                idx = int(value)
+                return max(0, min(idx, max_idx))
+            except ValueError:
+                pass
+
+            # 透過實體名稱匹配（核心改進）
+            value_lower = value.strip().lower()
+            for i, entity in enumerate(entities):
+                entity_name = entity.get("name", "").strip().lower()
+                if entity_name and entity_name == value_lower:
+                    return i
+
+            # 部分匹配（名稱包含或被包含）
+            for i, entity in enumerate(entities):
+                entity_name = entity.get("name", "").strip().lower()
+                if entity_name and (
+                    value_lower in entity_name or entity_name in value_lower
+                ):
+                    return i
+
+        return min(fallback, max_idx)
 
     def _fix_resolution_fields(self, resolution: Dict) -> Dict:
         """修復實體解析欄位。"""
@@ -444,7 +532,7 @@ IMPORTANT:
             validated = response_model.model_validate(json_data)
             return validated.model_dump()
         except Exception as e:
-            print(f"Pydantic 驗證失敗: {e}")
+            logger.warning(f"Pydantic 驗證失敗: {e}")
 
             # 嘗試增強修復
             try:
@@ -452,10 +540,10 @@ IMPORTANT:
                 validated = response_model.model_validate(json_data)
                 return validated.model_dump()
             except Exception as retry_e:
-                print(f"增強修復重試失敗: {retry_e}")
+                logger.warning(f"增強修復重試失敗: {retry_e}")
 
             # 嘗試最小有效實例
-            return self._create_minimal_response(json_data, response_model)
+            return self._create_fallback_response(response_model, json_data)
 
     def _ensure_required_fields(self, json_data: Dict, response_model: Any) -> None:
         """確保所有必要欄位存在。"""
@@ -479,57 +567,56 @@ IMPORTANT:
                     json_data[field_name] = ""
 
     def _fix_summary_fields(self, data: Any) -> None:
-        """遞迴修復所有 summary 欄位的類型問題。"""
-        if isinstance(data, dict):
-            for key, value in data.items():
-                if key == "summary" and isinstance(value, dict):
-                    data[key] = str(
-                        value.get("description", value.get("content", str(value)))
-                    )
-                elif isinstance(value, (dict, list)):
-                    self._fix_summary_fields(value)
-        elif isinstance(data, list):
-            for item in data:
-                self._fix_summary_fields(item)
+        """迭代修復所有 summary 欄位的類型問題（避免深遞迴）。"""
+        stack = [data]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, dict):
+                for key, value in current.items():
+                    if key == "summary" and isinstance(value, dict):
+                        current[key] = str(
+                            value.get("description", value.get("content", str(value)))
+                        )
+                    elif isinstance(value, (dict, list)):
+                        stack.append(value)
+            elif isinstance(current, list):
+                stack.extend(
+                    item for item in current if isinstance(item, (dict, list))
+                )
 
-    def _create_minimal_response(
-        self, json_data: Dict, response_model: Any
+    def _create_fallback_response(
+        self, response_model: Optional[Any], json_data: Optional[Dict] = None
     ) -> Optional[Dict]:
-        """建立最小有效響應。"""
-        try:
-            minimal_data = {}
-            for field_name, field_type in response_model.__annotations__.items():
-                if hasattr(field_type, "__origin__"):
-                    if field_type.__origin__ == list:
-                        minimal_data[field_name] = []
-                    elif field_type.__origin__ == dict:
-                        minimal_data[field_name] = {}
-                    else:
-                        minimal_data[field_name] = json_data.get(field_name, "")
-                else:
-                    minimal_data[field_name] = json_data.get(field_name, "")
+        """
+        建立備用響應。
 
-            validated = response_model.model_validate(minimal_data)
-            return validated.model_dump()
-        except Exception:
-            return None
-
-    def _create_empty_response(self, response_model: Optional[Any]) -> Optional[Dict]:
-        """建立空響應。"""
+        優先使用 json_data 中的已有值，缺失的欄位用型別預設值填充。
+        可替代原本 _create_empty_response 和 _create_minimal_response 的功能。
+        """
         if not response_model or not hasattr(response_model, "model_validate"):
             return None
 
+        src = json_data or {}
         try:
-            empty_data = {}
+            fallback_data: Dict[str, Any] = {}
             for field_name, field_type in response_model.__annotations__.items():
-                if "list" in str(field_type).lower():
-                    empty_data[field_name] = []
-                elif "dict" in str(field_type).lower():
-                    empty_data[field_name] = {}
+                if field_name in src:
+                    fallback_data[field_name] = src[field_name]
+                elif hasattr(field_type, "__origin__"):
+                    if field_type.__origin__ == list:
+                        fallback_data[field_name] = []
+                    elif field_type.__origin__ == dict:
+                        fallback_data[field_name] = {}
+                    else:
+                        fallback_data[field_name] = ""
+                elif field_type == bool:
+                    fallback_data[field_name] = False
+                elif field_type in (int, float):
+                    fallback_data[field_name] = 0
                 else:
-                    empty_data[field_name] = ""
+                    fallback_data[field_name] = ""
 
-            validated = response_model.model_validate(empty_data)
+            validated = response_model.model_validate(fallback_data)
             return validated.model_dump()
         except Exception:
             return None
@@ -605,7 +692,7 @@ async def main() -> bool:
         graphiti = Graphiti(
             uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
             user=os.getenv("NEO4J_USER", "neo4j"),
-            password=os.getenv("NEO4J_PASSWORD", "24927108"),
+            password=os.getenv("NEO4J_PASSWORD", "password"),
             llm_client=llm_client,
             embedder=embedder,
             cross_encoder=cross_encoder,

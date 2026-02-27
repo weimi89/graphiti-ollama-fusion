@@ -11,6 +11,8 @@ const App = {
         searchMode: 'filter', // 'filter' | 'vector'
     },
 
+    _searchTimer: null,
+
     // ============================================================
     // 初始化
     // ============================================================
@@ -51,6 +53,14 @@ const App = {
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && e.target.id === 'search-input') {
                 this.doSearch();
+            }
+        });
+
+        // 實時搜尋（debounce 500ms）
+        document.addEventListener('input', (e) => {
+            if (e.target.id === 'search-input') {
+                clearTimeout(this._searchTimer);
+                this._searchTimer = setTimeout(() => this.doSearch(), 500);
             }
         });
 
@@ -257,6 +267,28 @@ const App = {
         }).catch(() => {
             this._toast('複製失敗', 'error');
         });
+    },
+
+    async exportJSON() {
+        try {
+            this._toast('正在匯出資料...', 'info');
+            const data = await API.exportData({ groupId: this.state.groupId });
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `graphiti-export-${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            this._toast('匯出完成', 'success');
+        } catch (err) {
+            this._toast(`匯出失敗: ${err.message}`, 'error');
+        }
+    },
+
+    toggleDetail(uuid) {
+        const el = document.getElementById(`detail-${uuid}`);
+        if (el) el.classList.toggle('hidden');
     },
 
     // ============================================================
