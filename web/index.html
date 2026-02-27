@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-TW" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graphiti - 知識圖譜管理</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- 頂部導航 -->
+    <nav class="navbar">
+        <div class="navbar-brand">
+            <span class="brand-icon">&#9670;</span>
+            <span class="brand-text">Graphiti</span>
+        </div>
+        <div class="navbar-links">
+            <a href="#/" class="nav-link active" data-page="dashboard">儀表板</a>
+            <a href="#/nodes" class="nav-link" data-page="nodes">實體節點</a>
+            <a href="#/facts" class="nav-link" data-page="facts">事實關係</a>
+            <a href="#/episodes" class="nav-link" data-page="episodes">記憶片段</a>
+        </div>
+        <div class="navbar-actions">
+            <select id="group-filter" class="group-select" title="篩選 Group">
+                <option value="">全部群組</option>
+            </select>
+            <button id="theme-toggle" class="btn-icon" title="切換主題">
+                <span class="theme-icon-dark">&#9790;</span>
+                <span class="theme-icon-light">&#9728;</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- 主內容區 -->
+    <main id="app" class="main-content">
+        <div class="loading-spinner">載入中...</div>
+    </main>
+
+    <!-- 刪除確認 Dialog -->
+    <dialog id="confirm-dialog" class="confirm-dialog">
+        <div class="dialog-content">
+            <h3 class="dialog-title">確認刪除</h3>
+            <p id="confirm-message" class="dialog-message"></p>
+            <div class="dialog-actions">
+                <button id="confirm-cancel" class="btn btn-secondary">取消</button>
+                <button id="confirm-ok" class="btn btn-danger">刪除</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Toast 通知 -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/components.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

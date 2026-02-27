@@ -1000,7 +1000,7 @@ def configure_uvicorn_logging() -> None:
         uvicorn_logger.propagate = False
 
 
-# 嘗試添加健康檢查端點
+# 嘗試添加健康檢查端點與 Web 管理介面
 try:
     from starlette.responses import JSONResponse
 
@@ -1011,8 +1011,14 @@ try:
             {"status": "healthy", "service": "graphiti-ollama-mcp", "version": "1.0.0"}
         )
 
+    # 注入 Web 管理介面路由
+    from src.web_api import create_web_routes
+
+    _web_routes = create_web_routes(get_graphiti_fn=initialize_graphiti)
+    mcp._custom_starlette_routes.extend(_web_routes)
+
 except ImportError:
-    pass  # Starlette 不可用時跳過健康檢查端點
+    pass  # Starlette 不可用時跳過健康檢查端點與 Web 介面
 
 
 def main() -> None:
@@ -1116,6 +1122,7 @@ def _run_server(transport: str, main_logger: logging.Logger) -> None:
         main_logger.info(f"基礎 URL: http://{display_host}:{app_config.server.port}/")
         main_logger.info(f"MCP 端點: http://{display_host}:{app_config.server.port}/mcp/")
         main_logger.info(f"健康檢查: http://{display_host}:{app_config.server.port}/health")
+        main_logger.info(f"Web 管理: http://{display_host}:{app_config.server.port}/")
         main_logger.info("=" * 60)
 
         configure_uvicorn_logging()

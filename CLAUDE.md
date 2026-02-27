@@ -66,11 +66,16 @@ uv run python tools/final_status_report.py
 graphiti_mcp_server.py    # 主入口 - FastMCP 應用，定義所有 MCP 工具
 ├── src/
 │   ├── config.py               # 配置管理（GraphitiConfig）支援 JSON/.env
+│   ├── web_api.py              # Web 管理介面 REST API 路由
 │   ├── ollama_graphiti_client.py  # Ollama LLM 客戶端適配器
 │   ├── ollama_embedder.py      # Ollama 嵌入模型適配器
 │   ├── safe_memory_add.py      # 安全記憶添加（跳過實體提取）
 │   ├── exceptions.py           # 結構化異常處理
 │   └── logging_setup.py        # 日誌配置
+├── web/                        # Web 管理介面前端（SPA）
+│   ├── index.html              # 主頁面
+│   ├── css/style.css           # 主題系統與佈局
+│   └── js/                     # API封裝、組件、應用邏輯
 ├── tools/                      # 診斷與維護工具
 └── tests/                      # 測試套件
 ```
@@ -83,7 +88,7 @@ graphiti_mcp_server.py    # 主入口 - FastMCP 應用，定義所有 MCP 工具
 
 **傳輸模式**：
 - `stdio` - Claude Desktop CLI 整合
-- `http` - HTTP Streamable（推薦），支援 `/health` 端點
+- `http` - HTTP Streamable（推薦），支援 `/health` 端點、Web 管理介面（`/`）、REST API（`/api/*`）
 - `sse` - Server-Sent Events
 
 **完整模式（預設）**：`add_memory_simple` 預設使用 `use_safe_mode=False`，透過完整的實體提取流程建立 Entity 節點和關係，使記憶可被 `search_memory_nodes` 和 `search_memory_facts` 搜尋。安全模式（`use_safe_mode=True`）僅建立 EpisodicNode，速度快但無法被搜尋。
@@ -93,6 +98,16 @@ graphiti_mcp_server.py    # 主入口 - FastMCP 應用，定義所有 MCP 工具
 記憶管理：`add_memory_simple`, `search_memory_nodes`, `search_memory_facts`, `get_episodes`
 刪除查詢：`delete_episode`, `delete_entity_edge`, `get_entity_edge`
 系統管理：`get_status`, `test_connection`, `clear_graph`
+
+## Web 管理介面
+
+HTTP/SSE 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
+
+**功能**：儀表板統計、實體節點/事實/記憶片段瀏覽與搜尋、group 篩選、深色/淺色主題、刪除操作。
+
+**REST API**：`/api/stats`、`/api/groups`、`/api/nodes`、`/api/facts`、`/api/episodes`、`/api/search/nodes`、`/api/search/facts`
+
+**架構**：`src/web_api.py`（後端 API）+ `web/`（前端 SPA，純 HTML/CSS/JS，無 build pipeline）。瀏覽用 Cypher 直查、搜尋用 `graphiti.search_()` 向量搜尋。
 
 ## Required Services
 
