@@ -240,14 +240,14 @@ async def add_memory_simple(
     source_description: str = "MCP Server",
     source: str = "text",
     episode_uuid: Optional[str] = None,
-    use_safe_mode: bool = True,
+    use_safe_mode: bool = False,
 ) -> dict:
     """
     添加記憶到知識圖譜。
 
     支援兩種模式：
-    - 安全模式：直接建立節點，跳過實體提取，避免 IndexError
-    - 完整模式：使用完整流程，包含實體提取和關係建立
+    - 完整模式（預設）：使用完整流程，包含實體提取和關係建立，記憶可被搜尋
+    - 安全模式：直接建立節點，跳過實體提取，速度快但記憶無法被搜尋
 
     Args:
         name: 記憶片段的名稱

@@ -86,7 +86,7 @@ graphiti_mcp_server.py    # 主入口 - FastMCP 應用，定義所有 MCP 工具
 - `http` - HTTP Streamable（推薦），支援 `/health` 端點
 - `sse` - Server-Sent Events
 
-**安全模式**：`add_memory_simple` 預設使用 `use_safe_mode=True`，直接建立 EpisodicNode 跳過實體提取，避免 IndexError。
+**完整模式（預設）**：`add_memory_simple` 預設使用 `use_safe_mode=False`，透過完整的實體提取流程建立 Entity 節點和關係，使記憶可被 `search_memory_nodes` 和 `search_memory_facts` 搜尋。安全模式（`use_safe_mode=True`）僅建立 EpisodicNode，速度快但無法被搜尋。
 
 ## MCP Tools (10 tools)
 
