@@ -8,37 +8,38 @@
 </head>
 <body>
     <!-- 頂部導航 -->
-    <nav class="navbar">
+    <nav class="navbar" aria-label="主導航">
         <div class="navbar-brand">
-            <span class="brand-icon">&#9670;</span>
+            <span class="brand-icon" aria-hidden="true">&#9670;</span>
             <span class="brand-text">Graphiti</span>
         </div>
-        <div class="navbar-links">
-            <a href="#/" class="nav-link active" data-page="dashboard">儀表板</a>
+        <div class="navbar-links" role="navigation" aria-label="頁面導航">
+            <a href="#/" class="nav-link active" data-page="dashboard" aria-current="page">儀表板</a>
             <a href="#/nodes" class="nav-link" data-page="nodes">實體節點</a>
             <a href="#/facts" class="nav-link" data-page="facts">事實關係</a>
             <a href="#/episodes" class="nav-link" data-page="episodes">記憶片段</a>
         </div>
         <div class="navbar-actions">
-            <select id="group-filter" class="group-select" title="篩選 Group">
+            <label for="group-filter" class="sr-only">篩選群組</label>
+            <select id="group-filter" class="group-select" aria-label="篩選群組">
                 <option value="">全部群組</option>
             </select>
-            <button id="theme-toggle" class="btn-icon" title="切換主題">
-                <span class="theme-icon-dark">&#9790;</span>
-                <span class="theme-icon-light">&#9728;</span>
+            <button id="theme-toggle" class="btn-icon" aria-label="切換深色/淺色主題">
+                <span class="theme-icon-dark" aria-hidden="true">&#9790;</span>
+                <span class="theme-icon-light" aria-hidden="true">&#9728;</span>
             </button>
         </div>
     </nav>
 
     <!-- 主內容區 -->
-    <main id="app" class="main-content">
-        <div class="loading-spinner">載入中...</div>
+    <main id="app" class="main-content" role="main" aria-live="polite">
+        <div class="loading-spinner" role="status">載入中...</div>
     </main>
 
     <!-- 刪除確認 Dialog -->
-    <dialog id="confirm-dialog" class="confirm-dialog">
+    <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="dialog-title" aria-describedby="confirm-message">
         <div class="dialog-content">
-            <h3 class="dialog-title">確認刪除</h3>
+            <h3 id="dialog-title" class="dialog-title">確認刪除</h3>
             <p id="confirm-message" class="dialog-message"></p>
             <div class="dialog-actions">
                 <button id="confirm-cancel" class="btn btn-secondary">取消</button>
@@ -48,7 +49,7 @@
     </dialog>
 
     <!-- Toast 通知 -->
-    <div id="toast-container" class="toast-container"></div>
+    <div id="toast-container" class="toast-container" aria-live="assertive" aria-atomic="true"></div>
 
     <script src="/static/js/api.js"></script>
     <script src="/static/js/components.js"></script>

@@ -84,10 +84,16 @@ const App = {
         const parts = hash.split('/').filter(Boolean);
         const page = parts[0] || 'dashboard';
 
-        // 更新導航高亮
+        // 更新導航高亮與 ARIA
         document.querySelectorAll('.nav-link').forEach(link => {
             const linkPage = link.dataset.page;
-            link.classList.toggle('active', linkPage === page || (!linkPage && page === 'dashboard'));
+            const isActive = linkPage === page || (!linkPage && page === 'dashboard');
+            link.classList.toggle('active', isActive);
+            if (isActive) {
+                link.setAttribute('aria-current', 'page');
+            } else {
+                link.removeAttribute('aria-current');
+            }
         });
 
         // 頁面切換時重設狀態

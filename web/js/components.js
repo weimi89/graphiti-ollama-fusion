@@ -24,7 +24,7 @@ const Components = {
                 </div>
             </div>
             <div style="text-align:right;margin-bottom:1rem">
-                <button class="btn btn-primary" onclick="App.exportJSON()">匯出 JSON</button>
+                <button class="btn btn-primary" onclick="App.exportJSON()" aria-label="匯出知識圖譜資料為 JSON">匯出 JSON</button>
             </div>
 
             <div class="dashboard-section">
@@ -70,14 +70,17 @@ const Components = {
                 <div class="search-box">
                     <input type="text" class="search-input" id="search-input"
                            placeholder="${searchMode === 'vector' ? '向量語意搜尋...' : '關鍵字篩選...'}"
-                           value="${this._esc(searchValue)}">
-                    <button class="btn btn-primary" onclick="App.doSearch()">搜尋</button>
+                           value="${this._esc(searchValue)}"
+                           aria-label="搜尋關鍵字">
+                    <button class="btn btn-primary" onclick="App.doSearch()" aria-label="執行搜尋">搜尋</button>
                 </div>
             </div>
-            <div class="search-mode-tabs">
+            <div class="search-mode-tabs" role="tablist" aria-label="搜尋模式">
                 <button class="search-mode-tab ${searchMode === 'filter' ? 'active' : ''}"
+                        role="tab" aria-selected="${searchMode === 'filter'}"
                         onclick="App.setSearchMode('filter')">篩選</button>
                 <button class="search-mode-tab ${searchMode === 'vector' ? 'active' : ''}"
+                        role="tab" aria-selected="${searchMode === 'vector'}"
                         onclick="App.setSearchMode('vector')">向量搜尋</button>
             </div>
             <div class="card-list">
@@ -131,14 +134,17 @@ const Components = {
                 <div class="search-box">
                     <input type="text" class="search-input" id="search-input"
                            placeholder="${searchMode === 'vector' ? '向量語意搜尋...' : '關鍵字篩選...'}"
-                           value="${this._esc(searchValue)}">
-                    <button class="btn btn-primary" onclick="App.doSearch()">搜尋</button>
+                           value="${this._esc(searchValue)}"
+                           aria-label="搜尋關鍵字">
+                    <button class="btn btn-primary" onclick="App.doSearch()" aria-label="執行搜尋">搜尋</button>
                 </div>
             </div>
-            <div class="search-mode-tabs">
+            <div class="search-mode-tabs" role="tablist" aria-label="搜尋模式">
                 <button class="search-mode-tab ${searchMode === 'filter' ? 'active' : ''}"
+                        role="tab" aria-selected="${searchMode === 'filter'}"
                         onclick="App.setSearchMode('filter')">篩選</button>
                 <button class="search-mode-tab ${searchMode === 'vector' ? 'active' : ''}"
+                        role="tab" aria-selected="${searchMode === 'vector'}"
                         onclick="App.setSearchMode('vector')">向量搜尋</button>
             </div>
             <div class="card-list">
@@ -224,7 +230,7 @@ const Components = {
     renderPagination(current, total, totalItems) {
         let buttons = '';
 
-        buttons += `<button ${current <= 1 ? 'disabled' : ''} onclick="App.goPage(${current - 1})">&#8249;</button>`;
+        buttons += `<button ${current <= 1 ? 'disabled' : ''} onclick="App.goPage(${current - 1})" aria-label="上一頁">&#8249;</button>`;
 
         const start = Math.max(1, current - 2);
         const end = Math.min(total, current + 2);
@@ -243,12 +249,12 @@ const Components = {
             buttons += `<button onclick="App.goPage(${total})">${total}</button>`;
         }
 
-        buttons += `<button ${current >= total ? 'disabled' : ''} onclick="App.goPage(${current + 1})">&#8250;</button>`;
+        buttons += `<button ${current >= total ? 'disabled' : ''} onclick="App.goPage(${current + 1})" aria-label="下一頁">&#8250;</button>`;
 
         return `
-            <div class="pagination">
+            <div class="pagination" role="navigation" aria-label="分頁導航">
                 ${buttons}
-                <span class="pagination-info">共 ${totalItems} 筆</span>
+                <span class="pagination-info" aria-live="polite">共 ${totalItems} 筆</span>
             </div>
         `;
     },

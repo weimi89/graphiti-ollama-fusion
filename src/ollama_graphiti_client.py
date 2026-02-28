@@ -46,6 +46,61 @@ load_dotenv()
 # 確保導入路徑
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# ============================================================
+# 集中化字段映射常量
+# Ollama 本地 LLM 返回的欄位名稱可能與 Graphiti 預期不同，
+# 以下常量集中定義所有映射規則，方便維護和擴展。
+# ============================================================
+
+# 頂層字段：中文名稱 → 標準名稱
+TOP_LEVEL_FIELD_MAP: Dict[str, str] = {
+    "實體": "extracted_entities",
+}
+
+# 實體字段映射：LLM 返回名稱 → Graphiti 標準名稱
+ENTITY_FIELD_MAP: Dict[str, str] = {
+    "entity_name": "name",
+    "entity_type_name": "entity_type",
+}
+
+# 實體預設字段（確保存在的可選字段）
+ENTITY_DEFAULT_FIELDS: Dict[str, Any] = {
+    "duplicates": [],
+    "potential_duplicates": [],
+}
+
+# 實體中應移除的多餘字段
+ENTITY_REMOVE_FIELDS: List[str] = ["description", "score", "mentioned", "speaker"]
+
+# 邊 source ID 候選字段（依優先順序嘗試映射到 source_entity_id）
+EDGE_SOURCE_KEYS: List[str] = ["source_id", "subject_id", "source", "subject"]
+
+# 邊 target ID 候選字段（依優先順序嘗試映射到 target_entity_id）
+EDGE_TARGET_KEYS: List[str] = ["target_id", "object_id", "target", "object"]
+
+# 邊 relation type 候選字段（依優先順序嘗試映射到 relation_type）
+EDGE_RELATION_KEYS: List[str] = ["relationship", "predicate"]
+
+# 邊預設字段
+EDGE_DEFAULT_FIELDS: Dict[str, Any] = {
+    "fact_embedding": None,
+    "valid_at": None,
+    "invalid_at": None,
+}
+
+# 解析欄位映射
+RESOLUTION_FIELD_MAP: Dict[str, str] = {
+    "duplication_idx": "duplicate_idx",
+}
+
+# 解析預設字段
+RESOLUTION_DEFAULT_FIELDS: Dict[str, Any] = {
+    "duplicate_idx": -1,
+    "additional_duplicates": [],
+    "duplicates": [],
+    "potential_duplicates": [],
+}
+
 
 class OptimizedOllamaClient(LLMClient):
     """
@@ -327,9 +382,10 @@ IMPORTANT:
 
     def _fix_field_mappings(self, json_data: Dict) -> Dict:
         """修復常見的欄位名稱映射問題。"""
-        # 處理中文欄位名
-        if "實體" in json_data:
-            json_data["extracted_entities"] = json_data.pop("實體")
+        # 頂層字段映射（中文 → 英文）
+        for src, dst in TOP_LEVEL_FIELD_MAP.items():
+            if src in json_data:
+                json_data[dst] = json_data.pop(src)
 
         # 修復實體欄位
         if "extracted_entities" in json_data:
@@ -359,13 +415,10 @@ IMPORTANT:
 
     def _fix_entity_fields(self, entity: Dict) -> Dict:
         """修復單一實體的欄位。"""
-        # 名稱欄位映射
-        if "entity_name" in entity and "name" not in entity:
-            entity["name"] = entity.pop("entity_name")
-
-        # 類型欄位映射
-        if "entity_type_name" in entity and "entity_type" not in entity:
-            entity["entity_type"] = entity.pop("entity_type_name")
+        # 使用集中化映射表重命名字段
+        for src, dst in ENTITY_FIELD_MAP.items():
+            if src in entity and dst not in entity:
+                entity[dst] = entity.pop(src)
 
         # 處理 summary 欄位
         summary = entity.get("summary")
@@ -398,12 +451,12 @@ IMPORTANT:
         # 確保 entity_type_id
         entity["entity_type_id"] = 0  # 強制設為 0 以避免 index out of range
 
-        # 新版本 Graphiti 需要的欄位
-        entity.setdefault("duplicates", [])
-        entity.setdefault("potential_duplicates", [])
+        # 使用集中化預設字段
+        for key, default in ENTITY_DEFAULT_FIELDS.items():
+            entity.setdefault(key, default)
 
         # 移除不需要的欄位
-        for key in ["description", "score", "mentioned", "speaker"]:
+        for key in ENTITY_REMOVE_FIELDS:
             entity.pop(key, None)
 
         return entity
@@ -412,13 +465,13 @@ IMPORTANT:
         """修復單一邊的欄位。"""
         entities = json_data.get("extracted_entities", [])
 
-        # 來源 ID 映射
-        for src_key in ["source_id", "subject_id", "source", "subject"]:
+        # 來源 ID 映射（使用集中化候選字段列表）
+        for src_key in EDGE_SOURCE_KEYS:
             if src_key in edge and "source_entity_id" not in edge:
                 edge["source_entity_id"] = edge.pop(src_key)
 
         # 目標 ID 映射
-        for tgt_key in ["target_id", "object_id", "target", "object"]:
+        for tgt_key in EDGE_TARGET_KEYS:
             if tgt_key in edge and "target_entity_id" not in edge:
                 edge["target_entity_id"] = edge.pop(tgt_key)
 
@@ -432,7 +485,7 @@ IMPORTANT:
         )
 
         # 關係類型映射
-        for rel_key in ["relationship", "predicate"]:
+        for rel_key in EDGE_RELATION_KEYS:
             if rel_key in edge and "relation_type" not in edge:
                 edge["relation_type"] = edge.pop(rel_key)
 
@@ -441,9 +494,8 @@ IMPORTANT:
 
         # 確保必要欄位
         edge.setdefault("fact", edge.get("relation_type", "relates to"))
-        edge.setdefault("fact_embedding", None)
-        edge.setdefault("valid_at", None)
-        edge.setdefault("invalid_at", None)
+        for key, default in EDGE_DEFAULT_FIELDS.items():
+            edge.setdefault(key, default)
 
         return edge
 
@@ -508,13 +560,14 @@ IMPORTANT:
 
     def _fix_resolution_fields(self, resolution: Dict) -> Dict:
         """修復實體解析欄位。"""
-        if "duplication_idx" in resolution:
-            resolution["duplicate_idx"] = resolution.pop("duplication_idx")
+        # 使用集中化映射表重命名字段
+        for src, dst in RESOLUTION_FIELD_MAP.items():
+            if src in resolution:
+                resolution[dst] = resolution.pop(src)
 
-        resolution.setdefault("duplicate_idx", -1)
-        resolution.setdefault("additional_duplicates", [])
-        resolution.setdefault("duplicates", [])
-        resolution.setdefault("potential_duplicates", [])
+        # 使用集中化預設字段
+        for key, default in RESOLUTION_DEFAULT_FIELDS.items():
+            resolution.setdefault(key, default)
 
         return resolution
 
