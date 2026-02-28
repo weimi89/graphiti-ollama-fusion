@@ -52,17 +52,21 @@ class OllamaConfig:
     timeout: int = 120
 
     def validate(self) -> bool:
-        """
-        驗證配置是否有效。
+        """驗證配置是否有效。"""
+        return not self.get_errors()
 
-        Returns:
-            bool: 配置有效返回 True
-        """
-        if not self.model or not self.base_url:
-            return False
+    def get_errors(self) -> list[str]:
+        """返回配置中的具體錯誤列表。"""
+        errors = []
+        if not self.model:
+            errors.append("ollama.model 不能為空")
+        if not self.base_url:
+            errors.append("ollama.base_url 不能為空")
+        elif not self.base_url.startswith(("http://", "https://")):
+            errors.append(f"ollama.base_url 格式無效: {self.base_url}")
         if not 0.0 <= self.temperature <= 2.0:
-            return False
-        return True
+            errors.append(f"ollama.temperature 超出範圍 (0.0-2.0): {self.temperature}")
+        return errors
 
 
 @dataclass
@@ -86,11 +90,22 @@ class OllamaEmbedderConfig:
 
     def validate(self) -> bool:
         """驗證配置是否有效。"""
-        if not self.model or not self.base_url:
-            return False
-        if self.dimensions <= 0 or self.batch_size <= 0:
-            return False
-        return True
+        return not self.get_errors()
+
+    def get_errors(self) -> list[str]:
+        """返回配置中的具體錯誤列表。"""
+        errors = []
+        if not self.model:
+            errors.append("embedder.model 不能為空")
+        if not self.base_url:
+            errors.append("embedder.base_url 不能為空")
+        elif not self.base_url.startswith(("http://", "https://")):
+            errors.append(f"embedder.base_url 格式無效: {self.base_url}")
+        if self.dimensions <= 0:
+            errors.append(f"embedder.dimensions 必須 > 0: {self.dimensions}")
+        if self.batch_size <= 0:
+            errors.append(f"embedder.batch_size 必須 > 0: {self.batch_size}")
+        return errors
 
 
 @dataclass
@@ -118,11 +133,22 @@ class Neo4jConfig:
 
     def validate(self) -> bool:
         """驗證配置是否有效。"""
-        if not self.uri or not self.user or not self.password:
-            return False
+        return not self.get_errors()
+
+    def get_errors(self) -> list[str]:
+        """返回配置中的具體錯誤列表。"""
+        errors = []
+        if not self.uri:
+            errors.append("neo4j.uri 不能為空")
+        elif not self.uri.startswith(("bolt://", "neo4j://", "bolt+s://", "neo4j+s://")):
+            errors.append(f"neo4j.uri 格式無效: {self.uri}")
+        if not self.user:
+            errors.append("neo4j.user 不能為空")
+        if not self.password:
+            errors.append("neo4j.password 不能為空")
         if not self.database:
-            return False
-        return True
+            errors.append("neo4j.database 不能為空")
+        return errors
 
 
 @dataclass
@@ -149,6 +175,13 @@ class LoggingConfig:
     console_output: bool = True
     rotation_type: str = "time"
     rotation_interval: str = "midnight"
+    third_party_levels: Dict[str, str] = field(default_factory=lambda: {
+        "httpx": "WARNING",
+        "httpcore": "WARNING",
+        "urllib3": "WARNING",
+        "asyncio": "WARNING",
+        "neo4j": "INFO",
+    })
 
     # 有效的配置選項
     VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
@@ -157,15 +190,20 @@ class LoggingConfig:
 
     def validate(self) -> bool:
         """驗證配置是否有效。"""
+        return not self.get_errors()
+
+    def get_errors(self) -> list[str]:
+        """返回配置中的具體錯誤列表。"""
+        errors = []
         if self.level.upper() not in self.VALID_LEVELS:
-            return False
+            errors.append(f"logging.level 無效: {self.level}（有效值: {', '.join(self.VALID_LEVELS)}）")
         if self.rotation_type not in self.VALID_ROTATION_TYPES:
-            return False
+            errors.append(f"logging.rotation_type 無效: {self.rotation_type}")
         if self.rotation_type == "time" and self.rotation_interval not in self.VALID_INTERVALS:
-            return False
+            errors.append(f"logging.rotation_interval 無效: {self.rotation_interval}")
         if self.backup_count < 1:
-            return False
-        return True
+            errors.append(f"logging.backup_count 必須 >= 1: {self.backup_count}")
+        return errors
 
 
 @dataclass
@@ -191,11 +229,16 @@ class ServerConfig:
 
     def validate(self) -> bool:
         """驗證配置是否有效。"""
+        return not self.get_errors()
+
+    def get_errors(self) -> list[str]:
+        """返回配置中的具體錯誤列表。"""
+        errors = []
         if not 1 <= self.port <= 65535:
-            return False
+            errors.append(f"server.port 超出範圍 (1-65535): {self.port}")
         if self.transport not in self.VALID_TRANSPORTS:
-            return False
-        return True
+            errors.append(f"server.transport 無效: {self.transport}（有效值: {', '.join(self.VALID_TRANSPORTS)}）")
+        return errors
 
 
 @dataclass
@@ -286,6 +329,15 @@ class GraphitiConfig:
         if os.getenv("LOG_BACKUP_COUNT"):
             config.logging.backup_count = int(os.getenv("LOG_BACKUP_COUNT"))
 
+        # 第三方日誌級別覆蓋（JSON 格式）
+        third_party_env = os.getenv("GRAPHITI_LOG_THIRD_PARTY_LEVELS")
+        if third_party_env:
+            try:
+                overrides = json.loads(third_party_env)
+                config.logging.third_party_levels.update(overrides)
+            except json.JSONDecodeError:
+                logger.warning("GRAPHITI_LOG_THIRD_PARTY_LEVELS 格式無效（需 JSON），已忽略")
+
         # Graphiti 特定設定
         _load_graphiti_settings(config)
 
@@ -336,27 +388,20 @@ class GraphitiConfig:
             return cls()
 
     def validate(self) -> bool:
+        """驗證所有配置。"""
+        return not self.get_errors()
+
+    def get_errors(self) -> list[str]:
         """
-        驗證所有配置。
+        收集所有子配置的具體錯誤列表。
 
         Returns:
-            bool: 所有配置都有效返回 True
+            list[str]: 錯誤訊息列表，空列表表示全部通過
         """
-        validations = [
-            ("Ollama", self.ollama.validate()),
-            ("Embedder", self.embedder.validate()),
-            ("Neo4j", self.neo4j.validate()),
-            ("Logging", self.logging.validate()),
-            ("Server", self.server.validate()),
-        ]
-
-        all_valid = True
-        for name, is_valid in validations:
-            if not is_valid:
-                logger.error(f"配置驗證失敗: {name}")
-                all_valid = False
-
-        return all_valid
+        errors = []
+        for sub in [self.ollama, self.embedder, self.neo4j, self.logging, self.server]:
+            errors.extend(sub.get_errors())
+        return errors
 
     def save_to_file(self, config_path: str) -> bool:
         """
@@ -430,6 +475,70 @@ class GraphitiConfig:
             logger.error(f"保存配置檔案失敗: {e}")
             return False
 
+    def apply_env_overrides(self) -> None:
+        """
+        用環境變數覆蓋現有配置（只覆蓋有設定的環境變數）。
+
+        適用於 JSON 配置為基礎、環境變數為覆蓋的部署場景（如 Docker）。
+        """
+        # Ollama 配置
+        if os.getenv("OLLAMA_MODEL"):
+            self.ollama.model = os.getenv("OLLAMA_MODEL")
+        if os.getenv("OLLAMA_BASE_URL"):
+            self.ollama.base_url = os.getenv("OLLAMA_BASE_URL")
+        if os.getenv("OLLAMA_TEMPERATURE"):
+            self.ollama.temperature = float(os.getenv("OLLAMA_TEMPERATURE"))
+
+        # 嵌入器配置
+        if os.getenv("OLLAMA_EMBEDDING_MODEL"):
+            self.embedder.model = os.getenv("OLLAMA_EMBEDDING_MODEL")
+        if os.getenv("OLLAMA_EMBEDDING_BASE_URL"):
+            self.embedder.base_url = os.getenv("OLLAMA_EMBEDDING_BASE_URL")
+        if os.getenv("OLLAMA_EMBEDDING_DIMENSIONS"):
+            self.embedder.dimensions = int(os.getenv("OLLAMA_EMBEDDING_DIMENSIONS"))
+
+        # Neo4j 配置
+        if os.getenv("NEO4J_URI"):
+            self.neo4j.uri = os.getenv("NEO4J_URI")
+        if os.getenv("NEO4J_USER"):
+            self.neo4j.user = os.getenv("NEO4J_USER")
+        if os.getenv("NEO4J_PASSWORD"):
+            self.neo4j.password = os.getenv("NEO4J_PASSWORD")
+        if os.getenv("NEO4J_DATABASE"):
+            self.neo4j.database = os.getenv("NEO4J_DATABASE")
+
+        # 伺服器配置
+        if os.getenv("SERVER_HOST"):
+            self.server.host = os.getenv("SERVER_HOST")
+        if os.getenv("SERVER_PORT"):
+            self.server.port = int(os.getenv("SERVER_PORT"))
+        if os.getenv("SERVER_TRANSPORT"):
+            self.server.transport = os.getenv("SERVER_TRANSPORT")
+
+        # 日誌配置
+        if os.getenv("LOG_LEVEL"):
+            self.logging.level = os.getenv("LOG_LEVEL")
+        if os.getenv("LOG_FILE"):
+            self.logging.file_path = os.getenv("LOG_FILE")
+        if os.getenv("LOG_ROTATION_TYPE"):
+            self.logging.rotation_type = os.getenv("LOG_ROTATION_TYPE")
+        if os.getenv("LOG_ROTATION_INTERVAL"):
+            self.logging.rotation_interval = os.getenv("LOG_ROTATION_INTERVAL")
+        if os.getenv("LOG_BACKUP_COUNT"):
+            self.logging.backup_count = int(os.getenv("LOG_BACKUP_COUNT"))
+
+        # 第三方日誌級別覆蓋
+        third_party_env = os.getenv("GRAPHITI_LOG_THIRD_PARTY_LEVELS")
+        if third_party_env:
+            try:
+                overrides = json.loads(third_party_env)
+                self.logging.third_party_levels.update(overrides)
+            except json.JSONDecodeError:
+                logger.warning("GRAPHITI_LOG_THIRD_PARTY_LEVELS 格式無效（需 JSON），已忽略")
+
+        # Graphiti 特定設定
+        _load_graphiti_settings(self)
+
     def get_summary(self) -> Dict[str, Any]:
         """
         獲取配置摘要（用於日誌記錄）。
@@ -495,7 +604,13 @@ def load_config(config_path: Optional[str] = None) -> GraphitiConfig:
     """
     載入配置的便利函數。
 
-    優先從指定的配置檔案載入，若檔案不存在則從環境變數載入。
+    支援配置層疊：JSON 檔案為基礎配置，環境變數覆蓋個別值。
+    這在 Docker/K8s 部署中特別有用，可以用 JSON 做基礎配置，
+    再用環境變數覆蓋密碼、端口等敏感或環境特定的值。
+
+    載入順序：
+        1. 有 config_path 且檔案存在 → 從 JSON 載入基礎 + 環境變數覆蓋
+        2. 無 config_path 或檔案不存在 → 純環境變數載入
 
     Args:
         config_path: 可選的配置檔案路徑
@@ -505,10 +620,15 @@ def load_config(config_path: Optional[str] = None) -> GraphitiConfig:
     """
     if config_path and Path(config_path).exists():
         config = GraphitiConfig.from_file(config_path)
+        # 層疊：用環境變數覆蓋 JSON 中的值
+        config.apply_env_overrides()
     else:
         config = GraphitiConfig.from_env()
 
-    if not config.validate():
+    errors = config.get_errors()
+    if errors:
+        for err in errors:
+            logger.warning(f"配置問題: {err}")
         logger.warning("配置驗證失敗，某些功能可能無法正常運作")
 
     return config

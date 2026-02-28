@@ -66,6 +66,13 @@ class OllamaEmbedder(EmbedderClient):
         self.base_url = base_url.rstrip("/")
         self.dimensions = dimensions
         self.embed_url = f"{self.base_url}/api/embed"
+        self._session: aiohttp.ClientSession | None = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """取得或建立共用的 aiohttp session（利用 HTTP keep-alive 和連線池）。"""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
 
     async def create(self, input_data: Union[str, List[str]]) -> List[float]:
         """
@@ -125,14 +132,14 @@ class OllamaEmbedder(EmbedderClient):
             batch_size = self._compute_batch_size(input_data)
 
         embeddings = []
+        session = await self._get_session()
 
-        async with aiohttp.ClientSession() as session:
-            for i in range(0, len(input_data), batch_size):
-                batch = input_data[i : i + batch_size]
-                batch_results = await asyncio.gather(
-                    *[self._embed_single(session, text) for text in batch]
-                )
-                embeddings.extend(batch_results)
+        for i in range(0, len(input_data), batch_size):
+            batch = input_data[i : i + batch_size]
+            batch_results = await asyncio.gather(
+                *[self._embed_single(session, text) for text in batch]
+            )
+            embeddings.extend(batch_results)
 
         return embeddings
 
@@ -167,8 +174,8 @@ class OllamaEmbedder(EmbedderClient):
             bool: 連接成功且模型可用返回 True
         """
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.base_url}/api/tags") as response:
+            session = await self._get_session()
+            async with session.get(f"{self.base_url}/api/tags") as response:
                     if response.status != 200:
                         logger.warning(f"Ollama 連接失敗，狀態碼: {response.status}")
                         return False
@@ -197,10 +204,10 @@ class OllamaEmbedder(EmbedderClient):
             dict: 模型詳細資訊，或包含錯誤訊息的字典
         """
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.base_url}/api/show", json={"name": self.model}
-                ) as response:
+            session = await self._get_session()
+            async with session.post(
+                f"{self.base_url}/api/show", json={"name": self.model}
+            ) as response:
                     if response.status == 200:
                         return await response.json()
                     return {"error": f"無法獲取模型資訊: {response.status}"}
@@ -225,11 +232,11 @@ class OllamaEmbedder(EmbedderClient):
             return []
 
         embeddings = []
+        session = await self._get_session()
 
-        async with aiohttp.ClientSession() as session:
-            for text in texts:
-                embedding = await self._embed_single(session, text)
-                embeddings.append(embedding)
+        for text in texts:
+            embedding = await self._embed_single(session, text)
+            embeddings.append(embedding)
 
         return embeddings
 
@@ -354,102 +361,10 @@ class OllamaEmbedder(EmbedderClient):
         return [random.uniform(-0.01, 0.01) for _ in range(self.dimensions)]
 
     def _create_fallback_embedding(self) -> List[float]:
-        """建立備用嵌入向量（歸一化的隨機向量）。"""
-        embedding = self._create_random_embedding()
-        vector_norm = self._compute_norm(embedding)
-        if vector_norm > 0:
-            embedding = [x / vector_norm for x in embedding]
-        return embedding
+        """建立備用嵌入向量（確定性哨兵向量，非隨機）。
 
-
-# =============================================================================
-# 測試函數
-# =============================================================================
-
-
-async def test_ollama_embedder() -> bool:
-    """
-    測試 Ollama 嵌入器。
-
-    Returns:
-        bool: 所有測試通過返回 True
-    """
-    print("測試 Ollama 嵌入器")
-    print("=" * 50)
-
-    embedder = OllamaEmbedder(
-        model="nomic-embed-text:v1.5", base_url="http://localhost:11434"
-    )
-
-    # 測試連接
-    print("\n1. 測試連接...")
-    connected = await embedder.test_connection()
-    if not connected:
-        print("連接失敗，請確保 Ollama 正在運行")
-        return False
-
-    # 測試單一字串嵌入
-    print("\n2. 測試單一字串嵌入...")
-    single_text = "TypeScript 是 JavaScript 的超集"
-    single_embedding = await embedder.create(single_text)
-
-    if (
-        isinstance(single_embedding, list)
-        and single_embedding
-        and isinstance(single_embedding[0], float)
-    ):
-        print(f"成功！嵌入維度: {len(single_embedding)}")
-        print(f"前5個值: {single_embedding[:5]}")
-    else:
-        print("單一字串嵌入失敗")
-        return False
-
-    # 測試列表嵌入
-    print("\n3. 測試列表嵌入...")
-    list_embedding = await embedder.create(["TypeScript 是 JavaScript 的超集"])
-
-    if (
-        isinstance(list_embedding, list)
-        and list_embedding
-        and isinstance(list_embedding[0], float)
-    ):
-        print(f"成功！嵌入維度: {len(list_embedding)}")
-    else:
-        print("列表嵌入失敗")
-        return False
-
-    # 測試批量嵌入
-    print("\n4. 測試批量嵌入...")
-    batch_texts = [
-        "React 18 引入了 Concurrent Features",
-        "API 錯誤處理最佳實踐",
-        "用戶偏好使用 TypeScript",
-    ]
-    batch_embeddings = await embedder.create_bulk(batch_texts, batch_size=2)
-
-    if len(batch_embeddings) == len(batch_texts):
-        print(f"成功嵌入 {len(batch_embeddings)} 個文本")
-        for i, text in enumerate(batch_texts):
-            print(f"- '{text[:30]}...' -> 維度 {len(batch_embeddings[i])}")
-    else:
-        print("批量嵌入失敗")
-        return False
-
-    # 獲取模型資訊
-    print("\n5. 獲取模型資訊...")
-    model_info = await embedder.get_model_info()
-    if "error" not in model_info:
-        print(f"模型: {embedder.model}")
-        if "modelfile" in model_info:
-            lines = model_info["modelfile"].split("\n")[:3]
-            for line in lines:
-                if line:
-                    print(f"- {line}")
-
-    print("\n所有測試通過！")
-    return True
-
-
-if __name__ == "__main__":
-    success = asyncio.run(test_ollama_embedder())
-    exit(0 if success else 1)
+        使用固定的單位向量（第一維為 1.0），確保所有失敗的嵌入
+        都映射到相同位置，不會隨機污染搜尋結果。
+        """
+        logger.warning("嵌入請求失敗，使用哨兵向量替代（搜尋結果可能不準確）")
+        return [1.0] + [0.0] * (self.dimensions - 1)

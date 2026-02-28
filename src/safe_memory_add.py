@@ -10,7 +10,6 @@
 
 主要功能：
     - safe_add_memory: 安全添加記憶（跳過實體提取）
-    - test_safe_memory_method: 測試安全記憶添加功能
 
 使用場景：
     - 當完整的實體提取流程產生 IndexError 時
@@ -18,7 +17,6 @@
     - 批量匯入資料時避免處理失敗
 """
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -107,104 +105,3 @@ async def safe_add_memory(
             "error": str(e),
             "message": f"記憶 '{name}' 添加失敗",
         }
-
-
-async def test_safe_memory_method() -> bool:
-    """
-    測試安全記憶添加方法。
-
-    執行一系列測試案例，驗證安全記憶添加功能的穩定性。
-
-    Returns:
-        bool: 所有測試都通過返回 True
-
-    Test Cases:
-        - 基本文字記憶
-        - 長文字記憶
-        - 特殊字符處理
-        - JSON 格式資料
-    """
-    try:
-        from src.config import load_config
-        from src.ollama_graphiti_client import OptimizedOllamaClient
-        from src.ollama_embedder import OllamaEmbedder
-        from graphiti_core import Graphiti
-        from graphiti_core.llm_client.config import LLMConfig
-
-        logger.info("測試安全記憶添加方法...")
-
-        # 初始化 Graphiti
-        config = load_config()
-
-        llm_config = LLMConfig(
-            base_url=config.ollama.base_url,
-            model=config.ollama.model,
-            temperature=0.0,
-        )
-        llm_client = OptimizedOllamaClient(config=llm_config)
-
-        embedder_client = OllamaEmbedder(
-            model=config.embedder.model,
-            base_url=config.embedder.base_url,
-            dimensions=config.embedder.dimensions,
-        )
-
-        graphiti = Graphiti(
-            uri=config.neo4j.uri,
-            user=config.neo4j.user,
-            password=config.neo4j.password,
-            llm_client=llm_client,
-            embedder=embedder_client,
-            max_coroutines=3,
-        )
-
-        await graphiti.build_indices_and_constraints()
-        logger.info("Graphiti 初始化成功（安全模式）")
-
-        # 定義測試案例
-        test_cases = [
-            ("安全測試1", "這是第一個安全測試記憶。"),
-            ("安全測試2", "這是第二個安全測試記憶，用於驗證方法的穩定性。"),
-            ("大文本安全測試", "這是一個較長的測試內容。" * 50),
-            ("特殊字符測試", "測試特殊字符: !@#$%^&*()_+-=[]{}|;':\",./<>?~`"),
-            ("JSON格式測試", '{"name": "test", "value": 123, "array": [1,2,3]}'),
-        ]
-
-        # 執行測試
-        results = []
-        for name, content in test_cases:
-            logger.info(f"測試: {name}")
-            result = await safe_add_memory(graphiti, name, content)
-            results.append(result)
-
-            if result["success"]:
-                logger.info(f"{name} - 成功")
-            else:
-                logger.error(f"{name} - 失敗: {result['error']}")
-
-        # 統計結果
-        successful = sum(1 for r in results if r["success"])
-        total = len(results)
-
-        logger.info(f"安全測試總結: {successful}/{total} 成功")
-
-        if successful == total:
-            logger.info("所有安全測試都通過！完全避開了 IndexError 問題！")
-            return True
-        else:
-            logger.warning("部分安全測試失敗")
-            return False
-
-    except Exception as e:
-        logger.error(f"安全測試失敗: {e}")
-        return False
-
-
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-    )
-    print("開始安全記憶添加測試...")
-    success = asyncio.run(test_safe_memory_method())
-    print("安全方法驗證成功！" if success else "安全方法仍有問題。")

@@ -15,7 +15,7 @@ Graphiti Ollama MCP Server
     - 解決 IndexError 問題，提升穩定性
     - 支援 Pydantic 驗證修復
     - 完整的錯誤處理機制
-    - 隊列系統支援非同步處理
+    - 並發安全的初始化機制
 
 作者：RD-CAT
 版本：1.0.0
@@ -71,11 +71,8 @@ load_dotenv()
 app_config: GraphitiConfig = None  # 應用程式配置
 logger = None  # 日誌記錄器
 graphiti_instance = None  # Graphiti 實例快取
+_init_lock = asyncio.Lock()  # 初始化鎖，防止並發競態
 default_group_id: str = os.getenv("GROUP_ID", "default")  # 預設記憶分組 ID
-
-# 隊列系統（用於非同步處理記憶片段）
-episode_queues: dict[str, asyncio.Queue] = {}
-queue_workers: dict[str, bool] = {}
 
 # ============================================================================
 # MCP 伺服器配置
@@ -106,48 +103,11 @@ mcp = FastMCP("graphiti-ollama-memory", instructions=GRAPHITI_MCP_INSTRUCTIONS)
 # ============================================================================
 
 
-async def process_episode_queue(group_id: str) -> None:
-    """
-    處理特定群組的記憶片段隊列。
-
-    此函數作為背景工作者持續運行，從隊列中取出記憶片段並處理。
-
-    Args:
-        group_id: 記憶分組識別碼
-
-    Note:
-        此函數會持續運行直到被取消或發生錯誤。
-    """
-    global queue_workers
-
-    logging.info(f"啟動記憶片段隊列工作者: group_id={group_id}")
-    queue_workers[group_id] = True
-
-    try:
-        while True:
-            process_func = await episode_queues[group_id].get()
-
-            try:
-                await process_func()
-            except Exception as e:
-                logging.error(f"處理隊列記憶片段失敗 (group_id={group_id}): {e}")
-            finally:
-                episode_queues[group_id].task_done()
-
-    except asyncio.CancelledError:
-        logging.info(f"記憶片段隊列工作者已取消: group_id={group_id}")
-    except Exception as e:
-        logging.error(f"隊列工作者發生非預期錯誤 (group_id={group_id}): {e}")
-    finally:
-        queue_workers[group_id] = False
-        logging.info(f"停止記憶片段隊列工作者: group_id={group_id}")
-
-
 async def initialize_graphiti() -> Graphiti:
     """
     初始化並返回 Graphiti 實例。
 
-    使用快取機制避免重複初始化。如果實例已存在，直接返回快取的實例。
+    使用快取機制和 asyncio.Lock 避免重複初始化和並發競態。
 
     Returns:
         Graphiti: 已初始化的 Graphiti 實例
@@ -158,48 +118,58 @@ async def initialize_graphiti() -> Graphiti:
     Note:
         - LLM 客戶端初始化失敗時會設為 None，不影響其他功能
         - 併發數量限制為 3 以避免 IndexError
+        - 初始化時自動建立索引和約束
     """
     global graphiti_instance
 
     if graphiti_instance is not None:
         return graphiti_instance
 
-    start_time = time.time()
-    log_operation_start("initialize_graphiti")
+    async with _init_lock:
+        # Double-check：取得鎖後再次檢查（其他協程可能已完成初始化）
+        if graphiti_instance is not None:
+            return graphiti_instance
 
-    try:
-        # 初始化 LLM 客戶端（失敗時設為 None）
-        llm_client = _create_llm_client()
+        start_time = time.time()
+        log_operation_start("initialize_graphiti")
 
-        # 建立嵌入器
-        embedder = OllamaEmbedder(
-            model=app_config.embedder.model,
-            base_url=app_config.embedder.base_url,
-            dimensions=app_config.embedder.dimensions,
-        )
+        try:
+            # 初始化 LLM 客戶端（失敗時設為 None）
+            llm_client = _create_llm_client()
 
-        # 建立 Graphiti 實例
-        graphiti_instance = Graphiti(
-            uri=app_config.neo4j.uri,
-            user=app_config.neo4j.user,
-            password=app_config.neo4j.password,
-            llm_client=llm_client,
-            embedder=embedder,
-            max_coroutines=3,  # 限制併發數量避免 IndexError
-        )
+            # 建立嵌入器
+            embedder = OllamaEmbedder(
+                model=app_config.embedder.model,
+                base_url=app_config.embedder.base_url,
+                dimensions=app_config.embedder.dimensions,
+            )
 
-        duration = time.time() - start_time
-        log_operation_success("initialize_graphiti", duration)
+            # 建立 Graphiti 實例
+            graphiti_instance = Graphiti(
+                uri=app_config.neo4j.uri,
+                user=app_config.neo4j.user,
+                password=app_config.neo4j.password,
+                llm_client=llm_client,
+                embedder=embedder,
+                max_coroutines=3,  # 限制併發數量避免 IndexError
+            )
 
-        return graphiti_instance
+            # 確保索引和約束已建立（clear_graph 後重建）
+            await graphiti_instance.build_indices_and_constraints()
 
-    except Exception as e:
-        duration = time.time() - start_time
-        log_operation_error("initialize_graphiti", e, duration=duration)
+            duration = time.time() - start_time
+            log_operation_success("initialize_graphiti", duration)
 
-        if isinstance(e, GraphitiMCPError):
-            raise
-        raise handle_exception(e, "Graphiti 初始化失敗")
+            return graphiti_instance
+
+        except Exception as e:
+            graphiti_instance = None  # 確保失敗時不留殘留
+            duration = time.time() - start_time
+            log_operation_error("initialize_graphiti", e, duration=duration)
+
+            if isinstance(e, GraphitiMCPError):
+                raise
+            raise handle_exception(e, "Graphiti 初始化失敗")
 
 
 def _create_llm_client() -> Optional[OptimizedOllamaClient]:
@@ -220,10 +190,10 @@ def _create_llm_client() -> Optional[OptimizedOllamaClient]:
             temperature=app_config.ollama.temperature,
         )
         client = OptimizedOllamaClient(config=llm_config)
-        print("LLM 客戶端初始化成功")
+        logging.getLogger("graphiti").info("LLM 客戶端初始化成功")
         return client
     except Exception as e:
-        print(f"LLM 客戶端初始化失敗，使用 None: {e}")
+        logging.getLogger("graphiti").warning(f"LLM 客戶端初始化失敗，使用 None: {e}")
         return None
 
 
@@ -919,14 +889,15 @@ async def get_status() -> dict:
             "components": {},
         }
 
-        # 測試資料庫連接
-        status_info["components"]["database"] = await _check_database_status()
-
-        # 測試 LLM 連接
-        status_info["components"]["llm"] = await _check_llm_status()
-
-        # 測試嵌入器
-        status_info["components"]["embedder"] = await _check_embedder_status()
+        # 並行測試所有組件
+        db_status, llm_status, emb_status = await asyncio.gather(
+            _check_database_status(),
+            _check_llm_status(),
+            _check_embedder_status(),
+        )
+        status_info["components"]["database"] = db_status
+        status_info["components"]["llm"] = llm_status
+        status_info["components"]["embedder"] = emb_status
 
         # 判斷整體狀態
         all_connected = all(
@@ -1020,15 +991,35 @@ try:
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health_check(request) -> JSONResponse:
-        """健康檢查端點，用於 Docker 和負載均衡器。"""
+        """輕量 liveness 檢查 — 僅確認程序存活。"""
         return JSONResponse(
             {"status": "healthy", "service": "graphiti-ollama-mcp", "version": "1.0.0"}
         )
 
-    # 注入 Web 管理介面路由
+    @mcp.custom_route("/health/ready", methods=["GET"])
+    async def health_ready(request) -> JSONResponse:
+        """深度 readiness 檢查 — 實際檢查 Neo4j 連線狀態。"""
+        try:
+            graphiti = await initialize_graphiti()
+            async with graphiti.driver.session() as session:
+                result = await session.run("RETURN 1 AS ok")
+                _ = [r async for r in result]
+            return JSONResponse(
+                {"status": "ready", "neo4j": "connected", "service": "graphiti-ollama-mcp"}
+            )
+        except Exception as e:
+            return JSONResponse(
+                {"status": "not_ready", "error": str(e)[:200], "service": "graphiti-ollama-mcp"},
+                status_code=503,
+            )
+
+    # 注入 Web 管理介面路由（含 CORS 配置）
     from src.web_api import create_web_routes
 
-    _web_routes = create_web_routes(get_graphiti_fn=initialize_graphiti)
+    _web_routes = create_web_routes(
+        get_graphiti_fn=initialize_graphiti,
+        cors_origins=app_config.server.cors_origins if app_config else ["*"],
+    )
     mcp._custom_starlette_routes.extend(_web_routes)
 
 except ImportError:
@@ -1097,7 +1088,15 @@ def main() -> None:
         _run_server(args.transport, main_logger)
 
     except KeyboardInterrupt:
-        logging.getLogger("main").info("服務器已停止")
+        main_logger = logging.getLogger("main")
+        main_logger.info("正在關閉服務器...")
+        if graphiti_instance:
+            try:
+                asyncio.run(graphiti_instance.driver.close())
+                main_logger.info("Neo4j 連線已關閉")
+            except Exception:
+                pass
+        main_logger.info("服務器已停止")
         sys.exit(0)
     except Exception as e:
         logging.getLogger("main").error(f"服務器啟動失敗: {e}")
@@ -1105,6 +1104,49 @@ def main() -> None:
 
         traceback.print_exc()
         sys.exit(1)
+
+
+async def _startup_warmup() -> None:
+    """
+    啟動時預熱連線：驗證 Neo4j 和 Ollama 是否可達。
+
+    此函數不會阻塞啟動流程。連線失敗時僅記錄 WARNING，
+    允許服務先起來，等外部服務恢復後自動重連。
+    """
+    warmup_logger = logging.getLogger("startup")
+    warmup_logger.info("開始啟動連線預熱...")
+
+    try:
+        graphiti = await initialize_graphiti()
+        warmup_logger.info("✓ Graphiti 實例初始化成功")
+
+        # 驗證 Neo4j 連線
+        try:
+            async with graphiti.driver.session() as session:
+                result = await session.run("RETURN 1 AS ok")
+                _ = [r async for r in result]
+            warmup_logger.info("✓ Neo4j 連線成功")
+        except Exception as e:
+            warmup_logger.warning(f"⚠ Neo4j 連線失敗: {e}（將在首次工具呼叫時重試）")
+
+        # 驗證 Ollama LLM
+        if graphiti.llm_client:
+            warmup_logger.info(f"✓ Ollama LLM 就緒（模型: {app_config.ollama.model}）")
+        else:
+            warmup_logger.warning("⚠ Ollama LLM 客戶端未初始化")
+
+        # 驗證嵌入器
+        warmup_logger.info(f"✓ 嵌入器就緒（模型: {app_config.embedder.model}）")
+
+    except Exception as e:
+        warmup_logger.warning(f"⚠ 啟動預熱失敗: {e}（將在首次工具呼叫時重試）")
+
+
+async def _run_http_with_warmup() -> None:
+    """HTTP 模式啟動：先觸發預熱，再啟動 HTTP 伺服器。"""
+    # 非同步預熱（不阻塞）
+    asyncio.create_task(_startup_warmup())
+    await mcp.run_streamable_http_async()
 
 
 def _run_server(transport: str, main_logger: logging.Logger) -> None:
@@ -1140,7 +1182,7 @@ def _run_server(transport: str, main_logger: logging.Logger) -> None:
         main_logger.info("=" * 60)
 
         configure_uvicorn_logging()
-        asyncio.run(mcp.run_streamable_http_async())
+        asyncio.run(_run_http_with_warmup())
 
 
 if __name__ == "__main__":

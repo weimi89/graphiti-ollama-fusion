@@ -19,8 +19,10 @@ import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Coroutine, Any
+from typing import Callable, Coroutine, Any, List
 
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, HTMLResponse, Response
 from starlette.routing import Route, Mount
@@ -42,11 +44,20 @@ class _RateLimiter:
         self.max_requests = max_requests
         self.window = window_seconds
         self._hits: dict[str, list[float]] = defaultdict(list)
+        self._call_count = 0
 
     def is_allowed(self, ip: str) -> bool:
         now = time.monotonic()
+        # 每 100 次呼叫全域清理一次，移除不再活躍的 IP 條目
+        self._call_count += 1
+        if self._call_count % 100 == 0:
+            self._hits = {
+                k: [t for t in v if now - t < self.window]
+                for k, v in self._hits.items()
+                if any(now - t < self.window for t in v)
+            }
         hits = self._hits[ip]
-        # 清除過期的記錄
+        # 清除當前 IP 的過期記錄
         self._hits[ip] = [t for t in hits if now - t < self.window]
         if len(self._hits[ip]) >= self.max_requests:
             return False
@@ -59,12 +70,27 @@ _search_limiter = _RateLimiter(max_requests=15, window_seconds=60)
 WEB_DIR = Path(__file__).parent.parent / "web"
 
 
-def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -> list:
+def get_cors_middleware(cors_origins: List[str] | None = None) -> Middleware:
+    """建立 CORS 中間件。"""
+    origins = cors_origins or ["*"]
+    return Middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+    )
+
+
+def create_web_routes(
+    get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]],
+    cors_origins: List[str] | None = None,
+) -> list:
     """
     建立 Web 管理介面所需的所有路由。
 
     Args:
         get_graphiti_fn: 取得 Graphiti 實例的非同步函數
+        cors_origins: CORS 允許的來源列表
 
     Returns:
         list: Starlette Route/Mount 列表
@@ -273,12 +299,13 @@ def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_episodes(request: Request) -> JSONResponse:
-        """瀏覽記憶片段（分頁）。"""
+        """瀏覽記憶片段（分頁，支援關鍵字搜尋）。"""
         try:
             graphiti = await get_graphiti_fn()
             group_id = request.query_params.get("group_id", "")
             page = int(request.query_params.get("page", "1"))
             limit = min(int(request.query_params.get("limit", "20")), 100)
+            search = request.query_params.get("search", "").strip()
             skip = (page - 1) * limit
 
             conditions = []
@@ -287,6 +314,10 @@ def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -
             if group_id:
                 conditions.append("e.group_id = $group_id")
                 params["group_id"] = group_id
+
+            if search:
+                conditions.append("(toLower(e.name) CONTAINS toLower($search) OR toLower(e.content) CONTAINS toLower($search))")
+                params["search"] = search
 
             where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -340,7 +371,7 @@ def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -
             DELETE r, e
             RETURN count(e) AS deleted
             """
-            records, _, _ = await graphiti.driver.execute_query(query, uuid_=uuid)
+            records, _, _ = await graphiti.driver.execute_query(query, parameters_={"uuid": uuid})
             deleted = records[0]["deleted"] if records else 0
             if deleted == 0:
                 return JSONResponse({"error": f"記憶片段 {uuid} 不存在"}, status_code=404)
@@ -359,13 +390,33 @@ def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -
             DELETE r
             RETURN count(r) AS deleted
             """
-            records, _, _ = await graphiti.driver.execute_query(query, uuid_=uuid)
+            records, _, _ = await graphiti.driver.execute_query(query, parameters_={"uuid": uuid})
             deleted = records[0]["deleted"] if records else 0
             if deleted == 0:
                 return JSONResponse({"error": f"事實 {uuid} 不存在"}, status_code=404)
             return JSONResponse({"success": True, "message": f"事實 {uuid} 已刪除"})
         except Exception as e:
             logger.error(f"API delete fact error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_delete_node(request: Request) -> JSONResponse:
+        """刪除實體節點（事務性：連帶清理關聯邊）。"""
+        try:
+            uuid = request.path_params["uuid"]
+            graphiti = await get_graphiti_fn()
+            query = """
+            MATCH (n:Entity {uuid: $uuid})
+            OPTIONAL MATCH (n)-[r]-()
+            DELETE r, n
+            RETURN count(n) AS deleted
+            """
+            records, _, _ = await graphiti.driver.execute_query(query, parameters_={"uuid": uuid})
+            deleted = records[0]["deleted"] if records else 0
+            if deleted == 0:
+                return JSONResponse({"error": f"實體節點 {uuid} 不存在"}, status_code=404)
+            return JSONResponse({"success": True, "message": f"實體節點 {uuid} 已刪除（含關聯邊）"})
+        except Exception as e:
+            logger.error(f"API delete node error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_delete_group(request: Request) -> JSONResponse:
@@ -503,6 +554,7 @@ def create_web_routes(get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]]) -
         Route("/api/nodes", api_nodes, methods=["GET"]),
         Route("/api/facts", api_facts, methods=["GET"]),
         Route("/api/episodes", api_episodes, methods=["GET"]),
+        Route("/api/nodes/{uuid}", api_delete_node, methods=["DELETE"]),
         Route("/api/episodes/{uuid}", api_delete_episode, methods=["DELETE"]),
         Route("/api/facts/{uuid}", api_delete_fact, methods=["DELETE"]),
         Route("/api/groups/{group_id}", api_delete_group, methods=["DELETE"]),

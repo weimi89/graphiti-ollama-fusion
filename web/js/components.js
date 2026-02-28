@@ -98,11 +98,11 @@ const Components = {
         return `
             <div class="card card-entity">
                 <div class="card-header">
-                    <div class="card-title" style="cursor:pointer" onclick="App.toggleDetail('${node.uuid}')">${this._esc(node.name || '(unnamed)')}</div>
+                    <div class="card-title" style="cursor:pointer" onclick="App.toggleDetail('${this._safeUuid(node.uuid)}')">${this._esc(node.name || '(unnamed)')}</div>
                     <span class="card-tag entity">Entity${labels.length ? ' / ' + labels.join(', ') : ''}</span>
                 </div>
                 ${node.summary ? `<div class="card-body">${this._esc(node.summary)}</div>` : ''}
-                <div id="detail-${node.uuid}" class="card-detail hidden">
+                <div id="detail-${this._safeUuid(node.uuid)}" class="card-detail hidden">
                     <div class="card-body" style="opacity:0.7;font-size:0.85em">
                         <strong>UUID:</strong> ${node.uuid}<br>
                         <strong>Group:</strong> ${this._esc(node.group_id)}<br>
@@ -114,9 +114,10 @@ const Components = {
                     <span title="Group ID">${this._esc(node.group_id)}</span>
                     <span title="建立時間">${this._time(node.created_at)}</span>
                     <span class="card-actions">
-                        <button class="btn-delete" title="UUID" onclick="App.copyText('${node.uuid}')">
+                        <button class="btn-delete" title="UUID" onclick="App.copyText('${this._safeUuid(node.uuid)}')">
                             ${this._shortUuid(node.uuid)}
                         </button>
+                        <button class="btn-delete" onclick="App.deleteNode('${this._safeUuid(node.uuid)}')" title="刪除節點">&#10005;</button>
                     </span>
                 </div>
             </div>
@@ -177,7 +178,7 @@ const Components = {
                     <span title="Group ID">${this._esc(fact.group_id)}</span>
                     <span title="建立時間">${this._time(fact.created_at)}</span>
                     <span class="card-actions">
-                        <button class="btn-delete" onclick="App.deleteFact('${fact.uuid}')" title="刪除">&#10005;</button>
+                        <button class="btn-delete" onclick="App.deleteFact('${this._safeUuid(fact.uuid)}')" title="刪除">&#10005;</button>
                     </span>
                 </div>
             </div>
@@ -188,10 +189,17 @@ const Components = {
     // 記憶片段頁面
     // ============================================================
 
-    renderEpisodesPage(data) {
+    renderEpisodesPage(data, searchValue) {
         return `
             <div class="page-header">
                 <h1 class="page-title">記憶片段</h1>
+                <div class="search-box">
+                    <input type="text" class="search-input" id="search-input"
+                           placeholder="關鍵字篩選..."
+                           value="${this._esc(searchValue || '')}"
+                           aria-label="搜尋關鍵字">
+                    <button class="btn btn-primary" onclick="App.doSearch()" aria-label="執行搜尋">搜尋</button>
+                </div>
             </div>
             <div class="card-list">
                 ${data.episodes && data.episodes.length
@@ -216,7 +224,7 @@ const Components = {
                     <span title="建立時間">${this._time(ep.created_at)}</span>
                     ${ep.source_description ? `<span>${this._esc(ep.source_description)}</span>` : ''}
                     <span class="card-actions">
-                        <button class="btn-delete" onclick="App.deleteEpisode('${ep.uuid}')" title="刪除">&#10005;</button>
+                        <button class="btn-delete" onclick="App.deleteEpisode('${this._safeUuid(ep.uuid)}')" title="刪除">&#10005;</button>
                     </span>
                 </div>
             </div>
@@ -296,5 +304,11 @@ const Components = {
     _shortUuid(uuid) {
         if (!uuid) return '';
         return uuid.length > 8 ? uuid.slice(0, 8) + '...' : uuid;
+    },
+
+    /** 驗證並清理 UUID（防止 XSS 注入）。只允許 hex 字元和連字符。 */
+    _safeUuid(uuid) {
+        if (!uuid) return '';
+        return String(uuid).replace(/[^a-fA-F0-9\-]/g, '');
     },
 };

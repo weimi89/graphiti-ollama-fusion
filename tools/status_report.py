@@ -89,6 +89,18 @@ async def gather_status() -> dict:
         ]
 
         report["components"]["neo4j"] = "OK"
+
+        # --- Neo4j 索引檢查 ---
+        try:
+            idx_records, _, _ = await graphiti.driver.execute_query("SHOW INDEXES")
+            index_names = sorted(r.get("name", "") for r in idx_records)
+            report["indices"] = {
+                "total": len(index_names),
+                "names": index_names,
+            }
+        except Exception as idx_err:
+            report["indices"] = {"error": str(idx_err)}
+
         await graphiti.driver.close()
     except Exception as e:
         report["components"]["neo4j"] = f"ERROR: {e}"
@@ -178,6 +190,18 @@ def print_report(report: dict) -> None:
             print(f"\n  前 {len(top)} 大群組:")
             for g in top:
                 print(f"    {g['group_id']}: {g['count']} 筆")
+
+    indices = report.get("indices", {})
+    if indices:
+        print("\nNeo4j 索引:")
+        if "error" in indices:
+            print(f"  [!!] 索引查詢失敗: {indices['error']}")
+        else:
+            total = indices.get("total", 0)
+            print(f"  已建立索引數: {total}")
+            names = indices.get("names", [])
+            for name in names:
+                print(f"    - {name}")
 
     versions = report.get("versions", {})
     if versions:

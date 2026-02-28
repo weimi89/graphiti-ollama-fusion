@@ -34,11 +34,12 @@ const API = {
     },
 
     /** 瀏覽記憶片段 */
-    async episodes({ groupId = '', page = 1, limit = 20 } = {}) {
+    async episodes({ groupId = '', page = 1, limit = 20, search = '' } = {}) {
         const params = new URLSearchParams();
         if (groupId) params.set('group_id', groupId);
         if (page > 1) params.set('page', page);
         if (limit !== 20) params.set('limit', limit);
+        if (search) params.set('search', search);
         return this._get(`/api/episodes?${params}`);
     },
 
@@ -58,6 +59,11 @@ const API = {
         return this._get(`/api/search/facts?${params}`);
     },
 
+    /** 刪除實體節點 */
+    async deleteNode(uuid) {
+        return this._delete(`/api/nodes/${uuid}`);
+    },
+
     /** 刪除記憶片段 */
     async deleteEpisode(uuid) {
         return this._delete(`/api/episodes/${uuid}`);
@@ -73,14 +79,27 @@ const API = {
         return this._delete(`/api/groups/${encodeURIComponent(groupId)}`);
     },
 
-    /** 導出所有資料為 JSON */
+    /** 導出所有資料為 JSON（分頁拉取直到取完） */
     async exportData({ groupId = '' } = {}) {
+        const fetchAll = async (fetcher) => {
+            const allItems = [];
+            let page = 1;
+            while (true) {
+                const data = await fetcher(page);
+                const items = data.nodes || data.facts || data.episodes || [];
+                allItems.push(...items);
+                if (page >= (data.pages || 1)) break;
+                page++;
+            }
+            return allItems;
+        };
+
         const [nodes, facts, episodes] = await Promise.all([
-            this.nodes({ groupId, limit: 9999 }),
-            this.facts({ groupId, limit: 9999 }),
-            this.episodes({ groupId, limit: 9999 }),
+            fetchAll(p => this.nodes({ groupId, page: p, limit: 100 })),
+            fetchAll(p => this.facts({ groupId, page: p, limit: 100 })),
+            fetchAll(p => this.episodes({ groupId, page: p, limit: 100 })),
         ]);
-        return { nodes: nodes.nodes, facts: facts.facts, episodes: episodes.episodes };
+        return { nodes, facts, episodes };
     },
 
     // 內部方法（含重試）

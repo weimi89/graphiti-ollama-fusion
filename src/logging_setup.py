@@ -154,15 +154,13 @@ class GraphitiLogger:
     def _create_time_rotating_handler(
         self, log_path: Path
     ) -> logging.handlers.TimedRotatingFileHandler:
-        """建立時間輪轉處理器。"""
-        # 為時間輪轉建立包含日期的檔案名稱
-        today = datetime.now().strftime("%Y-%m-%d")
-        base_name = log_path.stem
-        extension = log_path.suffix
-        dated_log_path = log_path.parent / f"{base_name}_{today}{extension}"
+        """建立時間輪轉處理器。
 
+        注意：不在初始檔名中加入日期，讓 TimedRotatingFileHandler 自行管理
+        輪轉後的檔案命名，避免產生雙日期格式（如 app_2026-02-28_2026-02-28.log）。
+        """
         handler = logging.handlers.TimedRotatingFileHandler(
-            filename=dated_log_path,
+            filename=log_path,
             when=self.config.rotation_interval,
             interval=1,
             backupCount=self.config.backup_count,
@@ -171,7 +169,7 @@ class GraphitiLogger:
             utc=False,
         )
 
-        # 設定輪轉檔案的命名格式
+        # 設定輪轉檔案的命名格式（由 handler 自動附加到基礎檔名）
         suffix_map = {
             "midnight": "_%Y-%m-%d",
             "H": "_%Y-%m-%d_%H",
@@ -192,17 +190,10 @@ class GraphitiLogger:
         )
 
     def _setup_module_loggers(self) -> None:
-        """設置特定模組的日誌級別。"""
-        # 抑制過於詳細的第三方庫日誌
-        third_party_loggers = {
-            "httpx": logging.WARNING,
-            "httpcore": logging.WARNING,
-            "urllib3": logging.WARNING,
-            "asyncio": logging.WARNING,
-            "neo4j": logging.INFO,
-        }
-
-        for logger_name, level in third_party_loggers.items():
+        """設置特定模組的日誌級別（從配置讀取）。"""
+        # 從配置載入第三方日誌級別
+        for logger_name, level_str in self.config.third_party_levels.items():
+            level = getattr(logging, level_str.upper(), logging.WARNING)
             logging.getLogger(logger_name).setLevel(level)
 
         # Graphiti 相關模組

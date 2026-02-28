@@ -81,7 +81,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **MCP 工具定義**：在 `graphiti_mcp_server.py` 中使用 `@mcp.tool()` 裝飾器定義，所有工具都有標準化的錯誤處理模式。
 
-**配置層級**：環境變數 > JSON 配置檔 > 預設值。主要配置類為 `GraphitiConfig`。
+**配置層級**：JSON 配置檔為基礎 + 環境變數覆蓋（支援 Docker 部署場景）。主要配置類為 `GraphitiConfig`，支援 `get_errors()` 返回具體驗證錯誤。
 
 **傳輸模式**：
 - `http` — HTTP Streamable（推薦），支援 MCP 端點（`/mcp/`）、Web 管理介面（`/`）、REST API（`/api/*`）、健康檢查（`/health`）
@@ -102,11 +102,13 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 
-**功能**：儀表板統計、實體節點/事實/記憶片段瀏覽與搜尋、group 篩選、深色/淺色主題、刪除操作。
+**功能**：儀表板統計、實體節點/事實/記憶片段瀏覽與搜尋、group 篩選與刪除、深色/淺色主題、節點/事實/片段刪除操作、資料匯出。
 
-**REST API**：`/api/stats`、`/api/groups`、`/api/nodes`、`/api/facts`、`/api/episodes`、`/api/search/nodes`、`/api/search/facts`
+**REST API**：`/api/stats`、`/api/groups`、`/api/nodes`、`/api/facts`、`/api/episodes`、`/api/search/nodes`、`/api/search/facts`、`DELETE /api/nodes/{uuid}`、`DELETE /api/episodes/{uuid}`、`DELETE /api/facts/{uuid}`、`DELETE /api/groups/{group_id}`
 
-**架構**：`src/web_api.py`（後端 API）+ `web/`（前端 SPA，無 build pipeline）。瀏覽用 Cypher 直查、搜尋用 `graphiti.search_()` 向量搜尋。
+**健康檢查**：`/health`（liveness）、`/health/ready`（readiness，實際檢查 Neo4j 連線）
+
+**架構**：`src/web_api.py`（後端 API + CORS 中間件）+ `web/`（前端 SPA，無 build pipeline）。瀏覽用 Cypher 直查、搜尋用 `graphiti.search_()` 向量搜尋。
 
 ## Required Services
 

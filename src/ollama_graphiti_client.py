@@ -26,7 +26,6 @@ import logging
 import os
 import re
 import sys
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -125,7 +124,14 @@ class OptimizedOllamaClient(LLMClient):
         self.base_url = config.base_url or "http://localhost:11434"
         self.model = config.model if config.model else "llama3.2:3b"
         self.temperature = config.temperature if config.temperature is not None else 0.0
+        self._session: aiohttp.ClientSession | None = None
         logger.info(f"    使用模型: {self.model}")
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """取得或建立共用的 aiohttp session（利用 HTTP keep-alive 和連線池）。"""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
 
     async def _generate_response(
         self,
@@ -246,11 +252,11 @@ class OptimizedOllamaClient(LLMClient):
 
         for attempt in range(max_retries):
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        url, json=payload,
-                        timeout=aiohttp.ClientTimeout(total=timeout),
-                    ) as response:
+                session = await self._get_session()
+                async with session.post(
+                    url, json=payload,
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as response:
                         if response.status == 200:
                             result = await response.json()
                             return result.get("message", {}).get("content", "")
@@ -694,117 +700,3 @@ class SimpleCrossEncoder(CrossEncoderClient):
             List[tuple]: (段落, 分數) 的列表，所有分數為 1.0
         """
         return [(passage, 1.0) for passage in passages]
-
-
-# =============================================================================
-# 測試函數
-# =============================================================================
-
-
-async def main() -> bool:
-    """主測試函數。"""
-    print("=" * 70)
-    print("優化的 Ollama + Graphiti 解決方案測試")
-    print("=" * 70)
-
-    print("\n環境配置:")
-    print(f"  Neo4j URI: {os.getenv('NEO4J_URI', 'bolt://localhost:7687')}")
-    print(f"  Neo4j User: {os.getenv('NEO4J_USER', 'neo4j')}")
-    print("  Model: qwen2.5:14b")
-    print("  Embedder: nomic-embed-text:v1.5")
-
-    try:
-        # 初始化 LLM
-        print("\n初始化 Ollama LLM...")
-        llm_config = LLMConfig(
-            api_key="not-needed",
-            model="qwen2.5:14b",
-            base_url="http://localhost:11434",
-            temperature=0.1,
-        )
-        llm_client = OptimizedOllamaClient(llm_config)
-        print("  LLM 初始化成功")
-
-        # 初始化嵌入器
-        print("\n初始化嵌入器...")
-        embedder = OllamaEmbedder(
-            model="nomic-embed-text:v1.5", base_url="http://localhost:11434"
-        )
-        if not await embedder.test_connection():
-            print("  嵌入器連接失敗")
-            return False
-        print("  嵌入器初始化成功")
-
-        # 初始化 Cross-encoder
-        print("\n初始化 Cross-encoder...")
-        cross_encoder = SimpleCrossEncoder()
-        print("  Cross-encoder 初始化成功")
-
-        # 初始化 Graphiti
-        print("\n初始化 Graphiti...")
-        graphiti = Graphiti(
-            uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            user=os.getenv("NEO4J_USER", "neo4j"),
-            password=os.getenv("NEO4J_PASSWORD", "password"),
-            llm_client=llm_client,
-            embedder=embedder,
-            cross_encoder=cross_encoder,
-        )
-
-        await graphiti.build_indices_and_constraints()
-        print("  Graphiti 初始化成功")
-
-        # 添加測試記憶
-        print("\n添加測試記憶...")
-        test_episodes = [
-            {"name": "用戶偏好", "content": "用戶 RD-CAT 偏好使用 TypeScript 進行開發。"},
-            {"name": "技術知識", "content": "React 18 引入了 Concurrent Features。"},
-            {"name": "最佳實踐", "content": "API 錯誤處理應該包含錯誤日誌和重試機制。"},
-        ]
-
-        for episode in test_episodes:
-            print(f"  添加: {episode['name']}")
-            try:
-                await graphiti.add_episode(
-                    name=episode["name"],
-                    episode_body=episode["content"],
-                    source_description="Ollama 測試",
-                    reference_time=datetime.now(timezone.utc),
-                )
-            except Exception as e:
-                print(f"    錯誤: {e}")
-
-        # 測試搜索
-        print("\n測試搜索功能:")
-        queries = ["TypeScript", "React", "錯誤處理"]
-
-        for query in queries:
-            print(f"\n  搜索: '{query}'")
-            try:
-                results = await graphiti.search(query=query, num_results=3)
-                print(f"    找到 {len(results)} 個結果" if results else "    無結果")
-            except Exception as e:
-                print(f"    錯誤: {str(e)[:30]}...")
-
-        print("\n" + "=" * 70)
-        print("測試完成！")
-        print("=" * 70)
-
-    except Exception as e:
-        print(f"\n錯誤: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return False
-
-    finally:
-        if "graphiti" in locals():
-            await graphiti.close()
-            print("\n連接已關閉")
-
-    return True
-
-
-if __name__ == "__main__":
-    success = asyncio.run(main())
-    sys.exit(0 if success else 1)

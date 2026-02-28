@@ -4,7 +4,7 @@ const HOME = process.env.HOME;
 module.exports = {
   apps: [
     {
-      name: 'graphiti-mcp-sse',
+      name: 'graphiti-mcp-http',
       script: path.join(HOME, '.local/bin/uv'),
       args: 'run python graphiti_mcp_server.py --transport http --host 0.0.0.0 --port 8000',
       cwd: path.join(HOME, 'MCP/graphiti'),

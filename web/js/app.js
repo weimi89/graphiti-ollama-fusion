@@ -46,6 +46,9 @@ const App = {
         document.getElementById('group-filter').addEventListener('change', (e) => {
             this.state.groupId = e.target.value;
             this.state.currentPage = 1;
+            // 顯示/隱藏群組刪除按鈕
+            const deleteBtn = document.getElementById('delete-group-btn');
+            if (deleteBtn) deleteBtn.style.display = e.target.value ? '' : 'none';
             this._renderCurrentPage();
         });
 
@@ -130,7 +133,10 @@ const App = {
             }
         } catch (err) {
             console.error('Render error:', err);
-            app.innerHTML = `<div class="empty-state"><div class="empty-state-text">載入失敗: ${err.message}</div></div>`;
+            app.innerHTML = `<div class="empty-state">
+                <div class="empty-state-text">載入失敗: ${Components._esc(err.message)}</div>
+                <button class="btn btn-primary" onclick="App._renderCurrentPage()" style="margin-top:1rem">重試</button>
+            </div>`;
         }
     },
 
@@ -196,8 +202,9 @@ const App = {
         const data = await API.episodes({
             groupId: this.state.groupId,
             page: this.state.currentPage,
+            search: this.state.searchValue,
         });
-        app.innerHTML = Components.renderEpisodesPage(data);
+        app.innerHTML = Components.renderEpisodesPage(data, this.state.searchValue);
     },
 
     // ============================================================
@@ -241,6 +248,19 @@ const App = {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     },
 
+    async deleteNode(uuid) {
+        const ok = await this._confirm(`確定要刪除此實體節點？\n\nUUID: ${uuid}\n\n注意：相關的邊也會被一併刪除。`);
+        if (!ok) return;
+        try {
+            await API.deleteNode(uuid);
+            this._toast('實體節點已刪除', 'success');
+            this._renderCurrentPage();
+            this._loadGroups();
+        } catch (err) {
+            this._toast(`刪除失敗: ${err.message}`, 'error');
+        }
+    },
+
     async deleteEpisode(uuid) {
         const ok = await this._confirm(`確定要刪除此記憶片段？\n\nUUID: ${uuid}`);
         if (!ok) return;
@@ -262,6 +282,24 @@ const App = {
             this._toast('事實已刪除', 'success');
             this._renderCurrentPage();
             this._loadGroups();
+        } catch (err) {
+            this._toast(`刪除失敗: ${err.message}`, 'error');
+        }
+    },
+
+    async deleteGroup() {
+        if (!this.state.groupId) return;
+        const ok = await this._confirm(`確定要刪除整個群組 "${this.state.groupId}" 嗎？\n\n此操作會清除該群組下的所有實體、事實和記憶片段。`);
+        if (!ok) return;
+        try {
+            await API.deleteGroup(this.state.groupId);
+            this._toast(`群組 ${this.state.groupId} 已清除`, 'success');
+            this.state.groupId = '';
+            document.getElementById('group-filter').value = '';
+            const deleteBtn = document.getElementById('delete-group-btn');
+            if (deleteBtn) deleteBtn.style.display = 'none';
+            await this._loadGroups();
+            this._renderCurrentPage();
         } catch (err) {
             this._toast(`刪除失敗: ${err.message}`, 'error');
         }
