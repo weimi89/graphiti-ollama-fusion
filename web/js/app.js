@@ -335,6 +335,26 @@ const App = {
         if (el) el.classList.toggle('hidden');
     },
 
+    toggleContent(id) {
+        const shortEl = document.getElementById(`${id}-short`);
+        const fullEl = document.getElementById(`${id}-full`);
+        const btn = document.querySelector(`[onclick="App.toggleContent('${id}')"]`);
+        if (!shortEl || !fullEl || !btn) return;
+
+        const isCollapsed = btn.dataset.state === 'collapsed';
+        if (isCollapsed) {
+            shortEl.classList.add('hidden');
+            fullEl.classList.add('visible');
+            btn.textContent = '收合';
+            btn.dataset.state = 'expanded';
+        } else {
+            shortEl.classList.remove('hidden');
+            fullEl.classList.remove('visible');
+            btn.textContent = '展開';
+            btn.dataset.state = 'collapsed';
+        }
+    },
+
     // ============================================================
     // UI 工具
     // ============================================================

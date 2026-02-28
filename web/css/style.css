@@ -47,6 +47,20 @@
     --card-episode-bg: #262033;
     --card-episode-border: #8e7cbc;
 
+    --tag-group: #8b949e;
+    --tag-group-bg: rgba(139, 148, 158, 0.15);
+    --tag-label: #7ee787;
+    --tag-label-bg: rgba(126, 231, 135, 0.15);
+    --tag-source: #d2a8ff;
+    --tag-source-bg: rgba(210, 168, 255, 0.15);
+    --tag-relation: #79c0ff;
+    --tag-relation-bg: rgba(121, 192, 255, 0.15);
+
+    --bg-detail: #1e1c19;
+    --border-detail: #3a3834;
+
+    --font-mono: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
     --radius: 8px;
@@ -96,6 +110,20 @@
     --card-fact-border: #0969da;
     --card-episode-bg: #f6f3fb;
     --card-episode-border: #8250df;
+
+    --tag-group: #57606a;
+    --tag-group-bg: rgba(87, 96, 106, 0.12);
+    --tag-label: #1a7f37;
+    --tag-label-bg: rgba(26, 127, 55, 0.12);
+    --tag-source: #8250df;
+    --tag-source-bg: rgba(130, 80, 223, 0.12);
+    --tag-relation: #0969da;
+    --tag-relation-bg: rgba(9, 105, 218, 0.12);
+
+    --bg-detail: #f6f8fa;
+    --border-detail: #d0d7de;
+
+    --font-mono: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
 
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.12);
@@ -307,7 +335,7 @@ body {
 .card-list {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 16px;
 }
 
 .card {
@@ -316,6 +344,9 @@ body {
     border-left: 3px solid var(--border-color);
     border-radius: var(--radius);
     padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
     transition: background 0.15s ease, border-color 0.15s ease;
 }
 
@@ -336,6 +367,205 @@ body {
 .card.card-episode {
     background: var(--card-episode-bg);
     border-left-color: var(--card-episode-border);
+}
+
+/* -- 卡片 tags 容器 -- */
+.card-tags {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.card-tags-right {
+    margin-left: auto;
+}
+
+.card-tag.group {
+    color: var(--tag-group);
+    background: var(--tag-group-bg);
+}
+
+.card-tag.entity-label {
+    color: var(--tag-label);
+    background: var(--tag-label-bg);
+}
+
+.card-tag.fact-type {
+    color: var(--tag-relation);
+    background: var(--tag-relation-bg);
+}
+
+.card-tag.source-desc {
+    color: var(--tag-source);
+    background: var(--tag-source-bg);
+}
+
+/* -- 卡片標題行 -- */
+.card-title-row {
+    font-size: 15px;
+    font-weight: 600;
+    word-break: break-word;
+    cursor: pointer;
+}
+
+.card-title-row:hover {
+    color: var(--accent);
+}
+
+/* -- 事實主體描述 -- */
+.card-body-primary {
+    font-size: 14px;
+    color: var(--text-primary);
+    font-weight: 500;
+    line-height: 1.6;
+    word-break: break-word;
+}
+
+/* -- 事實關係指示區 -- */
+.fact-entities {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.fact-entities .fact-source,
+.fact-entities .fact-target {
+    font-weight: 600;
+    color: var(--tag-entity);
+}
+
+.fact-entities .fact-arrow {
+    color: var(--text-muted);
+}
+
+/* -- 卡片 footer -- */
+.card-footer {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-light);
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-wrap: wrap;
+}
+
+.card-footer span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.card-footer .card-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+}
+
+/* -- UUID 複製按鈕 -- */
+.btn-uuid {
+    padding: 2px 8px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-uuid:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* -- 展開/收合按鈕 -- */
+.btn-expand {
+    padding: 2px 8px;
+    font-size: 12px;
+    background: transparent;
+    color: var(--accent);
+    border: none;
+    cursor: pointer;
+    transition: color 0.15s ease;
+}
+
+.btn-expand:hover {
+    color: var(--accent-hover);
+}
+
+/* -- 展開區域 -- */
+.card-detail-content {
+    background: var(--bg-detail);
+    border: 1px solid var(--border-detail);
+    border-radius: var(--radius-sm);
+    padding: 12px 16px;
+    font-size: 13px;
+}
+
+.detail-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 6px;
+    line-height: 1.5;
+}
+
+.detail-row:last-child {
+    margin-bottom: 0;
+}
+
+.detail-label {
+    font-weight: 600;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    min-width: 70px;
+}
+
+.detail-value {
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+.detail-raw {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: var(--bg-primary);
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-light);
+    margin-top: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+/* -- 內容預覽 -- */
+.content-preview {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.content-full {
+    display: none;
+}
+
+.content-full.visible {
+    display: block;
+}
+
+.content-short.hidden {
+    display: none;
 }
 
 .card-header {
