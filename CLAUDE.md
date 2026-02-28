@@ -23,8 +23,12 @@ uv run python graphiti_mcp_server.py --config your_config.json --transport http
 
 # PM2 背景執行
 pm2 start ecosystem.config.cjs
-pm2 logs graphiti-mcp-sse
-pm2 restart graphiti-mcp-sse
+pm2 logs graphiti-mcp-http
+pm2 restart graphiti-mcp-http
+
+# Docker 部署
+docker build -t graphiti-mcp .
+docker run -p 8000:8000 --env-file .env graphiti-mcp
 ```
 
 ## Testing
@@ -49,7 +53,8 @@ npx @modelcontextprotocol/inspector uv run python graphiti_mcp_server.py --trans
 ```bash
 uv run python tools/performance_diagnose.py   # 性能診斷
 uv run python tools/inspect_schema.py          # 結構檢查
-uv run python tools/final_status_report.py     # 狀態報告
+uv run python tools/status_report.py           # 統合狀態報告
+uv run python tools/validate_config.py         # 配置驗證
 ```
 
 ## Architecture
@@ -72,8 +77,12 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 │       ├── components.js        # UI 組件渲染
 │       └── app.js               # SPA 路由、狀態管理、主題切換
 ├── tools/                       # 診斷與維護工具
+│   ├── status_report.py         # 統合狀態報告
+│   └── validate_config.py       # 配置驗證工具
 ├── tests/                       # 測試套件
+│   └── test_integration_manual.py # 手動整合測試
 ├── docs/                        # 文檔
+├── Dockerfile                   # Docker 容器化部署
 └── ecosystem.config.cjs         # PM2 部署配置
 ```
 
@@ -83,8 +92,10 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **配置層級**：JSON 配置檔為基礎 + 環境變數覆蓋（支援 Docker 部署場景）。主要配置類為 `GraphitiConfig`，支援 `get_errors()` 返回具體驗證錯誤。
 
+**並發安全**：使用 `asyncio.Lock` 保護 Graphiti 初始化，防止並發競態。`clear_graph` 後自動重建 Neo4j 索引。
+
 **傳輸模式**：
-- `http` — HTTP Streamable（推薦），支援 MCP 端點（`/mcp/`）、Web 管理介面（`/`）、REST API（`/api/*`）、健康檢查（`/health`）
+- `http` — HTTP Streamable（推薦），支援 MCP 端點（`/mcp`）、Web 管理介面（`/`）、REST API（`/api/*`）、健康檢查（`/health`、`/health/ready`）
 - `stdio` — Claude Desktop CLI 整合
 - `sse` — Server-Sent Events（已不建議使用，MCP 1.x 有 session 初始化相容性問題）
 

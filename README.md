@@ -13,6 +13,9 @@
 - **繁體中文** — 完整的中文界面和回應
 - **深色/淺色主題** — Web 介面支援主題切換
 - **安全模式** — 可選擇跳過實體提取的快速記憶添加
+- **Docker 支援** — 內建 Dockerfile，支援容器化部署
+- **並發安全** — asyncio.Lock 保護初始化，防止競態條件
+- **分層健康檢查** — `/health`（liveness）+ `/health/ready`（readiness）
 
 ## 系統需求
 
@@ -62,8 +65,8 @@ pm2 start ecosystem.config.cjs
 
 啟動後：
 - **Web 管理介面**：http://localhost:8000/
-- **MCP 端點**：http://localhost:8000/mcp/
-- **健康檢查**：http://localhost:8000/health
+- **MCP 端點**：http://localhost:8000/mcp
+- **健康檢查**：http://localhost:8000/health（liveness）、http://localhost:8000/health/ready（readiness）
 - **REST API**：http://localhost:8000/api/*
 
 ## 專案結構
@@ -87,9 +90,13 @@ graphiti/
 │       ├── components.js
 │       └── app.js
 ├── docs/                         # 文檔
-├── tests/                        # 測試
+├── tests/                        # 測試套件
+│   └── test_integration_manual.py # 手動整合測試
 ├── tools/                        # 開發診斷工具
-├── logs/                         # 日誌
+│   ├── status_report.py          # 統合狀態報告
+│   └── validate_config.py        # 配置驗證
+├── logs/                         # 日誌（時間輪轉）
+├── Dockerfile                    # Docker 容器化部署
 └── ecosystem.config.cjs          # PM2 配置
 ```
 
@@ -97,14 +104,14 @@ graphiti/
 
 ### HTTP 模式（推薦）
 
-適用於 Claude Code、Cline 等支援 Streamable HTTP 的 MCP 客戶端：
+適用於 Claude Code、Cline 等支援 HTTP 的 MCP 客戶端：
 
 ```json
 {
   "mcpServers": {
     "graphiti-memory": {
-      "type": "streamable-http",
-      "url": "http://localhost:8000/mcp/"
+      "type": "http",
+      "url": "http://localhost:8000/mcp"
     }
   }
 }
@@ -268,10 +275,17 @@ npm install -g pm2
 
 pm2 start ecosystem.config.cjs     # 啟動
 pm2 status                          # 狀態
-pm2 logs graphiti-mcp-sse           # 日誌
-pm2 restart graphiti-mcp-sse        # 重啟
+pm2 logs graphiti-mcp-http           # 日誌
+pm2 restart graphiti-mcp-http        # 重啟
 
 pm2 save && pm2 startup             # 開機自動啟動
+```
+
+## Docker 部署
+
+```bash
+docker build -t graphiti-mcp .
+docker run -p 8000:8000 --env-file .env graphiti-mcp
 ```
 
 ## 測試
@@ -279,6 +293,7 @@ pm2 save && pm2 startup             # 開機自動啟動
 ```bash
 uv run python -m pytest tests/                    # 單元測試
 uv run python tests/final_comprehensive_test.py    # 集成測試
+uv run python tests/test_integration_manual.py     # 手動整合測試
 ```
 
 ## 故障排除
@@ -301,16 +316,16 @@ ollama list     # 檢查模型
 
 如果出現 `Invalid request parameters` 或 `Received request before initialization was complete`：
 
-1. 確認使用 HTTP Streamable 傳輸模式（非 SSE）
-2. 確認客戶端設定為 `"type": "streamable-http"`, `"url": "http://localhost:8000/mcp/"`
-3. 重啟服務：`pm2 restart graphiti-mcp-sse`
+1. 確認使用 HTTP 傳輸模式（非 SSE）
+2. 確認客戶端設定為 `"type": "http"`, `"url": "http://localhost:8000/mcp"`
+3. 重啟服務：`pm2 restart graphiti-mcp-http`
 4. 在 Claude Code 中執行 `/mcp` 重新連接
 
 ### PM2 問題
 
 ```bash
 pm2 status                                        # 檢查狀態
-pm2 logs graphiti-mcp-sse --err --lines 50        # 錯誤日誌
+pm2 logs graphiti-mcp-http --err --lines 50        # 錯誤日誌
 lsof -i :8000                                     # 檢查端口
 ```
 
