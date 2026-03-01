@@ -364,15 +364,18 @@ def create_web_routes(
         try:
             uuid = request.path_params["uuid"]
             graphiti = await get_graphiti_fn()
-            # 使用 Cypher 事務確保一致性：同時刪除節點和關聯邊
-            query = """
-            MATCH (e:Episodic {uuid: $uuid})
-            OPTIONAL MATCH (e)-[r]-()
-            DELETE r, e
-            RETURN count(e) AS deleted
-            """
-            records, _, _ = await graphiti.driver.execute_query(query, parameters_={"uuid": uuid})
-            deleted = records[0]["deleted"] if records else 0
+            async with graphiti.driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (e:Episodic {uuid: $uuid})
+                    OPTIONAL MATCH (e)-[r]-()
+                    DELETE r, e
+                    RETURN count(e) AS deleted
+                    """,
+                    {"uuid": uuid},
+                )
+                record = await result.single()
+                deleted = record["deleted"] if record else 0
             if deleted == 0:
                 return JSONResponse({"error": f"記憶片段 {uuid} 不存在"}, status_code=404)
             return JSONResponse({"success": True, "message": f"記憶片段 {uuid} 已刪除（含關聯邊）"})
@@ -385,13 +388,17 @@ def create_web_routes(
         try:
             uuid = request.path_params["uuid"]
             graphiti = await get_graphiti_fn()
-            query = """
-            MATCH ()-[r:RELATES_TO {uuid: $uuid}]-()
-            DELETE r
-            RETURN count(r) AS deleted
-            """
-            records, _, _ = await graphiti.driver.execute_query(query, parameters_={"uuid": uuid})
-            deleted = records[0]["deleted"] if records else 0
+            async with graphiti.driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH ()-[r:RELATES_TO {uuid: $uuid}]-()
+                    DELETE r
+                    RETURN count(r) AS deleted
+                    """,
+                    {"uuid": uuid},
+                )
+                record = await result.single()
+                deleted = record["deleted"] if record else 0
             if deleted == 0:
                 return JSONResponse({"error": f"事實 {uuid} 不存在"}, status_code=404)
             return JSONResponse({"success": True, "message": f"事實 {uuid} 已刪除"})
@@ -404,14 +411,18 @@ def create_web_routes(
         try:
             uuid = request.path_params["uuid"]
             graphiti = await get_graphiti_fn()
-            query = """
-            MATCH (n:Entity {uuid: $uuid})
-            OPTIONAL MATCH (n)-[r]-()
-            DELETE r, n
-            RETURN count(n) AS deleted
-            """
-            records, _, _ = await graphiti.driver.execute_query(query, parameters_={"uuid": uuid})
-            deleted = records[0]["deleted"] if records else 0
+            async with graphiti.driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (n:Entity {uuid: $uuid})
+                    OPTIONAL MATCH (n)-[r]-()
+                    DELETE r, n
+                    RETURN count(n) AS deleted
+                    """,
+                    {"uuid": uuid},
+                )
+                record = await result.single()
+                deleted = record["deleted"] if record else 0
             if deleted == 0:
                 return JSONResponse({"error": f"實體節點 {uuid} 不存在"}, status_code=404)
             return JSONResponse({"success": True, "message": f"實體節點 {uuid} 已刪除（含關聯邊）"})
@@ -641,7 +652,7 @@ def create_web_routes(
                     {"error": "名稱和內容為必填"}, status_code=400
                 )
 
-            from graphiti_core.models import EpisodeType
+            from graphiti_core.nodes import EpisodeType
 
             graphiti = await get_graphiti_fn()
             try:
@@ -655,6 +666,7 @@ def create_web_routes(
                 source_description="Web UI",
                 source=episode_type,
                 group_id=group_id or "default",
+                reference_time=datetime.now(timezone.utc),
             )
             return JSONResponse(
                 {"success": True, "message": f"記憶 '{name}' 已成功添加"}
