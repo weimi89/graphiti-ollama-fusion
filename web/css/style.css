@@ -781,6 +781,40 @@ body {
     margin: 0 8px;
 }
 
+/* -- 搜尋結果摘要 -- */
+.search-result-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    margin-bottom: 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.search-result-summary .search-query {
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.search-result-summary .search-count {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.search-result-summary .search-duration {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.search-result-summary .search-separator {
+    color: var(--text-muted);
+}
+
 /* -- 搜尋模式切換 -- */
 .search-mode-tabs {
     display: flex;

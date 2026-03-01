@@ -193,11 +193,13 @@ const App = {
 
     async _renderNodes(app) {
         let data;
+        let searchMeta = null;
         if (this.state.searchMode === 'vector' && this.state.searchValue) {
             data = await API.searchNodes(this.state.searchValue, {
                 groupIds: this.state.groupId ? [this.state.groupId] : [],
                 limit: 20,
             });
+            searchMeta = { duration: data.duration };
             data.page = 1;
             data.pages = 1;
         } else {
@@ -206,17 +208,20 @@ const App = {
                 page: this.state.currentPage,
                 search: this.state.searchValue,
             });
+            if (data.duration != null) searchMeta = { duration: data.duration };
         }
-        app.innerHTML = Components.renderNodesPage(data, this.state.searchValue, this.state.searchMode);
+        app.innerHTML = Components.renderNodesPage(data, this.state.searchValue, this.state.searchMode, searchMeta);
     },
 
     async _renderFacts(app) {
         let data;
+        let searchMeta = null;
         if (this.state.searchMode === 'vector' && this.state.searchValue) {
             data = await API.searchFacts(this.state.searchValue, {
                 groupIds: this.state.groupId ? [this.state.groupId] : [],
                 limit: 20,
             });
+            searchMeta = { duration: data.duration };
             data.page = 1;
             data.pages = 1;
         } else {
@@ -225,17 +230,20 @@ const App = {
                 page: this.state.currentPage,
                 search: this.state.searchValue,
             });
+            if (data.duration != null) searchMeta = { duration: data.duration };
         }
-        app.innerHTML = Components.renderFactsPage(data, this.state.searchValue, this.state.searchMode);
+        app.innerHTML = Components.renderFactsPage(data, this.state.searchValue, this.state.searchMode, searchMeta);
     },
 
     async _renderEpisodes(app) {
         let data;
+        let searchMeta = null;
         if (this.state.searchMode === 'vector' && this.state.searchValue) {
             data = await API.searchEpisodes(this.state.searchValue, {
                 groupIds: this.state.groupId ? [this.state.groupId] : [],
                 limit: 20,
             });
+            searchMeta = { duration: data.duration };
             data.page = 1;
             data.pages = 1;
         } else {
@@ -244,8 +252,9 @@ const App = {
                 page: this.state.currentPage,
                 search: this.state.searchValue,
             });
+            if (data.duration != null) searchMeta = { duration: data.duration };
         }
-        app.innerHTML = Components.renderEpisodesPage(data, this.state.searchValue, this.state.searchMode);
+        app.innerHTML = Components.renderEpisodesPage(data, this.state.searchValue, this.state.searchMode, searchMeta);
     },
 
     // ============================================================

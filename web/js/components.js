@@ -64,7 +64,7 @@ const Components = {
     // 節點頁面
     // ============================================================
 
-    renderNodesPage(data, searchValue, searchMode) {
+    renderNodesPage(data, searchValue, searchMode, searchMeta) {
         return `
             <div class="page-header">
                 <h1 class="page-title">實體節點</h1>
@@ -88,6 +88,7 @@ const Components = {
                     ${App.state.batchMode ? '取消選取' : '批次選取'}
                 </button>
             </div>
+            ${this.renderSearchResultSummary(searchValue, searchMode, data.total, searchMeta)}
             <div class="card-list">
                 ${data.nodes && data.nodes.length
                     ? data.nodes.map(n => this.renderNodeCard(n)).join('')
@@ -161,7 +162,7 @@ const Components = {
     // 事實頁面
     // ============================================================
 
-    renderFactsPage(data, searchValue, searchMode) {
+    renderFactsPage(data, searchValue, searchMode, searchMeta) {
         return `
             <div class="page-header">
                 <h1 class="page-title">事實關係</h1>
@@ -185,6 +186,7 @@ const Components = {
                     ${App.state.batchMode ? '取消選取' : '批次選取'}
                 </button>
             </div>
+            ${this.renderSearchResultSummary(searchValue, searchMode, data.total, searchMeta)}
             <div class="card-list">
                 ${data.facts && data.facts.length
                     ? data.facts.map(f => this.renderFactCard(f)).join('')
@@ -233,7 +235,7 @@ const Components = {
     // 記憶片段頁面
     // ============================================================
 
-    renderEpisodesPage(data, searchValue, searchMode) {
+    renderEpisodesPage(data, searchValue, searchMode, searchMeta) {
         return `
             <div class="page-header">
                 <h1 class="page-title">記憶片段</h1>
@@ -257,6 +259,7 @@ const Components = {
                     ${App.state.batchMode ? '取消選取' : '批次選取'}
                 </button>
             </div>
+            ${this.renderSearchResultSummary(searchValue, searchMode, data.total, searchMeta)}
             <div class="card-list">
                 ${data.episodes && data.episodes.length
                     ? data.episodes.map(e => this.renderEpisodeCard(e)).join('')
@@ -352,6 +355,28 @@ const Components = {
             <div class="pagination" role="navigation" aria-label="分頁導航">
                 ${buttons}
                 <span class="pagination-info" aria-live="polite">共 ${totalItems} 筆</span>
+            </div>
+        `;
+    },
+
+    // ============================================================
+    // 搜尋結果摘要
+    // ============================================================
+
+    renderSearchResultSummary(query, searchMode, total, meta) {
+        if (!query) return '';
+        const escapedQuery = this._esc(query);
+        const isVector = searchMode === 'vector';
+        const label = isVector ? '搜尋' : '篩選';
+        const duration = meta && meta.duration != null
+            ? `<span class="search-separator">&middot;</span><span class="search-duration">${meta.duration}s</span>`
+            : '';
+        return `
+            <div class="search-result-summary" role="status" aria-live="polite">
+                ${label} <span class="search-query">&ldquo;${escapedQuery}&rdquo;</span>
+                <span class="search-separator">&mdash;</span>
+                ${isVector ? '找到' : '共'} <span class="search-count">${total ?? 0}</span> 筆${isVector ? '結果' : ''}
+                ${duration}
             </div>
         `;
     },

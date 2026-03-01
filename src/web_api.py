@@ -192,6 +192,7 @@ def create_web_routes(
 
             where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
+            t0 = time.monotonic() if search else None
             async with graphiti.driver.session() as session:
                 # 總數
                 result = await session.run(
@@ -220,14 +221,20 @@ def create_web_routes(
                         "created_at": str(r["created_at"]) if r["created_at"] else "",
                         "labels": [l for l in (r["labels"] or []) if l not in ("Entity", "__Entity__")],
                     })
+            duration = round(time.monotonic() - t0, 2) if t0 is not None else None
 
-            return JSONResponse({
+            resp = {
                 "nodes": nodes,
                 "total": total,
                 "page": page,
                 "limit": limit,
                 "pages": max(1, (total + limit - 1) // limit),
-            })
+            }
+            if search:
+                resp["search"] = search
+            if duration is not None:
+                resp["duration"] = duration
+            return JSONResponse(resp)
         except Exception as e:
             logger.error(f"API nodes error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
@@ -255,6 +262,7 @@ def create_web_routes(
 
             where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
+            t0 = time.monotonic() if search else None
             async with graphiti.driver.session() as session:
                 result = await session.run(
                     f"MATCH (s)-[r:RELATES_TO]->(t) {where} RETURN count(r) as total",
@@ -286,14 +294,20 @@ def create_web_routes(
                         "source_uuid": r["source_uuid"] or "",
                         "target_uuid": r["target_uuid"] or "",
                     })
+            duration = round(time.monotonic() - t0, 2) if t0 is not None else None
 
-            return JSONResponse({
+            resp = {
                 "facts": facts,
                 "total": total,
                 "page": page,
                 "limit": limit,
                 "pages": max(1, (total + limit - 1) // limit),
-            })
+            }
+            if search:
+                resp["search"] = search
+            if duration is not None:
+                resp["duration"] = duration
+            return JSONResponse(resp)
         except Exception as e:
             logger.error(f"API facts error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
@@ -321,6 +335,7 @@ def create_web_routes(
 
             where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
+            t0 = time.monotonic() if search else None
             async with graphiti.driver.session() as session:
                 result = await session.run(
                     f"MATCH (e:Episodic) {where} RETURN count(e) as total", params
@@ -347,14 +362,20 @@ def create_web_routes(
                         "created_at": str(r["created_at"]) if r["created_at"] else "",
                         "source_description": r["source_description"] or "",
                     })
+            duration = round(time.monotonic() - t0, 2) if t0 is not None else None
 
-            return JSONResponse({
+            resp = {
                 "episodes": episodes,
                 "total": total,
                 "page": page,
                 "limit": limit,
                 "pages": max(1, (total + limit - 1) // limit),
-            })
+            }
+            if search:
+                resp["search"] = search
+            if duration is not None:
+                resp["duration"] = duration
+            return JSONResponse(resp)
         except Exception as e:
             logger.error(f"API episodes error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
@@ -467,6 +488,7 @@ def create_web_routes(
             search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
             search_config.limit = limit
 
+            t0 = time.monotonic()
             results = await asyncio.wait_for(
                 graphiti.search_(
                     query=q,
@@ -476,6 +498,7 @@ def create_web_routes(
                 ),
                 timeout=SEARCH_TIMEOUT,
             )
+            duration = round(time.monotonic() - t0, 2)
 
             nodes = []
             for n in (results.nodes or []):
@@ -488,7 +511,7 @@ def create_web_routes(
                     "labels": getattr(n, "labels", []),
                 })
 
-            return JSONResponse({"nodes": nodes, "query": q, "total": len(nodes)})
+            return JSONResponse({"nodes": nodes, "query": q, "total": len(nodes), "duration": duration})
         except asyncio.TimeoutError:
             logger.warning(f"搜尋節點超時 ({SEARCH_TIMEOUT}s): {q}")
             return JSONResponse({"error": "搜尋超時，請縮小查詢範圍"}, status_code=504)
@@ -514,6 +537,7 @@ def create_web_routes(
             limit = min(int(request.query_params.get("limit", "10")), 50)
 
             graphiti = await get_graphiti_fn()
+            t0 = time.monotonic()
             edges = await asyncio.wait_for(
                 graphiti.search(
                     query=q,
@@ -522,6 +546,7 @@ def create_web_routes(
                 ),
                 timeout=SEARCH_TIMEOUT,
             )
+            duration = round(time.monotonic() - t0, 2)
 
             facts = []
             for e in edges:
@@ -535,7 +560,7 @@ def create_web_routes(
                     "target_node_uuid": str(getattr(e, "target_node_uuid", "")),
                 })
 
-            return JSONResponse({"facts": facts, "query": q, "total": len(facts)})
+            return JSONResponse({"facts": facts, "query": q, "total": len(facts), "duration": duration})
         except asyncio.TimeoutError:
             logger.warning(f"搜尋事實超時 ({SEARCH_TIMEOUT}s): {q}")
             return JSONResponse({"error": "搜尋超時，請縮小查詢範圍"}, status_code=504)
@@ -577,10 +602,12 @@ def create_web_routes(
                 ),
                 limit=limit,
             )
+            t0 = time.monotonic()
             results = await asyncio.wait_for(
                 graphiti.search_(query=q, config=config, group_ids=group_ids),
                 timeout=SEARCH_TIMEOUT,
             )
+            duration = round(time.monotonic() - t0, 2)
 
             episodes = [
                 {
@@ -595,7 +622,7 @@ def create_web_routes(
             ]
 
             return JSONResponse(
-                {"episodes": episodes, "query": q, "total": len(episodes)}
+                {"episodes": episodes, "query": q, "total": len(episodes), "duration": duration}
             )
         except asyncio.TimeoutError:
             logger.warning(f"搜尋記憶片段超時 ({SEARCH_TIMEOUT}s): {q}")
