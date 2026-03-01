@@ -532,6 +532,137 @@ def create_web_routes(
             logger.error(f"API search facts error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    async def api_search_episodes(request: Request) -> JSONResponse:
+        """全文搜尋記憶片段（BM25）。"""
+        try:
+            client_ip = request.client.host if request.client else "unknown"
+            if not _search_limiter.is_allowed(client_ip):
+                return JSONResponse(
+                    {"error": "搜尋請求過於頻繁，請稍後再試"}, status_code=429
+                )
+
+            from graphiti_core.search.search_config import (
+                SearchConfig,
+                EpisodeSearchConfig,
+                EpisodeSearchMethod,
+            )
+
+            q = request.query_params.get("q", "").strip()
+            if not q:
+                return JSONResponse({"error": "缺少搜尋參數 q"}, status_code=400)
+
+            group_ids_str = request.query_params.get("group_ids", "")
+            group_ids = (
+                [g.strip() for g in group_ids_str.split(",") if g.strip()]
+                if group_ids_str
+                else []
+            )
+            limit = min(int(request.query_params.get("limit", "10")), 50)
+
+            graphiti = await get_graphiti_fn()
+            config = SearchConfig(
+                episode_config=EpisodeSearchConfig(
+                    search_methods=[EpisodeSearchMethod.bm25]
+                ),
+                limit=limit,
+            )
+            results = await asyncio.wait_for(
+                graphiti.search_(query=q, config=config, group_ids=group_ids),
+                timeout=SEARCH_TIMEOUT,
+            )
+
+            episodes = [
+                {
+                    "uuid": str(getattr(ep, "uuid", "")),
+                    "name": getattr(ep, "name", ""),
+                    "content": (getattr(ep, "content", "") or "")[:500],
+                    "group_id": getattr(ep, "group_id", ""),
+                    "created_at": str(getattr(ep, "created_at", "")),
+                    "source_description": getattr(ep, "source_description", ""),
+                }
+                for ep in (results.episodes or [])
+            ]
+
+            return JSONResponse(
+                {"episodes": episodes, "query": q, "total": len(episodes)}
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"搜尋記憶片段超時 ({SEARCH_TIMEOUT}s): {q}")
+            return JSONResponse({"error": "搜尋超時，請縮小查詢範圍"}, status_code=504)
+        except Exception as e:
+            logger.error(f"API search episodes error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_node_relations(request: Request) -> JSONResponse:
+        """取得節點的所有關係（事實）。"""
+        try:
+            uuid = request.path_params["uuid"]
+            graphiti = await get_graphiti_fn()
+            async with graphiti.driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (n:Entity {uuid: $uuid})-[r:RELATES_TO]->(t:Entity)
+                    RETURN r.uuid AS uuid, r.name AS name, r.fact AS fact,
+                           n.name AS source_name, t.name AS target_name, 'outgoing' AS direction
+                    UNION
+                    MATCH (s:Entity)-[r:RELATES_TO]->(n:Entity {uuid: $uuid})
+                    RETURN r.uuid AS uuid, r.name AS name, r.fact AS fact,
+                           s.name AS source_name, n.name AS target_name, 'incoming' AS direction
+                    """,
+                    {"uuid": uuid},
+                )
+                relations = [
+                    {
+                        "uuid": r["uuid"],
+                        "name": r["name"] or "",
+                        "fact": (r["fact"] or "")[:300],
+                        "source_name": r["source_name"] or "",
+                        "target_name": r["target_name"] or "",
+                        "direction": r["direction"],
+                    }
+                    async for r in result
+                ]
+            return JSONResponse({"relations": relations, "total": len(relations)})
+        except Exception as e:
+            logger.error(f"API node relations error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_add_memory(request: Request) -> JSONResponse:
+        """透過 Web UI 新增記憶。"""
+        try:
+            body = await request.json()
+            name = body.get("name", "").strip()
+            content = body.get("content", "").strip()
+            group_id = body.get("group_id", "").strip()
+            source = body.get("source", "text")
+
+            if not name or not content:
+                return JSONResponse(
+                    {"error": "名稱和內容為必填"}, status_code=400
+                )
+
+            from graphiti_core.models import EpisodeType
+
+            graphiti = await get_graphiti_fn()
+            try:
+                episode_type = EpisodeType[source.lower()]
+            except (KeyError, AttributeError):
+                episode_type = EpisodeType.text
+
+            await graphiti.add_episode(
+                name=name,
+                episode_body=content,
+                source_description="Web UI",
+                source=episode_type,
+                group_id=group_id or "default",
+            )
+            return JSONResponse(
+                {"success": True, "message": f"記憶 '{name}' 已成功添加"}
+            )
+        except Exception as e:
+            logger.error(f"API add memory error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     # ------------------------------------------------------------------
     # 首頁（提供 SPA 入口）
     # ------------------------------------------------------------------
@@ -560,6 +691,9 @@ def create_web_routes(
         Route("/api/groups/{group_id}", api_delete_group, methods=["DELETE"]),
         Route("/api/search/nodes", api_search_nodes, methods=["GET"]),
         Route("/api/search/facts", api_search_facts, methods=["GET"]),
+        Route("/api/search/episodes", api_search_episodes, methods=["GET"]),
+        Route("/api/nodes/{uuid}/relations", api_node_relations, methods=["GET"]),
+        Route("/api/memory/add", api_add_memory, methods=["POST"]),
     ]
 
     # 靜態文件（CSS/JS）

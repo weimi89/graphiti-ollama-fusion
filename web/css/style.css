@@ -931,6 +931,133 @@ body {
     color: var(--text-secondary);
 }
 
+/* -- 新增記憶 Dialog -- */
+.add-memory-dialog {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    padding: 0;
+    max-width: 500px;
+    width: 90%;
+    box-shadow: var(--shadow-lg);
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    margin: 0;
+}
+
+.add-memory-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.memory-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.form-group label {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.form-group textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+/* -- 節點關係 -- */
+.relations-section {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-light);
+}
+
+.relations-container {
+    margin-top: 6px;
+}
+
+.relation-item {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 12px;
+}
+
+.relation-item:last-child {
+    border-bottom: none;
+}
+
+.relation-entities {
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.relation-fact {
+    display: block;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+/* -- 批次選取 -- */
+.batch-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.batch-bar {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    z-index: 100;
+    font-size: 13px;
+}
+
 /* -- 響應式 -- */
 @media (max-width: 768px) {
     .navbar {

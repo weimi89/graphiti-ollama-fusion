@@ -50,6 +50,41 @@
         </div>
     </dialog>
 
+    <!-- 新增記憶 Dialog -->
+    <dialog id="add-memory-dialog" class="add-memory-dialog" aria-labelledby="add-memory-title">
+        <div class="dialog-content">
+            <h3 id="add-memory-title" class="dialog-title">新增記憶</h3>
+            <form id="add-memory-form" class="memory-form">
+                <div class="form-group">
+                    <label for="memory-name">名稱 *</label>
+                    <input type="text" id="memory-name" required placeholder="記憶片段名稱">
+                </div>
+                <div class="form-group">
+                    <label for="memory-content">內容 *</label>
+                    <textarea id="memory-content" required rows="5" placeholder="記憶內容..."></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="memory-group">群組</label>
+                        <input type="text" id="memory-group" placeholder="group_id（留空使用 default）">
+                    </div>
+                    <div class="form-group">
+                        <label for="memory-source">類型</label>
+                        <select id="memory-source">
+                            <option value="text">文字</option>
+                            <option value="json">JSON</option>
+                            <option value="message">訊息</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="dialog-actions">
+                    <button type="button" class="btn btn-secondary" onclick="App.closeAddMemory()">取消</button>
+                    <button type="submit" class="btn btn-primary">添加</button>
+                </div>
+            </form>
+        </div>
+    </dialog>
+
     <!-- Toast 通知 -->
     <div id="toast-container" class="toast-container" aria-live="assertive" aria-atomic="true"></div>
 

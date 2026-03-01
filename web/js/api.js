@@ -59,6 +59,26 @@ const API = {
         return this._get(`/api/search/facts?${params}`);
     },
 
+    /** 全文搜尋記憶片段（BM25） */
+    async searchEpisodes(q, { groupIds = [], limit = 10 } = {}) {
+        const params = new URLSearchParams({ q });
+        if (groupIds.length) params.set('group_ids', groupIds.join(','));
+        if (limit !== 10) params.set('limit', limit);
+        return this._get(`/api/search/episodes?${params}`);
+    },
+
+    /** 取得節點關係 */
+    async nodeRelations(uuid) {
+        return this._get(`/api/nodes/${uuid}/relations`);
+    },
+
+    /** 新增記憶 */
+    async addMemory({ name, content, groupId, source }) {
+        return this._post('/api/memory/add', {
+            name, content, group_id: groupId, source,
+        });
+    },
+
     /** 刪除實體節點 */
     async deleteNode(uuid) {
         return this._delete(`/api/nodes/${uuid}`);
@@ -118,6 +138,19 @@ const API = {
                 await new Promise(r => setTimeout(r, 1000 * (i + 1)));
             }
         }
+    },
+
+    async _post(url, data) {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        return res.json();
     },
 
     async _delete(url) {

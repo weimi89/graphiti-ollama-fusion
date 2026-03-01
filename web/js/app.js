@@ -9,6 +9,8 @@ const App = {
         currentPage: 1,
         searchValue: '',
         searchMode: 'filter', // 'filter' | 'vector'
+        selectedItems: new Set(),
+        batchMode: false,
     },
 
     _searchTimer: null,
@@ -76,6 +78,33 @@ const App = {
             document.getElementById('confirm-dialog').close();
             this._confirmResolve?.(true);
         });
+
+        // 新增記憶表單
+        document.getElementById('add-memory-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('memory-name').value.trim();
+            const content = document.getElementById('memory-content').value.trim();
+            const groupId = document.getElementById('memory-group').value.trim();
+            const source = document.getElementById('memory-source').value;
+            if (!name || !content) return;
+
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            submitBtn.disabled = true;
+            submitBtn.textContent = '添加中...';
+
+            try {
+                await API.addMemory({ name, content, groupId, source });
+                this._toast(`記憶 "${name}" 已成功添加`, 'success');
+                this.closeAddMemory();
+                this._renderCurrentPage();
+                this._loadGroups();
+            } catch (err) {
+                this._toast(`添加失敗: ${err.message}`, 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = '添加';
+            }
+        });
     },
 
     // ============================================================
@@ -105,6 +134,8 @@ const App = {
             this.state.currentPage = 1;
             this.state.searchValue = '';
             this.state.searchMode = 'filter';
+            this.state.batchMode = false;
+            this.state.selectedItems.clear();
         }
 
         this._renderCurrentPage();
@@ -199,12 +230,22 @@ const App = {
     },
 
     async _renderEpisodes(app) {
-        const data = await API.episodes({
-            groupId: this.state.groupId,
-            page: this.state.currentPage,
-            search: this.state.searchValue,
-        });
-        app.innerHTML = Components.renderEpisodesPage(data, this.state.searchValue);
+        let data;
+        if (this.state.searchMode === 'vector' && this.state.searchValue) {
+            data = await API.searchEpisodes(this.state.searchValue, {
+                groupIds: this.state.groupId ? [this.state.groupId] : [],
+                limit: 20,
+            });
+            data.page = 1;
+            data.pages = 1;
+        } else {
+            data = await API.episodes({
+                groupId: this.state.groupId,
+                page: this.state.currentPage,
+                search: this.state.searchValue,
+            });
+        }
+        app.innerHTML = Components.renderEpisodesPage(data, this.state.searchValue, this.state.searchMode);
     },
 
     // ============================================================
@@ -328,6 +369,130 @@ const App = {
         } catch (err) {
             this._toast(`匯出失敗: ${err.message}`, 'error');
         }
+    },
+
+    // ============================================================
+    // 節點關係探索
+    // ============================================================
+
+    async loadNodeRelations(uuid) {
+        const container = document.getElementById(`relations-${uuid}`);
+        if (!container || container.dataset.loaded === 'true') return;
+        container.innerHTML = '<div class="loading-spinner" style="font-size:12px;padding:8px 0">載入關係...</div>';
+        try {
+            const data = await API.nodeRelations(uuid);
+            container.dataset.loaded = 'true';
+            if (!data.relations.length) {
+                container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px 0">無相關事實</div>';
+                return;
+            }
+            container.innerHTML = data.relations.map(r => `
+                <div class="relation-item">
+                    <span class="relation-entities">${Components._esc(r.source_name)} → ${Components._esc(r.target_name)}</span>
+                    <span class="relation-fact">${Components._esc(r.fact)}</span>
+                </div>
+            `).join('');
+        } catch (err) {
+            container.innerHTML = '<div style="color:var(--danger);font-size:12px">載入失敗</div>';
+        }
+    },
+
+    // ============================================================
+    // 新增記憶
+    // ============================================================
+
+    openAddMemory() {
+        const dialog = document.getElementById('add-memory-dialog');
+        const groupInput = document.getElementById('memory-group');
+        if (groupInput && this.state.groupId) groupInput.value = this.state.groupId;
+        dialog.showModal();
+    },
+
+    closeAddMemory() {
+        document.getElementById('add-memory-dialog').close();
+        document.getElementById('add-memory-form').reset();
+    },
+
+    // ============================================================
+    // 批次選取刪除
+    // ============================================================
+
+    toggleBatchMode() {
+        this.state.batchMode = !this.state.batchMode;
+        this.state.selectedItems.clear();
+        this._renderCurrentPage();
+    },
+
+    toggleSelectItem(uuid) {
+        if (this.state.selectedItems.has(uuid)) {
+            this.state.selectedItems.delete(uuid);
+        } else {
+            this.state.selectedItems.add(uuid);
+        }
+        // 更新 batch bar 計數
+        const bar = document.querySelector('.batch-bar');
+        if (bar) {
+            bar.querySelector('span').textContent = `已選取 ${this.state.selectedItems.size} 個`;
+            const deleteBtn = bar.querySelector('.btn-danger');
+            if (deleteBtn) deleteBtn.disabled = this.state.selectedItems.size === 0;
+        }
+    },
+
+    selectAll() {
+        document.querySelectorAll('.batch-checkbox').forEach(cb => {
+            const uuid = cb.getAttribute('onchange')?.match(/'([^']+)'/)?.[1];
+            if (uuid) {
+                this.state.selectedItems.add(uuid);
+                cb.checked = true;
+            }
+        });
+        const bar = document.querySelector('.batch-bar');
+        if (bar) {
+            bar.querySelector('span').textContent = `已選取 ${this.state.selectedItems.size} 個`;
+            const deleteBtn = bar.querySelector('.btn-danger');
+            if (deleteBtn) deleteBtn.disabled = false;
+        }
+    },
+
+    deselectAll() {
+        this.state.selectedItems.clear();
+        document.querySelectorAll('.batch-checkbox').forEach(cb => { cb.checked = false; });
+        const bar = document.querySelector('.batch-bar');
+        if (bar) {
+            bar.querySelector('span').textContent = '已選取 0 個';
+            const deleteBtn = bar.querySelector('.btn-danger');
+            if (deleteBtn) deleteBtn.disabled = true;
+        }
+    },
+
+    async batchDelete() {
+        const count = this.state.selectedItems.size;
+        if (!count) return;
+        const ok = await this._confirm(`確定要刪除選中的 ${count} 個項目？`);
+        if (!ok) return;
+
+        const page = this.state.page;
+        const deleteFn = page === 'nodes' ? API.deleteNode.bind(API)
+            : page === 'facts' ? API.deleteFact.bind(API)
+            : API.deleteEpisode.bind(API);
+
+        this._toast(`正在刪除 ${count} 個項目...`, 'info');
+
+        const results = await Promise.allSettled(
+            [...this.state.selectedItems].map(uuid => deleteFn(uuid))
+        );
+
+        const success = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected').length;
+        this._toast(
+            `已刪除 ${success} 個` + (failed ? `，失敗 ${failed} 個` : ''),
+            failed ? 'error' : 'success'
+        );
+
+        this.state.selectedItems.clear();
+        this.state.batchMode = false;
+        this._renderCurrentPage();
+        this._loadGroups();
     },
 
     toggleDetail(uuid) {

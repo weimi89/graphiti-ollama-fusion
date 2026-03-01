@@ -23,8 +23,9 @@ const Components = {
                     <div class="stat-label">記憶片段</div>
                 </div>
             </div>
-            <div style="text-align:right;margin-bottom:1rem">
-                <button class="btn btn-primary" onclick="App.exportJSON()" aria-label="匯出知識圖譜資料為 JSON">匯出 JSON</button>
+            <div style="text-align:right;margin-bottom:1rem;display:flex;gap:8px;justify-content:flex-end">
+                <button class="btn btn-primary" onclick="App.openAddMemory()" aria-label="新增記憶">新增記憶</button>
+                <button class="btn btn-secondary" onclick="App.exportJSON()" aria-label="匯出知識圖譜資料為 JSON">匯出 JSON</button>
             </div>
 
             <div class="dashboard-section">
@@ -82,6 +83,10 @@ const Components = {
                 <button class="search-mode-tab ${searchMode === 'vector' ? 'active' : ''}"
                         role="tab" aria-selected="${searchMode === 'vector'}"
                         onclick="App.setSearchMode('vector')">向量搜尋</button>
+                <button class="btn btn-sm btn-secondary" style="margin-left:auto"
+                        onclick="App.toggleBatchMode()">
+                    ${App.state.batchMode ? '取消選取' : '批次選取'}
+                </button>
             </div>
             <div class="card-list">
                 ${data.nodes && data.nodes.length
@@ -90,6 +95,7 @@ const Components = {
                 }
             </div>
             ${data.pages > 1 ? this.renderPagination(data.page, data.pages, data.total) : ''}
+            ${this._batchBar()}
         `;
     },
 
@@ -129,9 +135,16 @@ const Components = {
                             <span class="detail-value">${this._time(node.created_at)}</span>
                         </div>
                         ${node.summary ? `<div class="detail-raw">${this._esc(node.summary)}</div>` : ''}
+                        <div class="relations-section">
+                            <button class="btn btn-sm btn-secondary" onclick="App.loadNodeRelations('${safeId}')">查看關係</button>
+                            <div id="relations-${safeId}" class="relations-container"></div>
+                        </div>
                     </div>
                 </div>
                 <div class="card-footer">
+                    ${App.state.batchMode ? `<input type="checkbox" class="batch-checkbox"
+                        ${App.state.selectedItems.has(node.uuid) ? 'checked' : ''}
+                        onchange="App.toggleSelectItem('${safeId}')" onclick="event.stopPropagation()">` : ''}
                     <button class="btn-uuid" title="點擊複製 UUID" onclick="App.copyText('${safeId}')">
                         ${this._shortUuid(node.uuid)}
                     </button>
@@ -167,6 +180,10 @@ const Components = {
                 <button class="search-mode-tab ${searchMode === 'vector' ? 'active' : ''}"
                         role="tab" aria-selected="${searchMode === 'vector'}"
                         onclick="App.setSearchMode('vector')">向量搜尋</button>
+                <button class="btn btn-sm btn-secondary" style="margin-left:auto"
+                        onclick="App.toggleBatchMode()">
+                    ${App.state.batchMode ? '取消選取' : '批次選取'}
+                </button>
             </div>
             <div class="card-list">
                 ${data.facts && data.facts.length
@@ -175,6 +192,7 @@ const Components = {
                 }
             </div>
             ${data.pages > 1 ? this.renderPagination(data.page, data.pages, data.total) : ''}
+            ${this._batchBar()}
         `;
     },
 
@@ -196,6 +214,9 @@ const Components = {
                     <span class="fact-target">${this._esc(fact.target_name || '?')}</span>
                 </div>
                 <div class="card-footer">
+                    ${App.state.batchMode ? `<input type="checkbox" class="batch-checkbox"
+                        ${App.state.selectedItems.has(fact.uuid) ? 'checked' : ''}
+                        onchange="App.toggleSelectItem('${safeId}')" onclick="event.stopPropagation()">` : ''}
                     <button class="btn-uuid" title="點擊複製 UUID" onclick="App.copyText('${safeId}')">
                         ${this._shortUuid(fact.uuid)}
                     </button>
@@ -212,17 +233,29 @@ const Components = {
     // 記憶片段頁面
     // ============================================================
 
-    renderEpisodesPage(data, searchValue) {
+    renderEpisodesPage(data, searchValue, searchMode) {
         return `
             <div class="page-header">
                 <h1 class="page-title">記憶片段</h1>
                 <div class="search-box">
                     <input type="text" class="search-input" id="search-input"
-                           placeholder="關鍵字篩選..."
+                           placeholder="${searchMode === 'vector' ? '全文搜尋...' : '關鍵字篩選...'}"
                            value="${this._esc(searchValue || '')}"
                            aria-label="搜尋關鍵字">
                     <button class="btn btn-primary" onclick="App.doSearch()" aria-label="執行搜尋">搜尋</button>
                 </div>
+            </div>
+            <div class="search-mode-tabs" role="tablist" aria-label="搜尋模式">
+                <button class="search-mode-tab ${searchMode === 'filter' ? 'active' : ''}"
+                        role="tab" aria-selected="${searchMode === 'filter'}"
+                        onclick="App.setSearchMode('filter')">關鍵字</button>
+                <button class="search-mode-tab ${searchMode === 'vector' ? 'active' : ''}"
+                        role="tab" aria-selected="${searchMode === 'vector'}"
+                        onclick="App.setSearchMode('vector')">全文搜尋</button>
+                <button class="btn btn-sm btn-secondary" style="margin-left:auto"
+                        onclick="App.toggleBatchMode()">
+                    ${App.state.batchMode ? '取消選取' : '批次選取'}
+                </button>
             </div>
             <div class="card-list">
                 ${data.episodes && data.episodes.length
@@ -231,6 +264,7 @@ const Components = {
                 }
             </div>
             ${data.pages > 1 ? this.renderPagination(data.page, data.pages, data.total) : ''}
+            ${this._batchBar()}
         `;
     },
 
@@ -271,6 +305,9 @@ const Components = {
                     </div>
                 </div>
                 <div class="card-footer">
+                    ${App.state.batchMode ? `<input type="checkbox" class="batch-checkbox"
+                        ${App.state.selectedItems.has(ep.uuid) ? 'checked' : ''}
+                        onchange="App.toggleSelectItem('${safeId}')" onclick="event.stopPropagation()">` : ''}
                     <button class="btn-uuid" title="點擊複製 UUID" onclick="App.copyText('${safeId}')">
                         ${this._shortUuid(ep.uuid)}
                     </button>
@@ -480,6 +517,21 @@ const Components = {
             }
         }
         return strings.join(' · ') || '';
+    },
+
+    /** 批次操作浮動列 */
+    _batchBar() {
+        if (!App.state.batchMode) return '';
+        const count = App.state.selectedItems.size;
+        return `
+            <div class="batch-bar">
+                <span>已選取 ${count} 個</span>
+                <button class="btn btn-sm btn-secondary" onclick="App.selectAll()">全選</button>
+                <button class="btn btn-sm btn-secondary" onclick="App.deselectAll()">取消全選</button>
+                <button class="btn btn-sm btn-danger" onclick="App.batchDelete()" ${count === 0 ? 'disabled' : ''}>刪除選取</button>
+                <button class="btn btn-sm btn-secondary" onclick="App.toggleBatchMode()">退出</button>
+            </div>
+        `;
     },
 
     /** 帶展開/收合的內容預覽 */
