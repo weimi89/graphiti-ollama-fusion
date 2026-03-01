@@ -227,13 +227,19 @@ def _create_llm_client() -> Optional[OptimizedOllamaClient]:
         此函數不會拋出例外，失敗時僅記錄警告並返回 None。
     """
     try:
+        # small_model: 未設定時回退為主模型
+        small_model = app_config.ollama.small_model or app_config.ollama.model
         llm_config = LLMConfig(
             base_url=app_config.ollama.base_url,
             model=app_config.ollama.model,
+            small_model=small_model,
             temperature=app_config.ollama.temperature,
         )
         client = OptimizedOllamaClient(config=llm_config)
-        logging.getLogger("graphiti").info("LLM 客戶端初始化成功")
+        logging.getLogger("graphiti").info(
+            f"LLM 客戶端初始化成功 (主模型: {app_config.ollama.model}, "
+            f"小模型: {small_model})"
+        )
         return client
     except Exception as e:
         logging.getLogger("graphiti").warning(f"LLM 客戶端初始化失敗，使用 None: {e}")

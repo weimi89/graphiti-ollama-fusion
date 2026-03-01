@@ -38,7 +38,8 @@ class OllamaConfig:
     Ollama LLM 服務配置。
 
     Attributes:
-        model: 使用的模型名稱
+        model: 使用的主模型名稱（用於複雜任務如實體提取）
+        small_model: 用於簡單任務的小模型名稱（如去重判斷、摘要生成）
         base_url: Ollama API 端點
         temperature: 生成溫度（0.0-2.0）
         max_tokens: 最大輸出 token 數
@@ -46,6 +47,7 @@ class OllamaConfig:
     """
 
     model: str = "qwen2.5:7b"
+    small_model: Optional[str] = None
     base_url: str = "http://localhost:11434"
     temperature: float = 0.1
     max_tokens: Optional[int] = None
@@ -326,6 +328,7 @@ class GraphitiConfig:
 
         # Ollama 配置
         config.ollama.model = os.getenv("OLLAMA_MODEL", config.ollama.model)
+        config.ollama.small_model = os.getenv("OLLAMA_SMALL_MODEL", config.ollama.small_model)
         config.ollama.base_url = os.getenv("OLLAMA_BASE_URL", config.ollama.base_url)
         config.ollama.temperature = float(
             os.getenv("OLLAMA_TEMPERATURE", config.ollama.temperature)
@@ -523,6 +526,8 @@ class GraphitiConfig:
         # Ollama 配置
         if os.getenv("OLLAMA_MODEL"):
             self.ollama.model = os.getenv("OLLAMA_MODEL")
+        if os.getenv("OLLAMA_SMALL_MODEL"):
+            self.ollama.small_model = os.getenv("OLLAMA_SMALL_MODEL")
         if os.getenv("OLLAMA_BASE_URL"):
             self.ollama.base_url = os.getenv("OLLAMA_BASE_URL")
         if os.getenv("OLLAMA_TEMPERATURE"):
@@ -590,6 +595,7 @@ class GraphitiConfig:
         """
         return {
             "ollama_model": self.ollama.model,
+            "ollama_small_model": self.ollama.small_model or self.ollama.model,
             "embedder_model": self.embedder.model,
             "embedder_dimensions": self.embedder.dimensions,
             "neo4j_uri": self.neo4j.uri,

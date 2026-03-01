@@ -36,7 +36,7 @@ from dotenv import load_dotenv
 from graphiti_core import Graphiti
 from graphiti_core.cross_encoder.client import CrossEncoderClient
 from graphiti_core.llm_client.client import LLMClient
-from graphiti_core.llm_client.config import LLMConfig
+from graphiti_core.llm_client.config import LLMConfig, ModelSize
 
 from .ollama_embedder import OllamaEmbedder
 
@@ -123,9 +123,12 @@ class OptimizedOllamaClient(LLMClient):
         super().__init__(config)
         self.base_url = config.base_url or "http://localhost:11434"
         self.model = config.model if config.model else "llama3.2:3b"
+        self.small_model = config.small_model
         self.temperature = config.temperature if config.temperature is not None else 0.0
         self._session: aiohttp.ClientSession | None = None
-        logger.info(f"    使用模型: {self.model}")
+        logger.info(f"    主模型: {self.model}")
+        if self.small_model and self.small_model != self.model:
+            logger.info(f"    小模型: {self.small_model}")
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """取得或建立共用的 aiohttp session（利用 HTTP keep-alive 和連線池）。"""
@@ -133,20 +136,41 @@ class OptimizedOllamaClient(LLMClient):
             self._session = aiohttp.ClientSession()
         return self._session
 
+    def _get_model_for_size(self, model_size: ModelSize) -> str:
+        """
+        根據 model_size 選擇適當的模型。
+
+        graphiti-core pipeline 會在簡單任務（去重判斷、摘要生成、時間解析）
+        傳入 ModelSize.small，複雜任務（實體提取、邊提取）使用預設 ModelSize.medium。
+
+        Args:
+            model_size: 請求的模型大小
+
+        Returns:
+            str: 對應的模型名稱
+        """
+        if model_size == ModelSize.small and self.small_model:
+            return self.small_model
+        return self.model
+
     async def _generate_response(
         self,
         messages: List[Any],
         response_model: Optional[Any] = None,
-        **kwargs,
+        max_tokens: Optional[int] = None,
+        model_size: ModelSize = ModelSize.medium,
     ) -> Any:
         """實現抽象方法 _generate_response。"""
-        return await self.generate_response(messages, response_model)
+        return await self.generate_response(
+            messages, response_model, max_tokens, model_size=model_size
+        )
 
     async def generate_response(
         self,
         messages: List[Any],
         response_model: Optional[Any] = None,
         max_tokens: Optional[int] = None,
+        model_size: ModelSize = ModelSize.medium,
         **kwargs,
     ) -> Any:
         """
@@ -156,10 +180,14 @@ class OptimizedOllamaClient(LLMClient):
             messages: 訊息列表（字串或訊息物件）
             response_model: 可選的 Pydantic 響應模型
             max_tokens: 最大 token 數（未使用）
+            model_size: 模型大小（small 用於簡單任務，medium 用於複雜任務）
 
         Returns:
             Any: 如果指定 response_model 則返回解析後的字典，否則返回純文字
         """
+        # 根據 model_size 選擇模型
+        active_model = self._get_model_for_size(model_size)
+
         # 處理字串輸入
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
@@ -169,16 +197,19 @@ class OptimizedOllamaClient(LLMClient):
 
         # 如果需要結構化輸出
         if response_model:
-            return await self._generate_structured_response(ollama_messages, response_model)
+            return await self._generate_structured_response(
+                ollama_messages, response_model, active_model=active_model
+            )
 
         # 純文字響應
-        return await self._make_request(ollama_messages)
+        return await self._make_request(ollama_messages, model=active_model)
 
     async def generate_response_with_retry(
         self,
         messages: List[Any],
         response_model: Optional[Any] = None,
         max_attempts: int = 3,
+        model_size: ModelSize = ModelSize.medium,
     ) -> Any:
         """
         帶重試機制的響應生成。
@@ -187,13 +218,16 @@ class OptimizedOllamaClient(LLMClient):
             messages: 訊息列表
             response_model: 可選的響應模型
             max_attempts: 最大重試次數
+            model_size: 模型大小
 
         Returns:
             Any: 生成的響應，或失敗時返回預設值
         """
         for attempt in range(max_attempts):
             try:
-                result = await self.generate_response(messages, response_model)
+                result = await self.generate_response(
+                    messages, response_model, model_size=model_size
+                )
                 if result:
                     return result
             except Exception as e:
@@ -227,6 +261,7 @@ class OptimizedOllamaClient(LLMClient):
     async def _make_request(
         self, messages: List[Dict[str, str]], json_mode: bool = False,
         max_retries: int = 3, timeout: int = 120,
+        model: Optional[str] = None,
     ) -> str:
         """
         發送請求到 Ollama API，含指數退避重試。
@@ -236,9 +271,11 @@ class OptimizedOllamaClient(LLMClient):
             json_mode: 是否要求 JSON 格式回應
             max_retries: 最大重試次數
             timeout: 請求超時秒數
+            model: 使用的模型名稱（None 時使用預設主模型）
         """
+        active_model = model or self.model
         payload = {
-            "model": self.model,
+            "model": active_model,
             "messages": messages,
             "stream": False,
             "temperature": self.temperature,
@@ -302,7 +339,8 @@ class OptimizedOllamaClient(LLMClient):
         return ""
 
     async def _generate_structured_response(
-        self, messages: List[Dict[str, str]], response_model: Any
+        self, messages: List[Dict[str, str]], response_model: Any,
+        active_model: Optional[str] = None,
     ) -> Optional[Dict]:
         """生成結構化響應並解析為 Pydantic 模型。"""
         # 添加實體提取的系統提示
@@ -311,7 +349,9 @@ class OptimizedOllamaClient(LLMClient):
             messages.append({"role": "system", "content": system_prompt})
 
         # 發送請求
-        response_text = await self._make_request(messages, json_mode=True)
+        response_text = await self._make_request(
+            messages, json_mode=True, model=active_model
+        )
 
         if not response_text:
             return self._create_fallback_response(response_model)
