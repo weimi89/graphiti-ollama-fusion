@@ -1131,6 +1131,52 @@ def create_web_routes(
         return HTMLResponse("<h1>Graphiti Web UI</h1><p>web/index.html 不存在</p>", status_code=404)
 
     # ------------------------------------------------------------------
+    # 背景任務 API
+    # ------------------------------------------------------------------
+
+    async def api_memory_tasks(request: Request) -> JSONResponse:
+        """列出所有背景記憶處理任務。"""
+        try:
+            from graphiti_mcp_server import _memory_tasks
+
+            status_filter = request.query_params.get("status", "")
+            tasks = list(_memory_tasks.values())
+            if status_filter:
+                tasks = [t for t in tasks if t.status == status_filter]
+
+            # 按建立時間倒序
+            tasks.sort(key=lambda t: t.created_at, reverse=True)
+
+            # 分頁
+            limit = min(int(request.query_params.get("limit", "20")), 100)
+            offset = int(request.query_params.get("offset", "0"))
+            paginated = tasks[offset : offset + limit]
+
+            return JSONResponse({
+                "tasks": [t.to_dict() for t in paginated],
+                "total": len(tasks),
+                "limit": limit,
+                "offset": offset,
+            })
+        except Exception as e:
+            logger.error(f"API memory tasks error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_memory_task_detail(request: Request) -> JSONResponse:
+        """查詢單一背景任務狀態。"""
+        try:
+            from graphiti_mcp_server import _memory_tasks
+
+            task_id = request.path_params["task_id"]
+            task = _memory_tasks.get(task_id)
+            if not task:
+                return JSONResponse({"error": f"找不到任務 {task_id}"}, status_code=404)
+            return JSONResponse(task.to_dict())
+        except Exception as e:
+            logger.error(f"API memory task detail error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ------------------------------------------------------------------
     # 組裝路由
     # ------------------------------------------------------------------
 
@@ -1151,6 +1197,8 @@ def create_web_routes(
         Route("/api/search/episodes", api_search_episodes, methods=["GET"]),
         Route("/api/nodes/{uuid}/relations", api_node_relations, methods=["GET"]),
         Route("/api/memory/add", api_add_memory, methods=["POST"]),
+        Route("/api/memory/tasks", api_memory_tasks, methods=["GET"]),
+        Route("/api/memory/tasks/{task_id}", api_memory_task_detail, methods=["GET"]),
         Route("/api/timeline", api_timeline, methods=["GET"]),
         Route("/api/analytics/top-nodes", api_analytics_top_nodes, methods=["GET"]),
         Route("/api/analytics/quality", api_analytics_quality, methods=["GET"]),

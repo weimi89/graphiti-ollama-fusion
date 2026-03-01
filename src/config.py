@@ -242,6 +242,39 @@ class ServerConfig:
 
 
 @dataclass
+class MemoryPerformanceConfig:
+    """
+    記憶添加效能配置。
+
+    Attributes:
+        chunk_threshold: 觸發智慧切分的字元數閾值
+        max_chunk_size: 每段最大字元數
+        max_coroutines: Graphiti 內部最大並行協程數
+        default_background: 是否預設使用背景處理模式
+    """
+
+    chunk_threshold: int = 800
+    max_chunk_size: int = 600
+    max_coroutines: int = 5
+    default_background: bool = False
+
+    def validate(self) -> bool:
+        """驗證配置是否有效。"""
+        return not self.get_errors()
+
+    def get_errors(self) -> list[str]:
+        """返回配置中的具體錯誤列表。"""
+        errors = []
+        if self.chunk_threshold < 100:
+            errors.append(f"memory_performance.chunk_threshold 過小 (最小 100): {self.chunk_threshold}")
+        if self.max_chunk_size < 100:
+            errors.append(f"memory_performance.max_chunk_size 過小 (最小 100): {self.max_chunk_size}")
+        if self.max_coroutines < 1 or self.max_coroutines > 20:
+            errors.append(f"memory_performance.max_coroutines 超出範圍 (1-20): {self.max_coroutines}")
+        return errors
+
+
+@dataclass
 class GraphitiConfig:
     """
     完整的 Graphiti 應用程式配置。
@@ -254,6 +287,7 @@ class GraphitiConfig:
         neo4j: Neo4j 資料庫配置
         logging: 日誌配置
         server: 伺服器配置
+        memory_performance: 記憶添加效能配置
         search_limit: 搜索結果上限
         enable_deduplication: 是否啟用去重
         pydantic_validation_fixes: 是否啟用 Pydantic 驗證修復
@@ -265,6 +299,7 @@ class GraphitiConfig:
     neo4j: Neo4jConfig = field(default_factory=Neo4jConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
+    memory_performance: MemoryPerformanceConfig = field(default_factory=MemoryPerformanceConfig)
 
     # Graphiti 特定設定
     search_limit: int = 20
@@ -338,6 +373,9 @@ class GraphitiConfig:
             except json.JSONDecodeError:
                 logger.warning("GRAPHITI_LOG_THIRD_PARTY_LEVELS 格式無效（需 JSON），已忽略")
 
+        # 記憶效能配置
+        _load_memory_performance_settings(config)
+
         # Graphiti 特定設定
         _load_graphiti_settings(config)
 
@@ -369,6 +407,7 @@ class GraphitiConfig:
             _apply_config_section(config.neo4j, config_data.get("neo4j", {}))
             _apply_config_section(config.logging, config_data.get("logging", {}))
             _apply_config_section(config.server, config_data.get("server", {}))
+            _apply_config_section(config.memory_performance, config_data.get("memory_performance", {}))
 
             # 載入 Graphiti 特定設定
             for key in [
@@ -399,7 +438,7 @@ class GraphitiConfig:
             list[str]: 錯誤訊息列表，空列表表示全部通過
         """
         errors = []
-        for sub in [self.ollama, self.embedder, self.neo4j, self.logging, self.server]:
+        for sub in [self.ollama, self.embedder, self.neo4j, self.logging, self.server, self.memory_performance]:
             errors.extend(sub.get_errors())
         return errors
 
@@ -536,6 +575,9 @@ class GraphitiConfig:
             except json.JSONDecodeError:
                 logger.warning("GRAPHITI_LOG_THIRD_PARTY_LEVELS 格式無效（需 JSON），已忽略")
 
+        # 記憶效能配置
+        _load_memory_performance_settings(self)
+
         # Graphiti 特定設定
         _load_graphiti_settings(self)
 
@@ -557,6 +599,8 @@ class GraphitiConfig:
             "search_limit": self.search_limit,
             "deduplication_enabled": self.enable_deduplication,
             "pydantic_fixes_enabled": self.pydantic_validation_fixes,
+            "max_coroutines": self.memory_performance.max_coroutines,
+            "chunk_threshold": self.memory_performance.chunk_threshold,
         }
 
 
@@ -576,6 +620,24 @@ def _apply_config_section(target: Any, source: Dict[str, Any]) -> None:
     for key, value in source.items():
         if hasattr(target, key):
             setattr(target, key, value)
+
+
+def _load_memory_performance_settings(config: GraphitiConfig) -> None:
+    """
+    從環境變數載入記憶效能設定。
+
+    Args:
+        config: 配置物件
+    """
+    mp = config.memory_performance
+    if os.getenv("GRAPHITI_CHUNK_THRESHOLD"):
+        mp.chunk_threshold = int(os.getenv("GRAPHITI_CHUNK_THRESHOLD"))
+    if os.getenv("GRAPHITI_MAX_CHUNK_SIZE"):
+        mp.max_chunk_size = int(os.getenv("GRAPHITI_MAX_CHUNK_SIZE"))
+    if os.getenv("GRAPHITI_MAX_COROUTINES"):
+        mp.max_coroutines = int(os.getenv("GRAPHITI_MAX_COROUTINES"))
+    if os.getenv("GRAPHITI_DEFAULT_BACKGROUND"):
+        mp.default_background = os.getenv("GRAPHITI_DEFAULT_BACKGROUND").lower() == "true"
 
 
 def _load_graphiti_settings(config: GraphitiConfig) -> None:

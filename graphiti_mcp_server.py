@@ -27,8 +27,10 @@ import logging
 import os
 import sys
 import time
+import uuid as uuid_mod
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
@@ -61,8 +63,47 @@ from graphiti_core.search.search_config_recipes import NODE_HYBRID_SEARCH_RRF
 from graphiti_core.search.search_filters import SearchFilters
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data
 
+# 載入內容預處理模組
+from src.content_preprocessor import smart_chunk, should_chunk
+
 # 載入環境變數
 load_dotenv()
+
+
+# ============================================================================
+# 背景任務資料結構
+# ============================================================================
+
+
+@dataclass
+class MemoryTask:
+    """背景記憶處理任務狀態。"""
+
+    task_id: str
+    name: str
+    group_id: str
+    status: str = "pending"  # pending, processing, completed, failed
+    created_at: str = ""
+    completed_at: Optional[str] = None
+    result: Optional[dict] = None
+    error: Optional[str] = None
+    chunks_total: int = 0
+    chunks_done: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "task_id": self.task_id,
+            "name": self.name,
+            "group_id": self.group_id,
+            "status": self.status,
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+            "chunks_total": self.chunks_total,
+            "chunks_done": self.chunks_done,
+            "result": self.result,
+            "error": self.error,
+        }
+
 
 # ============================================================================
 # 全域變數
@@ -73,6 +114,7 @@ logger = None  # 日誌記錄器
 graphiti_instance = None  # Graphiti 實例快取
 _init_lock = asyncio.Lock()  # 初始化鎖，防止並發競態
 default_group_id: str = os.getenv("GROUP_ID", "default")  # 預設記憶分組 ID
+_memory_tasks: Dict[str, MemoryTask] = {}  # 背景記憶任務儲存
 
 # ============================================================================
 # MCP 伺服器配置
@@ -145,13 +187,14 @@ async def initialize_graphiti() -> Graphiti:
             )
 
             # 建立 Graphiti 實例
+            max_coroutines = app_config.memory_performance.max_coroutines if app_config else 5
             graphiti_instance = Graphiti(
                 uri=app_config.neo4j.uri,
                 user=app_config.neo4j.user,
                 password=app_config.neo4j.password,
                 llm_client=llm_client,
                 embedder=embedder,
-                max_coroutines=3,  # 限制併發數量避免 IndexError
+                max_coroutines=max_coroutines,
             )
 
             # 確保索引和約束已建立（clear_graph 後重建）
@@ -211,6 +254,8 @@ async def add_memory_simple(
     source: str = "text",
     episode_uuid: Optional[str] = None,
     use_safe_mode: bool = False,
+    background: bool = False,
+    excluded_entity_types: Optional[List[str]] = None,
 ) -> dict:
     """
     添加記憶到知識圖譜。
@@ -218,6 +263,11 @@ async def add_memory_simple(
     支援兩種模式：
     - 完整模式（預設）：使用完整流程，包含實體提取和關係建立，記憶可被搜尋
     - 安全模式：直接建立節點，跳過實體提取，速度快但記憶無法被搜尋
+
+    效能優化：
+    - 長文本自動切分為多段處理，減少每段 LLM 呼叫次數
+    - 支援背景非同步處理（background=True），立刻返回 task_id
+    - 可排除不需要的實體類型以減少提取量
 
     Args:
         name: 記憶片段的名稱
@@ -227,6 +277,8 @@ async def add_memory_simple(
         source: 來源類型 ('text', 'json', 'message')
         episode_uuid: 可選的記憶片段 UUID
         use_safe_mode: 是否使用安全模式
+        background: 是否在背景非同步處理（立刻返回 task_id）
+        excluded_entity_types: 排除的實體類型列表，減少不需要的實體提取
 
     Returns:
         dict: 包含操作結果的字典
@@ -235,32 +287,62 @@ async def add_memory_simple(
             - uuid: 記憶片段 UUID
             - processing_time: 處理時間
             - method: 使用的方法
-
-    Examples:
-        >>> # 添加純文字記憶
-        >>> await add_memory_simple(
-        ...     name="會議記錄",
-        ...     episode_body="今天討論了新產品發布計畫"
-        ... )
-
-        >>> # 添加 JSON 結構化資料
-        >>> await add_memory_simple(
-        ...     name="客戶資料",
-        ...     episode_body='{"name": "張三", "company": "ABC公司"}',
-        ...     source="json"
-        ... )
+            - task_id: （僅 background=True）背景任務 ID
     """
     # 使用環境變數的預設 group_id
     if group_id is None:
         group_id = default_group_id
 
+    # 背景模式：建立 task 後立刻返回
+    if background:
+        task_id = str(uuid_mod.uuid4())[:8]
+        task = MemoryTask(
+            task_id=task_id,
+            name=name,
+            group_id=group_id,
+            status="pending",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        _memory_tasks[task_id] = task
+
+        asyncio.create_task(
+            _background_add_memory(
+                task, name, episode_body, group_id, source_description,
+                source, episode_uuid, use_safe_mode, excluded_entity_types,
+            )
+        )
+
+        return {
+            "success": True,
+            "message": f"記憶 '{name}' 已加入背景處理佇列",
+            "task_id": task_id,
+            "method": "background",
+            "note": "使用 get_memory_task_status(task_id) 查詢進度",
+        }
+
+    # 同步模式
+    return await _sync_add_memory(
+        name, episode_body, group_id, source_description,
+        source, episode_uuid, use_safe_mode, excluded_entity_types,
+    )
+
+
+async def _sync_add_memory(
+    name: str,
+    episode_body: str,
+    group_id: str,
+    source_description: str,
+    source: str,
+    episode_uuid: Optional[str],
+    use_safe_mode: bool,
+    excluded_entity_types: Optional[List[str]],
+) -> dict:
+    """同步執行記憶添加。"""
     start_time = time.time()
     log_operation_start("add_memory", name=name[:50], source=source)
 
     try:
         graphiti = await initialize_graphiti()
-
-        # 解析來源類型
         episode_type = _parse_episode_type(source)
 
         if use_safe_mode:
@@ -271,10 +353,10 @@ async def add_memory_simple(
             try:
                 return await _add_memory_full_mode(
                     graphiti, name, episode_body, group_id, source_description,
-                    episode_type, episode_uuid, source, start_time
+                    episode_type, episode_uuid, source, start_time,
+                    excluded_entity_types=excluded_entity_types,
                 )
             except Exception as full_err:
-                # 完整模式失敗，自動降級到安全模式
                 logger.warning(
                     f"完整模式失敗，自動降級到安全模式: {str(full_err)[:200]}"
                 )
@@ -294,6 +376,35 @@ async def add_memory_simple(
             CommonErrors.operation_failed("add_memory", str(e)),
             f"記憶添加過程中發生錯誤: {e}",
         )
+
+
+async def _background_add_memory(
+    task: MemoryTask,
+    name: str,
+    episode_body: str,
+    group_id: str,
+    source_description: str,
+    source: str,
+    episode_uuid: Optional[str],
+    use_safe_mode: bool,
+    excluded_entity_types: Optional[List[str]],
+) -> None:
+    """背景執行記憶添加任務。"""
+    task.status = "processing"
+    try:
+        result = await _sync_add_memory(
+            name, episode_body, group_id, source_description,
+            source, episode_uuid, use_safe_mode, excluded_entity_types,
+        )
+        task.result = result
+        task.status = "completed" if result.get("success") else "failed"
+        task.error = result.get("error") if not result.get("success") else None
+    except Exception as e:
+        task.status = "failed"
+        task.error = str(e)[:500]
+        logger.error(f"背景任務 {task.task_id} 失敗: {e}")
+    finally:
+        task.completed_at = datetime.now(timezone.utc).isoformat()
 
 
 def _parse_episode_type(source: str) -> EpisodeType:
@@ -379,9 +490,12 @@ async def _add_memory_full_mode(
     episode_uuid: Optional[str],
     source: str,
     start_time: float,
+    excluded_entity_types: Optional[List[str]] = None,
 ) -> dict:
     """
     使用完整模式添加記憶（包含實體提取）。
+
+    長文本會自動切分為多段循序處理，減少每段的 LLM 呼叫次數。
 
     Args:
         graphiti: Graphiti 實例
@@ -393,33 +507,119 @@ async def _add_memory_full_mode(
         episode_uuid: 可選的 UUID
         source: 來源類型字串
         start_time: 開始時間
+        excluded_entity_types: 排除的實體類型列表
 
     Returns:
         dict: 操作結果
     """
-    await graphiti.add_episode(
-        name=name,
-        episode_body=episode_body,
-        source_description=source_description,
-        source=episode_type,
-        group_id=group_id,
-        reference_time=datetime.now(timezone.utc),
-        uuid=episode_uuid,
-    )
+    # 準備 add_episode 的額外參數
+    add_episode_kwargs: dict[str, Any] = {}
+    if excluded_entity_types:
+        add_episode_kwargs["entity_types"] = excluded_entity_types
+
+    # 取得切分配置
+    chunk_threshold = 800
+    max_chunk_size = 600
+    if app_config and hasattr(app_config, "memory_performance"):
+        chunk_threshold = app_config.memory_performance.chunk_threshold
+        max_chunk_size = app_config.memory_performance.max_chunk_size
+
+    # 智慧切分
+    chunk_result = smart_chunk(episode_body, max_chunk_size=max_chunk_size, threshold=chunk_threshold)
+
+    if not chunk_result.was_chunked:
+        # 不需切分，直接處理
+        await graphiti.add_episode(
+            name=name,
+            episode_body=episode_body,
+            source_description=source_description,
+            source=episode_type,
+            group_id=group_id,
+            reference_time=datetime.now(timezone.utc),
+            uuid=episode_uuid,
+            **add_episode_kwargs,
+        )
+
+        duration = time.time() - start_time
+        log_operation_success("add_memory_full", duration, name=name)
+
+        return {
+            "success": True,
+            "message": f"記憶 '{name}' 已成功添加（完整模式）",
+            "uuid": episode_uuid or "auto-generated",
+            "group_id": group_id,
+            "source": source,
+            "processing_time": f"{duration:.2f}s",
+            "method": "full_entity_extraction",
+            "note": "使用完整模式，包含實體提取和關係建立",
+        }
+
+    # 切分後循序處理每段
+    total_chunks = len(chunk_result.chunks)
+    chunk_times: List[float] = []
+    logger.info(f"內容已切分為 {total_chunks} 段，開始循序處理")
+
+    for i, chunk in enumerate(chunk_result.chunks, 1):
+        chunk_start = time.time()
+        chunk_name = f"{name} (part {i}/{total_chunks})"
+
+        await graphiti.add_episode(
+            name=chunk_name,
+            episode_body=chunk,
+            source_description=source_description,
+            source=episode_type,
+            group_id=group_id,
+            reference_time=datetime.now(timezone.utc),
+            **add_episode_kwargs,
+        )
+
+        chunk_duration = time.time() - chunk_start
+        chunk_times.append(chunk_duration)
+        logger.info(f"段落 {i}/{total_chunks} 完成，耗時 {chunk_duration:.1f}s")
 
     duration = time.time() - start_time
-    log_operation_success("add_memory_full", duration, name=name)
+    log_operation_success("add_memory_full_chunked", duration, name=name, chunks=total_chunks)
 
     return {
         "success": True,
-        "message": f"記憶 '{name}' 已成功添加（完整模式）",
+        "message": f"記憶 '{name}' 已成功添加（完整模式，{total_chunks} 段）",
         "uuid": episode_uuid or "auto-generated",
         "group_id": group_id,
         "source": source,
         "processing_time": f"{duration:.2f}s",
-        "method": "full_entity_extraction",
-        "note": "使用完整模式，包含實體提取和關係建立",
+        "method": "full_entity_extraction_chunked",
+        "chunks": total_chunks,
+        "chunk_times": [f"{t:.1f}s" for t in chunk_times],
+        "note": f"長文本自動切分為 {total_chunks} 段處理",
     }
+
+
+@mcp.tool()
+async def get_memory_task_status(task_id: str) -> dict:
+    """
+    查詢背景記憶處理任務的狀態。
+
+    當使用 add_memory_simple(background=True) 時，會返回 task_id，
+    可用此工具追蹤處理進度。
+
+    Args:
+        task_id: 背景任務 ID
+
+    Returns:
+        dict: 任務狀態資訊
+            - task_id: 任務 ID
+            - status: pending / processing / completed / failed
+            - result: 完成時的結果
+            - error: 失敗時的錯誤訊息
+    """
+    task = _memory_tasks.get(task_id)
+    if not task:
+        return {
+            "success": False,
+            "error": f"找不到任務 {task_id}",
+            "available_tasks": list(_memory_tasks.keys())[-10:],
+        }
+    return {"success": True, **task.to_dict()}
 
 
 @mcp.tool()
