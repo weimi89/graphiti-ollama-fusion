@@ -264,6 +264,7 @@ body {
     padding: 20px;
     text-align: center;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
+    cursor: pointer;
 }
 
 .stat-card:hover {
@@ -368,6 +369,10 @@ body {
     background: var(--card-episode-bg);
     border-left-color: var(--card-episode-border);
 }
+
+[data-theme="light"] .card.card-entity { border-left-width: 4px; }
+[data-theme="light"] .card.card-fact { border-left-width: 4px; }
+[data-theme="light"] .card.card-episode { border-left-width: 4px; }
 
 /* -- 卡片 tags 容器 -- */
 .card-tags {
@@ -727,10 +732,15 @@ body {
     font-size: 12px;
     background: transparent;
     color: var(--text-muted);
-    border: 1px solid var(--border-light);
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all 0.15s ease;
+    opacity: 0;
+}
+
+.card:hover .btn-delete {
+    opacity: 1;
 }
 
 .btn-delete:hover {
@@ -831,6 +841,24 @@ body {
     font-size: 13px;
     cursor: pointer;
     transition: all 0.15s ease;
+    position: relative;
+}
+
+.search-mode-tab[title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    bottom: -32px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    z-index: 10;
+    box-shadow: var(--shadow);
 }
 
 .search-mode-tab.active {
@@ -934,6 +962,23 @@ body {
     padding: 60px 20px;
     color: var(--text-muted);
     font-size: 15px;
+}
+
+.loading-spinner::before {
+    content: '';
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }
 
 /* -- Empty State -- */
@@ -1513,6 +1558,21 @@ body {
     margin-top: 16px;
 }
 
+/* -- 漢堡選單 -- */
+.navbar-hamburger {
+    display: none;
+    width: 36px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 20px;
+}
+
 /* -- 危險圖標按鈕 -- */
 .btn-danger-icon {
     width: 36px;
@@ -1535,6 +1595,141 @@ body {
     background: var(--danger-bg);
 }
 
+/* -- Group 搜尋下拉選單 -- */
+.group-filter-wrapper {
+    position: relative;
+}
+
+.group-search-input {
+    padding: 6px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 13px;
+    min-width: 180px;
+    cursor: text;
+}
+
+.group-search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.group-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: 200;
+    min-width: 220px;
+    display: none;
+}
+
+.group-dropdown.open {
+    display: block;
+}
+
+.group-dropdown-item {
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text-primary);
+    transition: background 0.1s;
+}
+
+.group-dropdown-item:hover,
+.group-dropdown-item.selected {
+    background: var(--accent-bg);
+    color: var(--accent);
+}
+
+.group-dropdown-empty {
+    padding: 12px 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+/* -- 自引用事實樣式 -- */
+.fact-self-ref {
+    opacity: 0.6;
+    font-style: italic;
+}
+
+.fact-self-ref::after {
+    content: ' (自引用)';
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+/* -- 分頁跳轉輸入 -- */
+.pagination-jump {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.pagination-jump input {
+    width: 48px;
+    padding: 4px 6px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 12px;
+    text-align: center;
+}
+
+.pagination-jump input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* -- 頁面說明還原按鈕 -- */
+.page-help-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.page-help-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* -- 儀表板操作按鈕 -- */
+.dashboard-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 24px;
+}
+
+/* -- 事實實體路徑截斷 -- */
+.fact-entity-path {
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+    vertical-align: bottom;
+}
+
 /* -- 響應式 -- */
 @media (max-width: 768px) {
     .navbar {
@@ -1544,11 +1739,21 @@ body {
         gap: 8px;
     }
 
+    .navbar-hamburger {
+        display: flex;
+    }
+
     .navbar-links {
+        display: none;
         order: 3;
         width: 100%;
         margin-left: 0;
         overflow-x: auto;
+    }
+
+    .navbar-links.open {
+        display: flex;
+        flex-wrap: wrap;
     }
 
     .navbar-actions {

@@ -901,10 +901,20 @@ def create_web_routes(
                     async for r in result
                 ]
 
+                # 總節點數（用於前端百分比計算）
+                result = await session.run(f"""
+                    MATCH (n:Entity)
+                    {group_filter}
+                    RETURN count(n) AS total
+                """, params)
+                total_rec = await result.single()
+                total_nodes = total_rec["total"] if total_rec else 0
+
             return JSONResponse({
                 "orphan_nodes": {"count": len(orphans), "items": orphans},
                 "empty_summaries": {"count": len(empty_summaries), "items": empty_summaries},
                 "duplicate_names": {"count": len(duplicates), "items": duplicates},
+                "total_nodes": total_nodes,
             })
         except Exception as e:
             logger.error(f"API analytics quality error: {e}")

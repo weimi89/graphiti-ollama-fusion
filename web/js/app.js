@@ -47,14 +47,13 @@ const App = {
     },
 
     _initEvents() {
-        // Group 篩選
-        document.getElementById('group-filter').addEventListener('change', (e) => {
-            this.state.groupId = e.target.value;
-            this.state.currentPage = 1;
-            // 顯示/隱藏群組刪除按鈕
-            const deleteBtn = document.getElementById('delete-group-btn');
-            if (deleteBtn) deleteBtn.style.display = e.target.value ? '' : 'none';
-            this._renderCurrentPage();
+        // Group 搜尋下拉 — 點擊外部關閉
+        document.addEventListener('click', (e) => {
+            const wrapper = document.querySelector('.group-filter-wrapper');
+            if (wrapper && !wrapper.contains(e.target)) {
+                const dd = wrapper.querySelector('.group-dropdown');
+                if (dd) dd.classList.remove('open');
+            }
         });
 
         // 搜尋框 Enter
@@ -297,6 +296,15 @@ const App = {
         app.innerHTML = Components.renderGraphPage(null, this.state.graphCenterUuid);
         if (this.state.graphCenterUuid) {
             await this._loadGraph(this.state.graphCenterUuid);
+        } else {
+            // Auto-load top node
+            try {
+                const topData = await API.topNodes({ groupId: this.state.groupId, limit: 1 });
+                if (topData.nodes && topData.nodes.length) {
+                    this.state.graphCenterUuid = topData.nodes[0].uuid;
+                    await this._loadGraph(topData.nodes[0].uuid);
+                }
+            } catch (e) { /* ignore */ }
         }
     },
 
@@ -415,26 +423,88 @@ const App = {
         if (el) el.remove();
     },
 
+    showDescription(page) {
+        localStorage.removeItem(`graphiti-desc-${page}`);
+        this._renderCurrentPage();
+    },
+
     // ============================================================
     // 資料載入
     // ============================================================
 
+    _groupList: [],
+
     async _loadGroups() {
         try {
             const data = await API.groups();
-            const select = document.getElementById('group-filter');
-            const groups = data.groups || [];
-            // 保留第一個 "全部" option
-            select.innerHTML = '<option value="">全部群組</option>' +
-                groups.map(g => `<option value="${g}">${g}</option>`).join('');
+            this._groupList = data.groups || [];
+            this._renderGroupFilter();
         } catch (err) {
             console.error('Load groups error:', err);
         }
     },
 
+    _renderGroupFilter() {
+        const container = document.getElementById('group-filter-container');
+        if (!container) return;
+        const groups = this._groupList;
+        container.innerHTML = `
+            <div class="group-filter-wrapper">
+                <input type="text" class="group-search-input" id="group-search-input"
+                       placeholder="搜尋群組..." value="${this.state.groupId || '全部群組'}"
+                       onfocus="this.select(); App.toggleGroupDropdown()"
+                       oninput="App.filterGroups()">
+                <div class="group-dropdown">
+                    <div class="group-dropdown-item${!this.state.groupId ? ' selected' : ''}"
+                         onclick="App.selectGroup('')">全部群組</div>
+                    ${groups.map(g => `<div class="group-dropdown-item${this.state.groupId === g ? ' selected' : ''}"
+                         onclick="App.selectGroup('${g}')">${g}</div>`).join('')}
+                    <div class="group-dropdown-empty" style="display:none">無匹配群組</div>
+                </div>
+            </div>
+        `;
+    },
+
     // ============================================================
     // 使用者操作
     // ============================================================
+
+    toggleGroupDropdown() {
+        const dd = document.querySelector('.group-dropdown');
+        if (dd) dd.classList.toggle('open');
+        const input = document.getElementById('group-search-input');
+        if (input) input.focus();
+    },
+
+    filterGroups() {
+        const input = document.getElementById('group-search-input');
+        const dd = document.querySelector('.group-dropdown');
+        if (!input || !dd) return;
+        const q = input.value.toLowerCase();
+        dd.classList.add('open');
+        const items = dd.querySelectorAll('.group-dropdown-item');
+        let visible = 0;
+        items.forEach(item => {
+            const match = item.textContent.toLowerCase().includes(q);
+            item.style.display = match ? '' : 'none';
+            if (match) visible++;
+        });
+        const empty = dd.querySelector('.group-dropdown-empty');
+        if (empty) empty.style.display = visible === 0 ? '' : 'none';
+    },
+
+    selectGroup(groupId) {
+        this.state.groupId = groupId;
+        this.state.currentPage = 1;
+        const input = document.getElementById('group-search-input');
+        if (input) input.value = groupId || '全部群組';
+        const dd = document.querySelector('.group-dropdown');
+        if (dd) dd.classList.remove('open');
+        // Show/hide delete button
+        const deleteBtn = document.getElementById('delete-group-btn');
+        if (deleteBtn) deleteBtn.style.display = groupId ? '' : 'none';
+        this._renderCurrentPage();
+    },
 
     doSearch() {
         const input = document.getElementById('search-input');
@@ -454,6 +524,14 @@ const App = {
         this.state.currentPage = page;
         this._renderCurrentPage();
         window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+
+    jumpToPage(event) {
+        if (event.key !== 'Enter') return;
+        const page = parseInt(event.target.value);
+        if (!isNaN(page) && page >= 1) {
+            this.goPage(page);
+        }
     },
 
     async deleteNode(uuid) {
@@ -503,7 +581,8 @@ const App = {
             await API.deleteGroup(this.state.groupId);
             this._toast(`群組 ${this.state.groupId} 已清除`, 'success');
             this.state.groupId = '';
-            document.getElementById('group-filter').value = '';
+            const input = document.getElementById('group-search-input');
+            if (input) input.value = '全部群組';
             const deleteBtn = document.getElementById('delete-group-btn');
             if (deleteBtn) deleteBtn.style.display = 'none';
             await this._loadGroups();
@@ -691,6 +770,11 @@ const App = {
     // UI 工具
     // ============================================================
 
+    toggleMenu() {
+        const links = document.querySelector('.navbar-links');
+        if (links) links.classList.toggle('open');
+    },
+
     _confirm(message) {
         return new Promise(resolve => {
             this._confirmResolve = resolve;
@@ -704,8 +788,12 @@ const App = {
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
         toast.textContent = message;
+        // Error messages show longer
+        const duration = type === 'error' ? 6000 : 3000;
+        toast.style.animationDuration = `0.3s, 0.3s`;
+        toast.style.animationDelay = `0s, ${duration / 1000 - 0.3}s`;
         container.appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
+        setTimeout(() => toast.remove(), duration);
     },
 };
 

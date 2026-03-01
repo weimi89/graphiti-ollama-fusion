@@ -21,7 +21,9 @@ const Components = {
     renderPageDescription(page) {
         const desc = this.PAGE_DESCRIPTIONS[page];
         if (!desc) return '';
-        if (localStorage.getItem(`graphiti-desc-${page}`) === '1') return '';
+        if (localStorage.getItem(`graphiti-desc-${page}`) === '1') {
+            return `<button class="page-help-btn" onclick="App.showDescription('${page}')" title="${desc}">? 說明</button>`;
+        }
         return `
             <div class="page-description" id="page-desc-${page}">
                 <span class="page-description-text">${desc}</span>
@@ -38,20 +40,20 @@ const Components = {
         return `
             ${this.renderPageDescription('dashboard')}
             <div class="stats-grid">
-                <div class="stat-card nodes">
+                <div class="stat-card nodes" onclick="location.hash='#/nodes'" title="查看所有實體節點">
                     <div class="stat-number">${stats.nodes ?? 0}</div>
                     <div class="stat-label">實體節點</div>
                 </div>
-                <div class="stat-card facts">
+                <div class="stat-card facts" onclick="location.hash='#/facts'" title="查看所有事實關係">
                     <div class="stat-number">${stats.facts ?? 0}</div>
                     <div class="stat-label">事實關係</div>
                 </div>
-                <div class="stat-card episodes">
+                <div class="stat-card episodes" onclick="location.hash='#/episodes'" title="查看所有記憶片段">
                     <div class="stat-number">${stats.episodes ?? 0}</div>
                     <div class="stat-label">記憶片段</div>
                 </div>
             </div>
-            <div style="text-align:right;margin-bottom:1rem;display:flex;gap:8px;justify-content:flex-end">
+            <div class="dashboard-actions">
                 <button class="btn btn-primary" onclick="App.openAddMemory()" aria-label="新增記憶">新增記憶</button>
                 <button class="btn btn-secondary" onclick="App.exportJSON()" aria-label="匯出知識圖譜資料為 JSON">匯出 JSON</button>
             </div>
@@ -108,9 +110,11 @@ const Components = {
             <div class="search-mode-tabs" role="tablist" aria-label="搜尋模式">
                 <button class="search-mode-tab ${searchMode === 'filter' ? 'active' : ''}"
                         role="tab" aria-selected="${searchMode === 'filter'}"
+                        title="依關鍵字過濾結果"
                         onclick="App.setSearchMode('filter')">篩選</button>
                 <button class="search-mode-tab ${searchMode === 'vector' ? 'active' : ''}"
                         role="tab" aria-selected="${searchMode === 'vector'}"
+                        title="使用語意相似度匹配"
                         onclick="App.setSearchMode('vector')">向量搜尋</button>
                 <button class="btn btn-sm btn-secondary" style="margin-left:auto"
                         onclick="App.toggleBatchMode()">
@@ -176,12 +180,12 @@ const Components = {
                     ${App.state.batchMode ? `<input type="checkbox" class="batch-checkbox"
                         ${App.state.selectedItems.has(node.uuid) ? 'checked' : ''}
                         onchange="App.toggleSelectItem('${safeId}')" onclick="event.stopPropagation()">` : ''}
-                    <button class="btn-uuid" title="點擊複製 UUID" onclick="App.copyText('${safeId}')">
+                    <button class="btn-uuid" title="${node.uuid}" onclick="App.copyText('${safeId}')">
                         ${this._shortUuid(node.uuid)}
                     </button>
                     <span title="建立時間">${this._time(node.created_at)}</span>
                     <span class="card-actions">
-                        <button class="btn-delete" onclick="App.deleteNode('${safeId}')" title="刪除節點">&#10005;</button>
+                        <button class="btn-delete" onclick="App.deleteNode('${safeId}')" title="刪除節點">刪除</button>
                     </span>
                 </div>
             </div>
@@ -208,9 +212,11 @@ const Components = {
             <div class="search-mode-tabs" role="tablist" aria-label="搜尋模式">
                 <button class="search-mode-tab ${searchMode === 'filter' ? 'active' : ''}"
                         role="tab" aria-selected="${searchMode === 'filter'}"
+                        title="依關鍵字過濾結果"
                         onclick="App.setSearchMode('filter')">篩選</button>
                 <button class="search-mode-tab ${searchMode === 'vector' ? 'active' : ''}"
                         role="tab" aria-selected="${searchMode === 'vector'}"
+                        title="使用語意相似度匹配"
                         onclick="App.setSearchMode('vector')">向量搜尋</button>
                 <button class="btn btn-sm btn-secondary" style="margin-left:auto"
                         onclick="App.toggleBatchMode()">
@@ -231,31 +237,32 @@ const Components = {
 
     renderFactCard(fact) {
         const safeId = this._safeUuid(fact.uuid);
+        const isSelfRef = fact.source_name && fact.target_name && fact.source_name === fact.target_name;
         return `
             <div class="card card-fact">
                 <div class="card-tags">
                     <span class="card-tag fact">Fact</span>
-                    ${fact.name ? `<span class="card-tag fact-type">${this._esc(fact.name)}</span>` : ''}
+                    ${fact.name ? `<span class="card-tag fact-type" title="關係類型">${this._esc(fact.name)}</span>` : ''}
                     <span class="card-tags-right">
                         <span class="card-tag group">${this._esc(fact.group_id)}</span>
                     </span>
                 </div>
                 ${fact.fact ? `<div class="card-body-primary">${this._esc(fact.fact)}</div>` : ''}
-                <div class="fact-entities">
-                    <span class="fact-source">${this._esc(fact.source_name || '?')}</span>
+                <div class="fact-entities${isSelfRef ? ' fact-self-ref' : ''}">
+                    <span class="fact-source fact-entity-path" title="${this._esc(fact.source_name || '?')}">${this._esc(fact.source_name || '?')}</span>
                     <span class="fact-arrow">&#8594;</span>
-                    <span class="fact-target">${this._esc(fact.target_name || '?')}</span>
+                    <span class="fact-target fact-entity-path" title="${this._esc(fact.target_name || '?')}">${this._esc(fact.target_name || '?')}</span>
                 </div>
                 <div class="card-footer">
                     ${App.state.batchMode ? `<input type="checkbox" class="batch-checkbox"
                         ${App.state.selectedItems.has(fact.uuid) ? 'checked' : ''}
                         onchange="App.toggleSelectItem('${safeId}')" onclick="event.stopPropagation()">` : ''}
-                    <button class="btn-uuid" title="點擊複製 UUID" onclick="App.copyText('${safeId}')">
+                    <button class="btn-uuid" title="${fact.uuid}" onclick="App.copyText('${safeId}')">
                         ${this._shortUuid(fact.uuid)}
                     </button>
                     <span title="建立時間">${this._time(fact.created_at)}</span>
                     <span class="card-actions">
-                        <button class="btn-delete" onclick="App.deleteFact('${safeId}')" title="刪除">&#10005;</button>
+                        <button class="btn-delete" onclick="App.deleteFact('${safeId}')" title="刪除">刪除</button>
                     </span>
                 </div>
             </div>
@@ -282,9 +289,11 @@ const Components = {
             <div class="search-mode-tabs" role="tablist" aria-label="搜尋模式">
                 <button class="search-mode-tab ${searchMode === 'filter' ? 'active' : ''}"
                         role="tab" aria-selected="${searchMode === 'filter'}"
+                        title="依關鍵字過濾結果"
                         onclick="App.setSearchMode('filter')">關鍵字</button>
                 <button class="search-mode-tab ${searchMode === 'vector' ? 'active' : ''}"
                         role="tab" aria-selected="${searchMode === 'vector'}"
+                        title="BM25 全文檢索匹配"
                         onclick="App.setSearchMode('vector')">全文搜尋</button>
                 <button class="btn btn-sm btn-secondary" style="margin-left:auto"
                         onclick="App.toggleBatchMode()">
@@ -343,12 +352,12 @@ const Components = {
                     ${App.state.batchMode ? `<input type="checkbox" class="batch-checkbox"
                         ${App.state.selectedItems.has(ep.uuid) ? 'checked' : ''}
                         onchange="App.toggleSelectItem('${safeId}')" onclick="event.stopPropagation()">` : ''}
-                    <button class="btn-uuid" title="點擊複製 UUID" onclick="App.copyText('${safeId}')">
+                    <button class="btn-uuid" title="${ep.uuid}" onclick="App.copyText('${safeId}')">
                         ${this._shortUuid(ep.uuid)}
                     </button>
                     <span title="建立時間">${this._time(ep.created_at)}</span>
                     <span class="card-actions">
-                        <button class="btn-delete" onclick="App.deleteEpisode('${safeId}')" title="刪除">&#10005;</button>
+                        <button class="btn-delete" onclick="App.deleteEpisode('${safeId}')" title="刪除">刪除</button>
                     </span>
                 </div>
             </div>
@@ -383,10 +392,13 @@ const Components = {
 
         buttons += `<button ${current >= total ? 'disabled' : ''} onclick="App.goPage(${current + 1})" aria-label="下一頁">&#8250;</button>`;
 
+        const jumpInput = total > 5 ? `<span class="pagination-jump">跳至 <input type="number" min="1" max="${total}" placeholder="#" onkeydown="App.jumpToPage(event)"> 頁</span>` : '';
+
         return `
             <div class="pagination" role="navigation" aria-label="分頁導航">
                 ${buttons}
                 <span class="pagination-info" aria-live="polite">共 ${totalItems} 筆</span>
+                ${jumpInput}
             </div>
         `;
     },
@@ -499,7 +511,13 @@ const Components = {
         const empty = quality.empty_summaries || { count: 0, items: [] };
         const dups = quality.duplicate_names || { count: 0, items: [] };
 
-        const severity = (count) => count === 0 ? 'good' : count <= 5 ? 'warn' : 'bad';
+        const severity = (count) => {
+            if (quality.total_nodes && quality.total_nodes > 0) {
+                const pct = count / quality.total_nodes * 100;
+                return pct === 0 ? 'good' : pct <= 5 ? 'warn' : 'bad';
+            }
+            return count === 0 ? 'good' : count <= 5 ? 'warn' : 'bad';
+        };
 
         return `
             <div class="quality-section">
@@ -508,7 +526,7 @@ const Components = {
                     <div class="quality-card quality-${severity(orphans.count)}" onclick="this.querySelector('.quality-detail').classList.toggle('hidden')">
                         <div class="quality-num">${orphans.count}</div>
                         <div class="quality-label">孤立節點</div>
-                        <div class="quality-hint">無任何關係連結的實體</div>
+                        <div class="quality-hint">無任何關係連結的實體${quality.total_nodes ? ` (${(orphans.count / quality.total_nodes * 100).toFixed(1)}%)` : ''}</div>
                         ${orphans.items.length ? `<div class="quality-detail hidden">
                             ${orphans.items.slice(0, 10).map(n => `<div class="quality-item">${this._esc(n.name || n.uuid)}</div>`).join('')}
                             ${orphans.count > 10 ? `<div class="quality-item-more">還有 ${orphans.count - 10} 個...</div>` : ''}
@@ -517,7 +535,7 @@ const Components = {
                     <div class="quality-card quality-${severity(empty.count)}" onclick="this.querySelector('.quality-detail').classList.toggle('hidden')">
                         <div class="quality-num">${empty.count}</div>
                         <div class="quality-label">空摘要</div>
-                        <div class="quality-hint">缺少摘要描述的實體</div>
+                        <div class="quality-hint">缺少摘要描述的實體${quality.total_nodes ? ` (${(empty.count / quality.total_nodes * 100).toFixed(1)}%)` : ''}</div>
                         ${empty.items.length ? `<div class="quality-detail hidden">
                             ${empty.items.slice(0, 10).map(n => `<div class="quality-item">${this._esc(n.name || n.uuid)}</div>`).join('')}
                             ${empty.count > 10 ? `<div class="quality-item-more">還有 ${empty.count - 10} 個...</div>` : ''}
@@ -526,7 +544,7 @@ const Components = {
                     <div class="quality-card quality-${severity(dups.count)}" onclick="this.querySelector('.quality-detail').classList.toggle('hidden')">
                         <div class="quality-num">${dups.count}</div>
                         <div class="quality-label">重複名稱</div>
-                        <div class="quality-hint">名稱相同的實體組</div>
+                        <div class="quality-hint">名稱相同的實體組${quality.total_nodes ? ` (${(dups.count / quality.total_nodes * 100).toFixed(1)}%)` : ''}</div>
                         ${dups.items.length ? `<div class="quality-detail hidden">
                             ${dups.items.map(d => `<div class="quality-item">${this._esc(d.name)} (${d.count} 個)</div>`).join('')}
                         </div>` : ''}
@@ -568,9 +586,10 @@ const Components = {
                 : `<div class="timeline-chart">
                     ${timeline.map(d => {
                         const total = d.nodes + d.facts + d.episodes;
-                        const pctNodes = (d.nodes / maxVal * 100).toFixed(1);
-                        const pctFacts = (d.facts / maxVal * 100).toFixed(1);
-                        const pctEps = (d.episodes / maxVal * 100).toFixed(1);
+                        const sqrtScale = (val) => (Math.sqrt(val) / Math.sqrt(maxVal) * 100).toFixed(1);
+                        const pctNodes = sqrtScale(d.nodes);
+                        const pctFacts = sqrtScale(d.facts);
+                        const pctEps = sqrtScale(d.episodes);
                         return `
                             <div class="timeline-row">
                                 <span class="timeline-date">${d.date.slice(5)}</span>
@@ -614,7 +633,7 @@ const Components = {
             <div id="graph-container" class="graph-container">
                 ${centerUuid
                     ? '<div class="loading-spinner">載入圖譜...</div>'
-                    : '<div class="empty-state"><div class="empty-state-icon">&#9670;</div><div class="empty-state-text">輸入節點名稱開始探索知識圖譜</div></div>'
+                    : '<div class="empty-state"><div class="empty-state-icon">&#9670;</div><div class="empty-state-text">正在載入最具影響力的節點...</div></div>'
                 }
             </div>
         `;
