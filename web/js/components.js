@@ -4,11 +4,39 @@
 const Components = {
 
     // ============================================================
+    // 頁面說明常數
+    // ============================================================
+
+    PAGE_DESCRIPTIONS: {
+        dashboard: '儀表板顯示知識圖譜的總體統計和最近活動，快速掌握記憶庫的現況。',
+        nodes: '實體節點是知識圖譜中的核心概念，如人物、專案、技術等。支援關鍵字篩選和向量語意搜尋。',
+        facts: '事實關係描述實體之間的連結，如「使用」「負責」「依賴」。這是 AI 理解上下文的關鍵。',
+        episodes: '記憶片段是原始的輸入資料，AI 從中提取實體和事實。可以全文搜尋。',
+        overview: '知識總覽提供各群組的健康度指標、品質分析和影響力排行，幫助你了解知識庫的完整度。',
+        timeline: '時間線顯示知識圖譜隨時間的成長趨勢，了解 AI 何時學到了什麼。',
+        graph: '知識圖譜視覺化以互動式力導向圖呈現實體和關係，直觀探索知識結構。',
+        ask: '知識問答讓你測試 AI 對特定問題能取得哪些上下文，驗證知識庫的覆蓋度。',
+    },
+
+    renderPageDescription(page) {
+        const desc = this.PAGE_DESCRIPTIONS[page];
+        if (!desc) return '';
+        if (localStorage.getItem(`graphiti-desc-${page}`) === '1') return '';
+        return `
+            <div class="page-description" id="page-desc-${page}">
+                <span class="page-description-text">${desc}</span>
+                <button class="page-description-close" onclick="App.dismissDescription('${page}')" title="關閉說明">&#10005;</button>
+            </div>
+        `;
+    },
+
+    // ============================================================
     // 儀表板
     // ============================================================
 
     renderDashboard(stats, recentNodes, recentFacts, recentEpisodes) {
         return `
+            ${this.renderPageDescription('dashboard')}
             <div class="stats-grid">
                 <div class="stat-card nodes">
                     <div class="stat-number">${stats.nodes ?? 0}</div>
@@ -66,6 +94,7 @@ const Components = {
 
     renderNodesPage(data, searchValue, searchMode, searchMeta) {
         return `
+            ${this.renderPageDescription('nodes')}
             <div class="page-header">
                 <h1 class="page-title">實體節點</h1>
                 <div class="search-box">
@@ -138,6 +167,7 @@ const Components = {
                         ${node.summary ? `<div class="detail-raw">${this._esc(node.summary)}</div>` : ''}
                         <div class="relations-section">
                             <button class="btn btn-sm btn-secondary" onclick="App.loadNodeRelations('${safeId}')">查看關係</button>
+                            <button class="btn btn-sm btn-secondary" onclick="App.viewInGraph('${safeId}')" style="margin-left:4px">在圖譜中查看</button>
                             <div id="relations-${safeId}" class="relations-container"></div>
                         </div>
                     </div>
@@ -164,6 +194,7 @@ const Components = {
 
     renderFactsPage(data, searchValue, searchMode, searchMeta) {
         return `
+            ${this.renderPageDescription('facts')}
             <div class="page-header">
                 <h1 class="page-title">事實關係</h1>
                 <div class="search-box">
@@ -237,6 +268,7 @@ const Components = {
 
     renderEpisodesPage(data, searchValue, searchMode, searchMeta) {
         return `
+            ${this.renderPageDescription('episodes')}
             <div class="page-header">
                 <h1 class="page-title">記憶片段</h1>
                 <div class="search-box">
@@ -377,6 +409,403 @@ const Components = {
                 <span class="search-separator">&mdash;</span>
                 ${isVector ? '找到' : '共'} <span class="search-count">${total ?? 0}</span> 筆${isVector ? '結果' : ''}
                 ${duration}
+            </div>
+        `;
+    },
+
+    // ============================================================
+    // 知識總覽頁面
+    // ============================================================
+
+    renderOverviewPage(groupsData, quality, topNodes) {
+        const groups = groupsData.groups || [];
+        return `
+            ${this.renderPageDescription('overview')}
+            <div class="page-header">
+                <h1 class="page-title">知識總覽</h1>
+            </div>
+
+            ${this.renderQualityMetrics(quality)}
+
+            <div class="dashboard-section">
+                <div class="section-title">影響力排行 TOP 10</div>
+                ${topNodes.nodes && topNodes.nodes.length
+                    ? `<div class="top-nodes-list">
+                        ${topNodes.nodes.map((n, i) => `
+                            <div class="top-node-item" onclick="App.viewInGraph('${this._safeUuid(n.uuid)}')">
+                                <span class="top-node-rank">#${i + 1}</span>
+                                <span class="top-node-name">${this._esc(n.name)}</span>
+                                <span class="top-node-degree" title="關係數量">${n.degree} 條關係</span>
+                                <span class="card-tag group">${this._esc(n.group_id)}</span>
+                            </div>
+                        `).join('')}
+                       </div>`
+                    : this._empty('尚無實體節點')
+                }
+            </div>
+
+            <div class="dashboard-section">
+                <div class="section-title">群組健康度（${groups.length} 個群組）</div>
+                ${groups.length
+                    ? `<div class="groups-grid">
+                        ${groups.map(g => this.renderGroupCard(g)).join('')}
+                       </div>`
+                    : this._empty('尚無群組資料')
+                }
+            </div>
+        `;
+    },
+
+    renderGroupCard(group) {
+        const total = group.nodes + group.facts + group.episodes;
+        return `
+            <div class="group-card">
+                <div class="group-card-header">
+                    <span class="group-card-name">${this._esc(group.group_id)}</span>
+                    <span class="group-card-total">${total} 筆</span>
+                </div>
+                <div class="group-card-stats">
+                    <div class="group-stat">
+                        <span class="group-stat-num entity-color">${group.nodes}</span>
+                        <span class="group-stat-label">節點</span>
+                    </div>
+                    <div class="group-stat">
+                        <span class="group-stat-num fact-color">${group.facts}</span>
+                        <span class="group-stat-label">事實</span>
+                    </div>
+                    <div class="group-stat">
+                        <span class="group-stat-num episode-color">${group.episodes}</span>
+                        <span class="group-stat-label">片段</span>
+                    </div>
+                </div>
+                ${group.top_entities && group.top_entities.length ? `
+                    <div class="group-card-top">
+                        <span class="group-card-top-label">核心實體</span>
+                        ${group.top_entities.map(e => `
+                            <span class="group-top-entity" onclick="App.viewInGraph('${this._safeUuid(e.uuid)}')" title="度數: ${e.degree}">
+                                ${this._esc(e.name)}
+                            </span>
+                        `).join('')}
+                    </div>
+                ` : ''}
+                ${group.last_updated ? `<div class="group-card-updated">最後更新: ${this._time(group.last_updated)}</div>` : ''}
+            </div>
+        `;
+    },
+
+    renderQualityMetrics(quality) {
+        if (!quality) return '';
+        const orphans = quality.orphan_nodes || { count: 0, items: [] };
+        const empty = quality.empty_summaries || { count: 0, items: [] };
+        const dups = quality.duplicate_names || { count: 0, items: [] };
+
+        const severity = (count) => count === 0 ? 'good' : count <= 5 ? 'warn' : 'bad';
+
+        return `
+            <div class="quality-section">
+                <div class="section-title">知識品質指標</div>
+                <div class="quality-grid">
+                    <div class="quality-card quality-${severity(orphans.count)}" onclick="this.querySelector('.quality-detail').classList.toggle('hidden')">
+                        <div class="quality-num">${orphans.count}</div>
+                        <div class="quality-label">孤立節點</div>
+                        <div class="quality-hint">無任何關係連結的實體</div>
+                        ${orphans.items.length ? `<div class="quality-detail hidden">
+                            ${orphans.items.slice(0, 10).map(n => `<div class="quality-item">${this._esc(n.name || n.uuid)}</div>`).join('')}
+                            ${orphans.count > 10 ? `<div class="quality-item-more">還有 ${orphans.count - 10} 個...</div>` : ''}
+                        </div>` : ''}
+                    </div>
+                    <div class="quality-card quality-${severity(empty.count)}" onclick="this.querySelector('.quality-detail').classList.toggle('hidden')">
+                        <div class="quality-num">${empty.count}</div>
+                        <div class="quality-label">空摘要</div>
+                        <div class="quality-hint">缺少摘要描述的實體</div>
+                        ${empty.items.length ? `<div class="quality-detail hidden">
+                            ${empty.items.slice(0, 10).map(n => `<div class="quality-item">${this._esc(n.name || n.uuid)}</div>`).join('')}
+                            ${empty.count > 10 ? `<div class="quality-item-more">還有 ${empty.count - 10} 個...</div>` : ''}
+                        </div>` : ''}
+                    </div>
+                    <div class="quality-card quality-${severity(dups.count)}" onclick="this.querySelector('.quality-detail').classList.toggle('hidden')">
+                        <div class="quality-num">${dups.count}</div>
+                        <div class="quality-label">重複名稱</div>
+                        <div class="quality-hint">名稱相同的實體組</div>
+                        ${dups.items.length ? `<div class="quality-detail hidden">
+                            ${dups.items.map(d => `<div class="quality-item">${this._esc(d.name)} (${d.count} 個)</div>`).join('')}
+                        </div>` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    // ============================================================
+    // 時間線頁面
+    // ============================================================
+
+    renderTimelinePage(data, currentDays) {
+        const timeline = data.timeline || [];
+        const dayOptions = [7, 14, 30, 90];
+
+        // 計算最大值以決定柱狀圖比例
+        let maxVal = 1;
+        timeline.forEach(d => {
+            const total = d.nodes + d.facts + d.episodes;
+            if (total > maxVal) maxVal = total;
+        });
+
+        return `
+            ${this.renderPageDescription('timeline')}
+            <div class="page-header">
+                <h1 class="page-title">時間線</h1>
+                <div class="timeline-days">
+                    ${dayOptions.map(d => `
+                        <button class="btn btn-sm ${d === currentDays ? 'btn-primary' : 'btn-secondary'}"
+                                onclick="App.setTimelineDays(${d})">${d} 天</button>
+                    `).join('')}
+                </div>
+            </div>
+
+            ${timeline.length === 0
+                ? this._empty('選定時間範圍內無資料')
+                : `<div class="timeline-chart">
+                    ${timeline.map(d => {
+                        const total = d.nodes + d.facts + d.episodes;
+                        const pctNodes = (d.nodes / maxVal * 100).toFixed(1);
+                        const pctFacts = (d.facts / maxVal * 100).toFixed(1);
+                        const pctEps = (d.episodes / maxVal * 100).toFixed(1);
+                        return `
+                            <div class="timeline-row">
+                                <span class="timeline-date">${d.date.slice(5)}</span>
+                                <div class="timeline-bars">
+                                    ${d.nodes ? `<div class="timeline-bar bar-entity" style="width:${pctNodes}%" title="節點: ${d.nodes}"></div>` : ''}
+                                    ${d.facts ? `<div class="timeline-bar bar-fact" style="width:${pctFacts}%" title="事實: ${d.facts}"></div>` : ''}
+                                    ${d.episodes ? `<div class="timeline-bar bar-episode" style="width:${pctEps}%" title="片段: ${d.episodes}"></div>` : ''}
+                                </div>
+                                <span class="timeline-total">${total}</span>
+                            </div>
+                        `;
+                    }).join('')}
+                    <div class="timeline-legend">
+                        <span class="legend-item"><span class="legend-dot bar-entity"></span>節點</span>
+                        <span class="legend-item"><span class="legend-dot bar-fact"></span>事實</span>
+                        <span class="legend-item"><span class="legend-dot bar-episode"></span>片段</span>
+                    </div>
+                  </div>`
+            }
+        `;
+    },
+
+    // ============================================================
+    // 圖譜頁面
+    // ============================================================
+
+    renderGraphPage(data, centerUuid) {
+        return `
+            ${this.renderPageDescription('graph')}
+            <div class="page-header">
+                <h1 class="page-title">知識圖譜</h1>
+                <div class="search-box">
+                    <input type="text" class="search-input" id="graph-search-input"
+                           placeholder="搜尋節點名稱..."
+                           value="${this._esc(centerUuid ? '' : '')}"
+                           onkeydown="if(event.key==='Enter')App.searchGraph()"
+                           aria-label="搜尋節點">
+                    <button class="btn btn-primary" onclick="App.searchGraph()">探索</button>
+                </div>
+            </div>
+            <div id="graph-container" class="graph-container">
+                ${centerUuid
+                    ? '<div class="loading-spinner">載入圖譜...</div>'
+                    : '<div class="empty-state"><div class="empty-state-icon">&#9670;</div><div class="empty-state-text">輸入節點名稱開始探索知識圖譜</div></div>'
+                }
+            </div>
+        `;
+    },
+
+    renderD3Graph(container, data, centerUuid) {
+        if (!data.nodes || !data.nodes.length) {
+            container.innerHTML = '<div class="empty-state"><div class="empty-state-text">此節點無相關連結</div></div>';
+            return;
+        }
+
+        container.innerHTML = '';
+        const width = container.clientWidth || 800;
+        const height = 500;
+
+        const svg = d3.select(container)
+            .append('svg')
+            .attr('width', width)
+            .attr('height', height)
+            .attr('viewBox', [0, 0, width, height]);
+
+        const g = svg.append('g');
+
+        // Zoom
+        svg.call(d3.zoom()
+            .scaleExtent([0.2, 5])
+            .on('zoom', (event) => g.attr('transform', event.transform))
+        );
+
+        const nodes = data.nodes.map(n => ({ ...n, id: n.uuid }));
+        const edges = data.edges.map(e => ({ ...e, source: e.source, target: e.target }));
+
+        const simulation = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink(edges).id(d => d.id).distance(100))
+            .force('charge', d3.forceManyBody().strength(-300))
+            .force('center', d3.forceCenter(width / 2, height / 2))
+            .force('collision', d3.forceCollide().radius(30));
+
+        // Edges
+        const link = g.append('g')
+            .selectAll('line')
+            .data(edges)
+            .join('line')
+            .attr('class', 'graph-link')
+            .attr('stroke', 'var(--border-color)')
+            .attr('stroke-width', 1.5)
+            .attr('stroke-opacity', 0.6);
+
+        // Edge labels
+        const linkLabel = g.append('g')
+            .selectAll('text')
+            .data(edges)
+            .join('text')
+            .attr('class', 'graph-link-label')
+            .attr('text-anchor', 'middle')
+            .attr('font-size', '9px')
+            .attr('fill', 'var(--text-muted)')
+            .text(d => d.name ? d.name.slice(0, 15) : '');
+
+        // Nodes
+        const node = g.append('g')
+            .selectAll('g')
+            .data(nodes)
+            .join('g')
+            .attr('class', 'graph-node')
+            .call(d3.drag()
+                .on('start', (event, d) => {
+                    if (!event.active) simulation.alphaTarget(0.3).restart();
+                    d.fx = d.x; d.fy = d.y;
+                })
+                .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+                .on('end', (event, d) => {
+                    if (!event.active) simulation.alphaTarget(0);
+                    d.fx = null; d.fy = null;
+                })
+            );
+
+        node.append('circle')
+            .attr('r', d => d.uuid === centerUuid ? 14 : 10)
+            .attr('fill', d => d.uuid === centerUuid ? 'var(--accent)' : 'var(--tag-entity)')
+            .attr('stroke', d => d.uuid === centerUuid ? 'var(--accent-hover)' : 'var(--border-color)')
+            .attr('stroke-width', d => d.uuid === centerUuid ? 3 : 1.5)
+            .style('cursor', 'pointer');
+
+        node.append('text')
+            .attr('dy', '0.35em')
+            .attr('x', 16)
+            .attr('font-size', '12px')
+            .attr('fill', 'var(--text-primary)')
+            .text(d => d.name ? d.name.slice(0, 20) : '');
+
+        // Tooltip
+        node.append('title')
+            .text(d => `${d.name}\n${d.group_id}\n${d.uuid}`);
+
+        // Click to expand
+        node.on('click', (event, d) => {
+            if (d.uuid !== centerUuid) {
+                App.expandGraphNode(d.uuid);
+            }
+        });
+
+        simulation.on('tick', () => {
+            link
+                .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+                .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+            linkLabel
+                .attr('x', d => (d.source.x + d.target.x) / 2)
+                .attr('y', d => (d.source.y + d.target.y) / 2);
+            node.attr('transform', d => `translate(${d.x},${d.y})`);
+        });
+    },
+
+    // ============================================================
+    // AI 問答頁面
+    // ============================================================
+
+    renderAskPage(data) {
+        return `
+            ${this.renderPageDescription('ask')}
+            <div class="page-header">
+                <h1 class="page-title">知識問答</h1>
+            </div>
+            <div class="ask-panel">
+                <div class="ask-input-row">
+                    <input type="text" class="search-input ask-input" id="ask-input"
+                           placeholder="問一個問題，看看 AI 能取得哪些上下文..."
+                           onkeydown="if(event.key==='Enter')App.doAsk()"
+                           aria-label="問題輸入">
+                    <button class="btn btn-primary" onclick="App.doAsk()">查詢</button>
+                </div>
+                <div id="ask-result">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">&#9889;</div>
+                        <div class="empty-state-text">輸入問題後，系統將同時搜尋實體和事實，展示 AI 會看到的上下文</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    renderAskResult(data) {
+        if (!data) return '';
+        const hasErrors = (data.errors?.nodes || data.errors?.facts);
+        return `
+            <div class="ask-duration">搜尋耗時 ${data.duration}s
+                <button class="btn btn-sm btn-secondary" onclick="App.copyContext()" style="margin-left:8px">複製上下文</button>
+            </div>
+            ${hasErrors ? `<div class="ask-errors">
+                ${data.errors.nodes ? `<div class="toast error" style="position:static;animation:none">節點搜尋錯誤: ${this._esc(data.errors.nodes)}</div>` : ''}
+                ${data.errors.facts ? `<div class="toast error" style="position:static;animation:none">事實搜尋錯誤: ${this._esc(data.errors.facts)}</div>` : ''}
+            </div>` : ''}
+            <div class="ask-context">
+                <div class="ask-context-label">AI 會看到的上下文</div>
+                <pre class="ask-context-text" id="ask-context-text">${this._esc(data.context)}</pre>
+            </div>
+            <div class="ask-raw-results">
+                ${data.nodes && data.nodes.length ? `
+                    <div class="section-title">相關實體 (${data.nodes.length})</div>
+                    <div class="card-list">
+                        ${data.nodes.map(n => `
+                            <div class="card card-entity" style="padding:12px 16px">
+                                <div class="card-tags">
+                                    <span class="card-tag entity">Entity</span>
+                                    <span class="card-tags-right"><span class="card-tag group">${this._esc(n.group_id)}</span></span>
+                                </div>
+                                <div class="card-title-row" onclick="App.viewInGraph('${this._safeUuid(n.uuid)}')">${this._esc(n.name)}</div>
+                                ${n.summary ? `<div class="card-body">${this._esc(n.summary)}</div>` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : ''}
+                ${data.facts && data.facts.length ? `
+                    <div class="section-title" style="margin-top:16px">相關事實 (${data.facts.length})</div>
+                    <div class="card-list">
+                        ${data.facts.map(f => `
+                            <div class="card card-fact" style="padding:12px 16px">
+                                <div class="card-tags">
+                                    <span class="card-tag fact">Fact</span>
+                                    ${f.name ? `<span class="card-tag fact-type">${this._esc(f.name)}</span>` : ''}
+                                </div>
+                                ${f.fact ? `<div class="card-body-primary">${this._esc(f.fact)}</div>` : ''}
+                                <div class="fact-entities">
+                                    <span class="fact-source">${this._esc(f.source_name || '?')}</span>
+                                    <span class="fact-arrow">&#8594;</span>
+                                    <span class="fact-target">${this._esc(f.target_name || '?')}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : ''}
             </div>
         `;
     },

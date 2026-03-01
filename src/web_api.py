@@ -665,6 +665,413 @@ def create_web_routes(
             logger.error(f"API node relations error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    # ------------------------------------------------------------------
+    # 新增 API 端點：Phase 2-4 功能
+    # ------------------------------------------------------------------
+
+    async def api_groups_stats(request: Request) -> JSONResponse:
+        """取得各 Group 的統計和健康度資訊。"""
+        try:
+            graphiti = await get_graphiti_fn()
+            async with graphiti.driver.session() as session:
+                # 節點數 by group
+                result = await session.run("""
+                    MATCH (n:Entity)
+                    WHERE n.group_id IS NOT NULL
+                    RETURN n.group_id AS group_id, count(n) AS count
+                    ORDER BY count DESC
+                """)
+                node_counts = {r["group_id"]: r["count"] async for r in result}
+
+                # 事實數 by group
+                result = await session.run("""
+                    MATCH ()-[r:RELATES_TO]->()
+                    WHERE r.group_id IS NOT NULL
+                    RETURN r.group_id AS group_id, count(r) AS count
+                    ORDER BY count DESC
+                """)
+                fact_counts = {r["group_id"]: r["count"] async for r in result}
+
+                # 片段數 by group
+                result = await session.run("""
+                    MATCH (e:Episodic)
+                    WHERE e.group_id IS NOT NULL
+                    RETURN e.group_id AS group_id, count(e) AS count
+                    ORDER BY count DESC
+                """)
+                episode_counts = {r["group_id"]: r["count"] async for r in result}
+
+                # 每 group top 5 實體（按 degree）
+                result = await session.run("""
+                    MATCH (n:Entity)
+                    WHERE n.group_id IS NOT NULL
+                    OPTIONAL MATCH (n)-[r:RELATES_TO]-()
+                    WITH n.group_id AS group_id, n.name AS name, n.uuid AS uuid,
+                         count(DISTINCT r) AS degree
+                    ORDER BY degree DESC
+                    WITH group_id, collect({name: name, uuid: uuid, degree: degree})[0..5] AS top5
+                    RETURN group_id, top5
+                """)
+                top_entities = {r["group_id"]: r["top5"] async for r in result}
+
+                # 最後更新時間 by group
+                result = await session.run("""
+                    MATCH (n:Entity)
+                    WHERE n.group_id IS NOT NULL AND n.created_at IS NOT NULL
+                    RETURN n.group_id AS group_id, max(n.created_at) AS last_updated
+                """)
+                last_updated = {
+                    r["group_id"]: str(r["last_updated"]) if r["last_updated"] else ""
+                    async for r in result
+                }
+
+            # 合併所有 group_id
+            all_groups = sorted(set(
+                list(node_counts) + list(fact_counts) + list(episode_counts)
+            ))
+
+            groups = []
+            for gid in all_groups:
+                groups.append({
+                    "group_id": gid,
+                    "nodes": node_counts.get(gid, 0),
+                    "facts": fact_counts.get(gid, 0),
+                    "episodes": episode_counts.get(gid, 0),
+                    "top_entities": top_entities.get(gid, []),
+                    "last_updated": last_updated.get(gid, ""),
+                })
+
+            return JSONResponse({"groups": groups})
+        except Exception as e:
+            logger.error(f"API groups stats error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_timeline(request: Request) -> JSONResponse:
+        """取得時間線資料（按天聚合）。"""
+        try:
+            graphiti = await get_graphiti_fn()
+            group_id = request.query_params.get("group_id", "")
+            days = min(int(request.query_params.get("days", "30")), 365)
+
+            group_filter_n = "AND n.group_id = $group_id" if group_id else ""
+            group_filter_r = "AND r.group_id = $group_id" if group_id else ""
+            group_filter_e = "AND e.group_id = $group_id" if group_id else ""
+            params: dict[str, Any] = {"days": days}
+            if group_id:
+                params["group_id"] = group_id
+
+            async with graphiti.driver.session() as session:
+                # 節點 by day
+                result = await session.run(f"""
+                    MATCH (n:Entity)
+                    WHERE n.created_at IS NOT NULL
+                      AND date(n.created_at) >= date() - duration({{days: $days}})
+                      {group_filter_n}
+                    RETURN toString(date(n.created_at)) AS day, count(n) AS count
+                    ORDER BY day
+                """, params)
+                node_days = {r["day"]: r["count"] async for r in result}
+
+                # 事實 by day
+                result = await session.run(f"""
+                    MATCH ()-[r:RELATES_TO]->()
+                    WHERE r.created_at IS NOT NULL
+                      AND date(r.created_at) >= date() - duration({{days: $days}})
+                      {group_filter_r}
+                    RETURN toString(date(r.created_at)) AS day, count(r) AS count
+                    ORDER BY day
+                """, params)
+                fact_days = {r["day"]: r["count"] async for r in result}
+
+                # 片段 by day
+                result = await session.run(f"""
+                    MATCH (e:Episodic)
+                    WHERE e.created_at IS NOT NULL
+                      AND date(e.created_at) >= date() - duration({{days: $days}})
+                      {group_filter_e}
+                    RETURN toString(date(e.created_at)) AS day, count(e) AS count
+                    ORDER BY day
+                """, params)
+                episode_days = {r["day"]: r["count"] async for r in result}
+
+            # 合併所有日期
+            all_dates = sorted(set(
+                list(node_days) + list(fact_days) + list(episode_days)
+            ))
+            timeline = [
+                {
+                    "date": d,
+                    "nodes": node_days.get(d, 0),
+                    "facts": fact_days.get(d, 0),
+                    "episodes": episode_days.get(d, 0),
+                }
+                for d in all_dates
+            ]
+
+            return JSONResponse({"timeline": timeline, "days": days})
+        except Exception as e:
+            logger.error(f"API timeline error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_analytics_top_nodes(request: Request) -> JSONResponse:
+        """取得影響力最大的節點（按 degree 排序）。"""
+        try:
+            graphiti = await get_graphiti_fn()
+            group_id = request.query_params.get("group_id", "")
+            limit = min(int(request.query_params.get("limit", "20")), 100)
+
+            group_filter = "WHERE n.group_id = $group_id" if group_id else ""
+            params: dict[str, Any] = {"limit": limit}
+            if group_id:
+                params["group_id"] = group_id
+
+            async with graphiti.driver.session() as session:
+                result = await session.run(f"""
+                    MATCH (n:Entity)
+                    {group_filter}
+                    OPTIONAL MATCH (n)-[r:RELATES_TO]-()
+                    WITH n, count(DISTINCT r) AS degree
+                    RETURN n.uuid AS uuid, n.name AS name, n.summary AS summary,
+                           n.group_id AS group_id, n.created_at AS created_at,
+                           degree
+                    ORDER BY degree DESC
+                    LIMIT $limit
+                """, params)
+                nodes = []
+                async for r in result:
+                    nodes.append({
+                        "uuid": r["uuid"],
+                        "name": r["name"] or "",
+                        "summary": (r["summary"] or "")[:200],
+                        "group_id": r["group_id"] or "",
+                        "created_at": str(r["created_at"]) if r["created_at"] else "",
+                        "degree": r["degree"],
+                    })
+
+            return JSONResponse({"nodes": nodes, "total": len(nodes)})
+        except Exception as e:
+            logger.error(f"API analytics top nodes error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_analytics_quality(request: Request) -> JSONResponse:
+        """取得知識品質指標。"""
+        try:
+            graphiti = await get_graphiti_fn()
+            group_id = request.query_params.get("group_id", "")
+
+            group_filter = "WHERE n.group_id = $group_id" if group_id else ""
+            params: dict[str, Any] = {}
+            if group_id:
+                params["group_id"] = group_id
+
+            async with graphiti.driver.session() as session:
+                # 孤立節點（無任何 RELATES_TO 連結）
+                result = await session.run(f"""
+                    MATCH (n:Entity)
+                    {group_filter}
+                    WHERE NOT (n)-[:RELATES_TO]-()
+                    RETURN n.uuid AS uuid, n.name AS name
+                    LIMIT 50
+                """, params)
+                orphans = [{"uuid": r["uuid"], "name": r["name"] or ""} async for r in result]
+
+                # 空 summary 節點
+                empty_filter = ("WHERE n.group_id = $group_id AND" if group_id
+                                else "WHERE")
+                result = await session.run(f"""
+                    MATCH (n:Entity)
+                    {empty_filter} (n.summary IS NULL OR n.summary = '')
+                    RETURN n.uuid AS uuid, n.name AS name
+                    LIMIT 50
+                """, params)
+                empty_summaries = [{"uuid": r["uuid"], "name": r["name"] or ""} async for r in result]
+
+                # 重複名稱
+                result = await session.run(f"""
+                    MATCH (n:Entity)
+                    {group_filter}
+                    WITH toLower(n.name) AS lower_name, collect(n.uuid) AS uuids, count(n) AS cnt
+                    WHERE cnt > 1
+                    RETURN lower_name AS name, cnt AS count, uuids[0..5] AS sample_uuids
+                    ORDER BY cnt DESC
+                    LIMIT 20
+                """, params)
+                duplicates = [
+                    {"name": r["name"], "count": r["count"], "sample_uuids": r["sample_uuids"]}
+                    async for r in result
+                ]
+
+            return JSONResponse({
+                "orphan_nodes": {"count": len(orphans), "items": orphans},
+                "empty_summaries": {"count": len(empty_summaries), "items": empty_summaries},
+                "duplicate_names": {"count": len(duplicates), "items": duplicates},
+            })
+        except Exception as e:
+            logger.error(f"API analytics quality error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_graph_subgraph(request: Request) -> JSONResponse:
+        """取得以某節點為中心的子圖（用於 D3 視覺化）。"""
+        try:
+            graphiti = await get_graphiti_fn()
+            uuid = request.query_params.get("uuid", "").strip()
+            if not uuid:
+                return JSONResponse({"error": "缺少參數 uuid"}, status_code=400)
+
+            depth = min(int(request.query_params.get("depth", "2")), 3)
+            limit = min(int(request.query_params.get("limit", "50")), 100)
+
+            async with graphiti.driver.session() as session:
+                # 取得子圖節點
+                result = await session.run("""
+                    MATCH p=(start:Entity {uuid: $uuid})-[:RELATES_TO*0..""" + str(depth) + """]->(n:Entity)
+                    WITH DISTINCT n
+                    LIMIT $limit
+                    RETURN n.uuid AS uuid, n.name AS name, n.group_id AS group_id
+                    UNION
+                    MATCH p=(n:Entity)-[:RELATES_TO*0..""" + str(depth) + """]->(start:Entity {uuid: $uuid})
+                    WITH DISTINCT n
+                    LIMIT $limit
+                    RETURN n.uuid AS uuid, n.name AS name, n.group_id AS group_id
+                """, {"uuid": uuid, "limit": limit})
+
+                nodes_map = {}
+                async for r in result:
+                    if r["uuid"] not in nodes_map:
+                        nodes_map[r["uuid"]] = {
+                            "uuid": r["uuid"],
+                            "name": r["name"] or "",
+                            "group_id": r["group_id"] or "",
+                        }
+
+                if not nodes_map:
+                    return JSONResponse({"nodes": [], "edges": [], "center": uuid})
+
+                node_uuids = list(nodes_map.keys())
+
+                # 取得這些節點之間的邊
+                result = await session.run("""
+                    MATCH (s:Entity)-[r:RELATES_TO]->(t:Entity)
+                    WHERE s.uuid IN $uuids AND t.uuid IN $uuids
+                    RETURN r.uuid AS uuid, r.name AS name, r.fact AS fact,
+                           s.uuid AS source, t.uuid AS target
+                """, {"uuids": node_uuids})
+
+                edges = []
+                async for r in result:
+                    edges.append({
+                        "uuid": r["uuid"],
+                        "name": r["name"] or "",
+                        "fact": (r["fact"] or "")[:200],
+                        "source": r["source"],
+                        "target": r["target"],
+                    })
+
+            return JSONResponse({
+                "nodes": list(nodes_map.values()),
+                "edges": edges,
+                "center": uuid,
+            })
+        except Exception as e:
+            logger.error(f"API graph subgraph error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_ask(request: Request) -> JSONResponse:
+        """AI 問答測試：並行搜尋 nodes + facts，組合為上下文。"""
+        try:
+            client_ip = request.client.host if request.client else "unknown"
+            if not _search_limiter.is_allowed(client_ip):
+                return JSONResponse(
+                    {"error": "搜尋請求過於頻繁，請稍後再試"}, status_code=429
+                )
+
+            q = request.query_params.get("q", "").strip()
+            if not q:
+                return JSONResponse({"error": "缺少搜尋參數 q"}, status_code=400)
+
+            group_ids_str = request.query_params.get("group_ids", "")
+            group_ids = [g.strip() for g in group_ids_str.split(",") if g.strip()] if group_ids_str else []
+
+            from graphiti_core.search.search_config_recipes import NODE_HYBRID_SEARCH_RRF
+            from graphiti_core.search.search_filters import SearchFilters
+
+            graphiti = await get_graphiti_fn()
+            t0 = time.monotonic()
+
+            # 並行搜尋 nodes 和 facts
+            node_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
+            node_config.limit = 10
+
+            async def search_nodes():
+                return await asyncio.wait_for(
+                    graphiti.search_(
+                        query=q, config=node_config,
+                        group_ids=group_ids, search_filter=SearchFilters(),
+                    ),
+                    timeout=SEARCH_TIMEOUT,
+                )
+
+            async def search_facts():
+                return await asyncio.wait_for(
+                    graphiti.search(query=q, group_ids=group_ids, num_results=10),
+                    timeout=SEARCH_TIMEOUT,
+                )
+
+            node_results, fact_results = await asyncio.gather(
+                search_nodes(), search_facts(), return_exceptions=True,
+            )
+
+            duration = round(time.monotonic() - t0, 2)
+
+            nodes = []
+            if not isinstance(node_results, Exception):
+                for n in (node_results.nodes or []):
+                    nodes.append({
+                        "uuid": str(getattr(n, "uuid", "")),
+                        "name": getattr(n, "name", ""),
+                        "summary": (getattr(n, "summary", "") or "")[:300],
+                        "group_id": getattr(n, "group_id", ""),
+                    })
+
+            facts = []
+            if not isinstance(fact_results, Exception):
+                for e in fact_results:
+                    facts.append({
+                        "uuid": str(getattr(e, "uuid", "")),
+                        "name": getattr(e, "name", ""),
+                        "fact": (getattr(e, "fact", "") or "")[:300],
+                        "source_name": getattr(e, "source_node_name", "") or "",
+                        "target_name": getattr(e, "target_node_name", "") or "",
+                    })
+
+            # 組合 AI 上下文
+            context_parts = []
+            if nodes:
+                context_parts.append("## 相關實體\n")
+                for n in nodes:
+                    context_parts.append(f"- **{n['name']}**: {n['summary']}")
+            if facts:
+                context_parts.append("\n## 相關事實\n")
+                for f in facts:
+                    context_parts.append(f"- {f['source_name']} → {f['target_name']}: {f['fact']}")
+
+            context = "\n".join(context_parts) if context_parts else "（未找到相關知識）"
+
+            return JSONResponse({
+                "query": q,
+                "context": context,
+                "nodes": nodes,
+                "facts": facts,
+                "duration": duration,
+                "errors": {
+                    "nodes": str(node_results) if isinstance(node_results, Exception) else None,
+                    "facts": str(fact_results) if isinstance(fact_results, Exception) else None,
+                },
+            })
+        except Exception as e:
+            logger.error(f"API ask error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     async def api_add_memory(request: Request) -> JSONResponse:
         """透過 Web UI 新增記憶。"""
         try:
@@ -721,6 +1128,7 @@ def create_web_routes(
         # API 端點
         Route("/api/stats", api_stats, methods=["GET"]),
         Route("/api/groups", api_groups, methods=["GET"]),
+        Route("/api/groups/stats", api_groups_stats, methods=["GET"]),
         Route("/api/nodes", api_nodes, methods=["GET"]),
         Route("/api/facts", api_facts, methods=["GET"]),
         Route("/api/episodes", api_episodes, methods=["GET"]),
@@ -733,6 +1141,11 @@ def create_web_routes(
         Route("/api/search/episodes", api_search_episodes, methods=["GET"]),
         Route("/api/nodes/{uuid}/relations", api_node_relations, methods=["GET"]),
         Route("/api/memory/add", api_add_memory, methods=["POST"]),
+        Route("/api/timeline", api_timeline, methods=["GET"]),
+        Route("/api/analytics/top-nodes", api_analytics_top_nodes, methods=["GET"]),
+        Route("/api/analytics/quality", api_analytics_quality, methods=["GET"]),
+        Route("/api/graph/subgraph", api_graph_subgraph, methods=["GET"]),
+        Route("/api/ask", api_ask, methods=["GET"]),
     ]
 
     # 靜態文件（CSS/JS）

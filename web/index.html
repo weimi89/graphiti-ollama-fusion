@@ -18,6 +18,10 @@
             <a href="#/nodes" class="nav-link" data-page="nodes">實體節點</a>
             <a href="#/facts" class="nav-link" data-page="facts">事實關係</a>
             <a href="#/episodes" class="nav-link" data-page="episodes">記憶片段</a>
+            <a href="#/overview" class="nav-link" data-page="overview">知識總覽</a>
+            <a href="#/timeline" class="nav-link" data-page="timeline">時間線</a>
+            <a href="#/graph" class="nav-link" data-page="graph">圖譜</a>
+            <a href="#/ask" class="nav-link" data-page="ask">知識問答</a>
         </div>
         <div class="navbar-actions">
             <label for="group-filter" class="sr-only">篩選群組</label>
@@ -56,6 +60,17 @@
             <h3 id="add-memory-title" class="dialog-title">新增記憶</h3>
             <form id="add-memory-form" class="memory-form">
                 <div class="form-group">
+                    <label for="memory-template">快速範本</label>
+                    <select id="memory-template" onchange="App.applyTemplate()">
+                        <option value="">自訂...</option>
+                        <option value="decision">專案決策</option>
+                        <option value="preference">技術偏好</option>
+                        <option value="person">人員角色</option>
+                        <option value="process">流程步驟</option>
+                        <option value="bug">Bug 記錄</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label for="memory-name">名稱 *</label>
                     <input type="text" id="memory-name" required placeholder="記憶片段名稱">
                 </div>
@@ -88,6 +103,7 @@
     <!-- Toast 通知 -->
     <div id="toast-container" class="toast-container" aria-live="assertive" aria-atomic="true"></div>
 
+    <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="/static/js/api.js"></script>
     <script src="/static/js/components.js"></script>
     <script src="/static/js/app.js"></script>

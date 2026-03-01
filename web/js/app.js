@@ -11,6 +11,9 @@ const App = {
         searchMode: 'filter', // 'filter' | 'vector'
         selectedItems: new Set(),
         batchMode: false,
+        timelineDays: 30,
+        graphCenterUuid: '',
+        selectedGroupIds: [],
     },
 
     _searchTimer: null,
@@ -159,6 +162,18 @@ const App = {
                 case 'episodes':
                     await this._renderEpisodes(app);
                     break;
+                case 'overview':
+                    await this._renderOverview(app);
+                    break;
+                case 'timeline':
+                    await this._renderTimeline(app);
+                    break;
+                case 'graph':
+                    await this._renderGraph(app);
+                    break;
+                case 'ask':
+                    await this._renderAsk(app);
+                    break;
                 default:
                     app.innerHTML = '<div class="empty-state"><div class="empty-state-text">頁面不存在</div></div>';
             }
@@ -255,6 +270,149 @@ const App = {
             if (data.duration != null) searchMeta = { duration: data.duration };
         }
         app.innerHTML = Components.renderEpisodesPage(data, this.state.searchValue, this.state.searchMode, searchMeta);
+    },
+
+    // ============================================================
+    // 新頁面渲染
+    // ============================================================
+
+    async _renderOverview(app) {
+        const [groupsData, quality, topNodes] = await Promise.all([
+            API.groupsStats(),
+            API.quality({ groupId: this.state.groupId }),
+            API.topNodes({ groupId: this.state.groupId, limit: 10 }),
+        ]);
+        app.innerHTML = Components.renderOverviewPage(groupsData, quality, topNodes);
+    },
+
+    async _renderTimeline(app) {
+        const data = await API.timeline({
+            groupId: this.state.groupId,
+            days: this.state.timelineDays,
+        });
+        app.innerHTML = Components.renderTimelinePage(data, this.state.timelineDays);
+    },
+
+    async _renderGraph(app) {
+        app.innerHTML = Components.renderGraphPage(null, this.state.graphCenterUuid);
+        if (this.state.graphCenterUuid) {
+            await this._loadGraph(this.state.graphCenterUuid);
+        }
+    },
+
+    async _loadGraph(uuid) {
+        const container = document.getElementById('graph-container');
+        if (!container) return;
+        container.innerHTML = '<div class="loading-spinner">載入圖譜...</div>';
+        try {
+            const data = await API.subgraph({ uuid, depth: 2, limit: 50 });
+            Components.renderD3Graph(container, data, uuid);
+        } catch (err) {
+            container.innerHTML = `<div class="empty-state"><div class="empty-state-text">載入失敗: ${Components._esc(err.message)}</div></div>`;
+        }
+    },
+
+    async _renderAsk(app) {
+        app.innerHTML = Components.renderAskPage(null);
+    },
+
+    // ============================================================
+    // 新頁面操作
+    // ============================================================
+
+    setTimelineDays(days) {
+        this.state.timelineDays = days;
+        this._renderCurrentPage();
+    },
+
+    async searchGraph() {
+        const input = document.getElementById('graph-search-input');
+        if (!input || !input.value.trim()) return;
+        const q = input.value.trim();
+        // 先搜尋節點找到 UUID
+        try {
+            const data = await API.searchNodes(q, {
+                groupIds: this.state.groupId ? [this.state.groupId] : [],
+                limit: 1,
+            });
+            if (data.nodes && data.nodes.length) {
+                this.state.graphCenterUuid = data.nodes[0].uuid;
+                await this._loadGraph(data.nodes[0].uuid);
+            } else {
+                this._toast('未找到匹配的節點', 'info');
+            }
+        } catch (err) {
+            this._toast(`搜尋失敗: ${err.message}`, 'error');
+        }
+    },
+
+    viewInGraph(uuid) {
+        this.state.graphCenterUuid = uuid;
+        location.hash = '#/graph';
+    },
+
+    async expandGraphNode(uuid) {
+        this.state.graphCenterUuid = uuid;
+        await this._loadGraph(uuid);
+    },
+
+    async doAsk() {
+        const input = document.getElementById('ask-input');
+        if (!input || !input.value.trim()) return;
+        const q = input.value.trim();
+        const resultEl = document.getElementById('ask-result');
+        if (resultEl) resultEl.innerHTML = '<div class="loading-spinner">搜尋中...</div>';
+        try {
+            const data = await API.ask({
+                q,
+                groupIds: this.state.groupId ? [this.state.groupId] : [],
+            });
+            if (resultEl) resultEl.innerHTML = Components.renderAskResult(data);
+        } catch (err) {
+            if (resultEl) resultEl.innerHTML = `<div class="empty-state"><div class="empty-state-text">搜尋失敗: ${Components._esc(err.message)}</div></div>`;
+        }
+    },
+
+    copyContext() {
+        const el = document.getElementById('ask-context-text');
+        if (!el) return;
+        navigator.clipboard.writeText(el.textContent).then(() => {
+            this._toast('已複製上下文', 'info');
+        }).catch(() => {
+            this._toast('複製失敗', 'error');
+        });
+    },
+
+    // ============================================================
+    // 快速範本
+    // ============================================================
+
+    applyTemplate() {
+        const TEMPLATES = {
+            decision: { name: '專案決策：', content: '決策內容：\n原因：\n影響範圍：\n決策日期：' },
+            preference: { name: '技術偏好：', content: '偏好設定：\n原因：\n適用範圍：' },
+            person: { name: '人員角色：', content: '姓名：\n角色：\n負責範圍：\n聯繫方式：' },
+            process: { name: '流程步驟：', content: '步驟 1：\n步驟 2：\n步驟 3：\n注意事項：' },
+            bug: { name: 'Bug：', content: '問題描述：\n重現步驟：\n預期行為：\n實際行為：\n解決方案：' },
+        };
+        const sel = document.getElementById('memory-template');
+        if (!sel) return;
+        const tpl = TEMPLATES[sel.value];
+        if (tpl) {
+            document.getElementById('memory-name').value = tpl.name;
+            document.getElementById('memory-content').value = tpl.content;
+        }
+    },
+
+    // ============================================================
+    // 頁面說明關閉
+    // ============================================================
+
+    dismissDescription(page) {
+        const key = `graphiti-desc-${page}`;
+        localStorage.setItem(key, '1');
+        const el = document.getElementById(`page-desc-${page}`);
+        if (el) el.remove();
     },
 
     // ============================================================

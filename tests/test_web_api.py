@@ -36,7 +36,7 @@ class MockRecord:
 
 
 class MockResult:
-    """模擬 Neo4j async result（支援 async for）。"""
+    """模擬 Neo4j async result（支援 async for 和 single）。"""
     def __init__(self, records: list[dict]):
         self._records = [MockRecord(r) for r in records]
 
@@ -46,6 +46,10 @@ class MockResult:
     async def _iter(self):
         for r in self._records:
             yield r
+
+    async def single(self):
+        """模擬 result.single()，回傳第一筆記錄或 None。"""
+        return self._records[0] if self._records else None
 
 
 class MockSession:

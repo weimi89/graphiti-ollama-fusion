@@ -72,6 +72,48 @@ const API = {
         return this._get(`/api/nodes/${uuid}/relations`);
     },
 
+    /** 取得各 Group 統計 */
+    async groupsStats() {
+        return this._get('/api/groups/stats');
+    },
+
+    /** 取得時間線資料 */
+    async timeline({ groupId = '', days = 30 } = {}) {
+        const params = new URLSearchParams();
+        if (groupId) params.set('group_id', groupId);
+        if (days !== 30) params.set('days', days);
+        return this._get(`/api/timeline?${params}`);
+    },
+
+    /** 取得影響力排行 */
+    async topNodes({ groupId = '', limit = 20 } = {}) {
+        const params = new URLSearchParams();
+        if (groupId) params.set('group_id', groupId);
+        if (limit !== 20) params.set('limit', limit);
+        return this._get(`/api/analytics/top-nodes?${params}`);
+    },
+
+    /** 取得知識品質指標 */
+    async quality({ groupId = '' } = {}) {
+        const params = groupId ? `?group_id=${encodeURIComponent(groupId)}` : '';
+        return this._get(`/api/analytics/quality${params}`);
+    },
+
+    /** 取得子圖資料 */
+    async subgraph({ uuid, depth = 2, limit = 50 } = {}) {
+        const params = new URLSearchParams({ uuid });
+        if (depth !== 2) params.set('depth', depth);
+        if (limit !== 50) params.set('limit', limit);
+        return this._get(`/api/graph/subgraph?${params}`);
+    },
+
+    /** AI 問答測試 */
+    async ask({ q, groupIds = [] } = {}) {
+        const params = new URLSearchParams({ q });
+        if (groupIds.length) params.set('group_ids', groupIds.join(','));
+        return this._get(`/api/ask?${params}`);
+    },
+
     /** 新增記憶 */
     async addMemory({ name, content, groupId, source }) {
         return this._post('/api/memory/add', {
