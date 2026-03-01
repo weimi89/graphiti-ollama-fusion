@@ -29,8 +29,6 @@ import sys
 from typing import Any, Dict, List, Optional
 
 import aiohttp
-
-logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
 
 from graphiti_core import Graphiti
@@ -39,6 +37,8 @@ from graphiti_core.llm_client.client import LLMClient
 from graphiti_core.llm_client.config import LLMConfig, ModelSize
 
 from .ollama_embedder import OllamaEmbedder
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -106,10 +106,12 @@ class OptimizedOllamaClient(LLMClient):
     優化的 Ollama LLM 客戶端。
 
     專門為 Graphiti 框架設計，處理 Pydantic 模型驗證和 JSON 響應解析。
+    支援雙模型分流：複雜任務使用主模型，簡單任務使用小模型以提升效能。
 
     Attributes:
         base_url: Ollama API 端點
-        model: 使用的模型名稱
+        model: 主模型名稱（用於實體提取、邊提取等複雜任務）
+        small_model: 小模型名稱（用於去重判斷、摘要生成等簡單任務，None 時回退為主模型）
         temperature: 生成溫度
     """
 
@@ -118,14 +120,17 @@ class OptimizedOllamaClient(LLMClient):
         初始化客戶端。
 
         Args:
-            config: LLM 配置物件
+            config: LLM 配置物件，包含主模型、小模型、溫度等設定。
+                    small_model 為 None 時，所有任務均使用主模型。
         """
         super().__init__(config)
         self.base_url = config.base_url or "http://localhost:11434"
-        self.model = config.model if config.model else "llama3.2:3b"
+        self.model = config.model or "llama3.2:3b"
         self.small_model = config.small_model
         self.temperature = config.temperature if config.temperature is not None else 0.0
         self._session: aiohttp.ClientSession | None = None
+
+        # 記錄模型配置，方便排查問題
         logger.info(f"    主模型: {self.model}")
         if self.small_model and self.small_model != self.model:
             logger.info(f"    小模型: {self.small_model}")
@@ -266,12 +271,20 @@ class OptimizedOllamaClient(LLMClient):
         """
         發送請求到 Ollama API，含指數退避重試。
 
+        重試策略：
+            - HTTP 503/429 → 指數退避重試
+            - 超時/連線錯誤 → 指數退避重試
+            - 其他 HTTP 錯誤 → 立即返回空字串（不可恢復的錯誤）
+
         Args:
             messages: 訊息列表
             json_mode: 是否要求 JSON 格式回應
             max_retries: 最大重試次數
             timeout: 請求超時秒數
             model: 使用的模型名稱（None 時使用預設主模型）
+
+        Returns:
+            str: LLM 回應的文字內容，失敗時返回空字串
         """
         active_model = model or self.model
         payload = {
@@ -294,46 +307,38 @@ class OptimizedOllamaClient(LLMClient):
                     url, json=payload,
                     timeout=aiohttp.ClientTimeout(total=timeout),
                 ) as response:
-                        if response.status == 200:
-                            result = await response.json()
-                            return result.get("message", {}).get("content", "")
-                        elif response.status in (503, 429):
-                            # 服務暫時不可用或速率限制，重試
-                            error_text = await response.text()
-                            wait = 2 ** attempt
-                            logger.warning(
-                                f"Ollama 暫時不可用 (HTTP {response.status})，"
-                                f"{wait}s 後重試 ({attempt+1}/{max_retries}): {error_text[:100]}"
-                            )
-                            await asyncio.sleep(wait)
-                            continue
-                        else:
-                            error_text = await response.text()
-                            logger.error(f"Ollama 錯誤 (HTTP {response.status}): {error_text[:200]}")
-                            return ""
+                    if response.status == 200:
+                        result = await response.json()
+                        return result.get("message", {}).get("content", "")
 
-            except asyncio.TimeoutError:
-                wait = 2 ** attempt
-                logger.warning(
-                    f"Ollama 請求超時 ({timeout}s)，"
-                    f"{wait}s 後重試 ({attempt+1}/{max_retries})"
-                )
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(wait)
-                else:
-                    logger.error(f"Ollama 請求在 {max_retries} 次重試後仍超時")
+                    if response.status in (503, 429):
+                        # 服務暫時不可用或速率限制，重試
+                        error_text = await response.text()
+                        wait = 2 ** attempt
+                        logger.warning(
+                            f"Ollama 暫時不可用 (HTTP {response.status})，"
+                            f"{wait}s 後重試 ({attempt+1}/{max_retries}): {error_text[:100]}"
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+
+                    # 不可恢復的 HTTP 錯誤，直接返回
+                    error_text = await response.text()
+                    logger.error(f"Ollama 錯誤 (HTTP {response.status}): {error_text[:200]}")
                     return ""
 
-            except aiohttp.ClientError as e:
+            except (asyncio.TimeoutError, aiohttp.ClientError) as e:
                 wait = 2 ** attempt
+                is_timeout = isinstance(e, asyncio.TimeoutError)
+                error_desc = f"請求超時 ({timeout}s)" if is_timeout else f"連線錯誤: {e}"
                 logger.warning(
-                    f"Ollama 連線錯誤: {e}，"
+                    f"Ollama {error_desc}，"
                     f"{wait}s 後重試 ({attempt+1}/{max_retries})"
                 )
                 if attempt < max_retries - 1:
                     await asyncio.sleep(wait)
                 else:
-                    logger.error(f"Ollama 連線在 {max_retries} 次重試後仍失敗: {e}")
+                    logger.error(f"Ollama {error_desc}，{max_retries} 次重試後放棄")
                     return ""
 
         return ""
@@ -342,7 +347,20 @@ class OptimizedOllamaClient(LLMClient):
         self, messages: List[Dict[str, str]], response_model: Any,
         active_model: Optional[str] = None,
     ) -> Optional[Dict]:
-        """生成結構化響應並解析為 Pydantic 模型。"""
+        """
+        生成結構化響應並解析為 Pydantic 模型。
+
+        流程：JSON 模式請求 → JSON 解析 → 欄位映射修復 → Pydantic 驗證。
+        若驗證失敗，會嘗試修復 summary 欄位類型問題後重試，最終回退到預設值。
+
+        Args:
+            messages: 已轉換為 Ollama 格式的訊息列表
+            response_model: Pydantic 模型類別，用於驗證和結構化回應
+            active_model: 使用的模型名稱（None 時使用預設主模型）
+
+        Returns:
+            Optional[Dict]: 驗證後的字典，或驗證失敗時的備用回應
+        """
         # 添加實體提取的系統提示
         if hasattr(response_model, "__annotations__"):
             system_prompt = self._build_entity_extraction_prompt(response_model)

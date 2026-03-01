@@ -315,7 +315,7 @@ class GraphitiConfig:
         從環境變數載入配置。
 
         環境變數對應關係：
-            - OLLAMA_MODEL, OLLAMA_BASE_URL, OLLAMA_TEMPERATURE
+            - OLLAMA_MODEL, OLLAMA_SMALL_MODEL, OLLAMA_BASE_URL, OLLAMA_TEMPERATURE
             - OLLAMA_EMBEDDING_MODEL, OLLAMA_EMBEDDING_BASE_URL, OLLAMA_EMBEDDING_DIMENSIONS
             - NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE
             - SERVER_HOST, SERVER_PORT, SERVER_TRANSPORT
@@ -462,6 +462,7 @@ class GraphitiConfig:
             config_data = {
                 "ollama": {
                     "model": self.ollama.model,
+                    "small_model": self.ollama.small_model,
                     "base_url": self.ollama.base_url,
                     "temperature": self.ollama.temperature,
                     "max_tokens": self.ollama.max_tokens,

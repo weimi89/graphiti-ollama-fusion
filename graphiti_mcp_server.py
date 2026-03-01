@@ -219,6 +219,10 @@ def _create_llm_client() -> Optional[OptimizedOllamaClient]:
     """
     建立 Ollama LLM 客戶端。
 
+    small_model 未設定時自動回退為主模型，確保 LLMConfig 始終有有效值。
+    客戶端內部的 _get_model_for_size() 會根據 graphiti-core 傳入的
+    ModelSize 參數自動分流到對應模型。
+
     Returns:
         OptimizedOllamaClient: 成功時返回客戶端實例
         None: 初始化失敗時返回 None
@@ -227,7 +231,7 @@ def _create_llm_client() -> Optional[OptimizedOllamaClient]:
         此函數不會拋出例外，失敗時僅記錄警告並返回 None。
     """
     try:
-        # small_model: 未設定時回退為主模型
+        # small_model 回退策略：未設定時使用主模型，避免 None 傳入 LLMConfig
         small_model = app_config.ollama.small_model or app_config.ollama.model
         llm_config = LLMConfig(
             base_url=app_config.ollama.base_url,
