@@ -1500,7 +1500,7 @@ body {
 
 /* -- AI 問答 -- */
 .ask-panel {
-    max-width: 800px;
+    max-width: 100%;
 }
 
 .ask-input-row {

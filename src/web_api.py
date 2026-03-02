@@ -797,7 +797,7 @@ def create_web_routes(
             # 合併所有日期
             all_dates = sorted(set(
                 list(node_days) + list(fact_days) + list(episode_days)
-            ))
+            ), reverse=True)
             timeline = [
                 {
                     "date": d,
