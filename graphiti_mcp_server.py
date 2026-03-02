@@ -2225,7 +2225,8 @@ def main() -> None:
             app_config.server.port = args.port
 
         # 設置日誌
-        logger = setup_logging(app_config.logging)
+        graphiti_logger = setup_logging(app_config.logging)
+        logger = graphiti_logger.get_logger("graphiti_mcp")
         log_system_info()
 
         # 記錄配置摘要
