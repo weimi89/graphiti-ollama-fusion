@@ -309,6 +309,14 @@ class GraphitiConfig:
     pydantic_validation_fixes: bool = True
     cosine_similarity_threshold: float = 0.8
 
+    # 重要性追蹤設定
+    enable_importance_tracking: bool = True
+    importance_weight: float = 0.1
+
+    # 智慧遺忘設定
+    stale_days_threshold: int = 30
+    stale_min_access_count: int = 2
+
     @classmethod
     def from_env(cls) -> "GraphitiConfig":
         """
@@ -418,6 +426,10 @@ class GraphitiConfig:
                 "enable_deduplication",
                 "pydantic_validation_fixes",
                 "cosine_similarity_threshold",
+                "enable_importance_tracking",
+                "importance_weight",
+                "stale_days_threshold",
+                "stale_min_access_count",
             ]:
                 if key in config_data:
                     setattr(config, key, config_data[key])
@@ -503,6 +515,10 @@ class GraphitiConfig:
                 "enable_deduplication": self.enable_deduplication,
                 "pydantic_validation_fixes": self.pydantic_validation_fixes,
                 "cosine_similarity_threshold": self.cosine_similarity_threshold,
+                "enable_importance_tracking": self.enable_importance_tracking,
+                "importance_weight": self.importance_weight,
+                "stale_days_threshold": self.stale_days_threshold,
+                "stale_min_access_count": self.stale_min_access_count,
             }
 
             config_file = Path(config_path)
@@ -608,6 +624,7 @@ class GraphitiConfig:
             "pydantic_fixes_enabled": self.pydantic_validation_fixes,
             "max_coroutines": self.memory_performance.max_coroutines,
             "chunk_threshold": self.memory_performance.chunk_threshold,
+            "importance_tracking": self.enable_importance_tracking,
         }
 
 
@@ -667,6 +684,18 @@ def _load_graphiti_settings(config: GraphitiConfig) -> None:
 
     if os.getenv("COSINE_SIMILARITY_THRESHOLD"):
         config.cosine_similarity_threshold = float(os.getenv("COSINE_SIMILARITY_THRESHOLD"))
+
+    if os.getenv("ENABLE_IMPORTANCE_TRACKING"):
+        config.enable_importance_tracking = os.getenv("ENABLE_IMPORTANCE_TRACKING").lower() == "true"
+
+    if os.getenv("IMPORTANCE_WEIGHT"):
+        config.importance_weight = float(os.getenv("IMPORTANCE_WEIGHT"))
+
+    if os.getenv("STALE_DAYS_THRESHOLD"):
+        config.stale_days_threshold = int(os.getenv("STALE_DAYS_THRESHOLD"))
+
+    if os.getenv("STALE_MIN_ACCESS_COUNT"):
+        config.stale_min_access_count = int(os.getenv("STALE_MIN_ACCESS_COUNT"))
 
 
 def load_config(config_path: Optional[str] = None) -> GraphitiConfig:

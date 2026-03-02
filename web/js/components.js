@@ -16,6 +16,7 @@ const Components = {
         timeline: '時間線顯示知識圖譜隨時間的成長趨勢，了解 AI 何時學到了什麼。',
         graph: '知識圖譜視覺化以互動式力導向圖呈現實體和關係，直觀探索知識結構。',
         ask: '知識問答讓你測試 AI 對特定問題能取得哪些上下文，驗證知識庫的覆蓋度。',
+        communities: '社群頁面顯示知識圖譜中自動檢測到的社群聚類，了解實體之間的緊密關聯群組。',
     },
 
     renderPageDescription(page) {
@@ -1022,5 +1023,59 @@ const Components = {
                 <button class="btn-expand" onclick="App.toggleContent('${id}')" data-state="collapsed">展開</button>
             </div>
         `;
+    },
+
+    /** 渲染社群頁面 */
+    renderCommunitiesPage(data = {}, page = 1) {
+        const communities = data.communities || [];
+        const total = data.total || 0;
+        const pages = data.pages || 1;
+
+        let html = this.renderPageDescription('communities');
+
+        html += `
+            <div class="page-header">
+                <h2>社群 (${total})</h2>
+                <div class="header-actions">
+                    <button class="btn btn-primary" onclick="App.buildCommunities()">重新建構社群</button>
+                </div>
+            </div>
+        `;
+
+        if (!communities.length) {
+            html += '<div class="empty-state">尚無社群資料。點擊「重新建構社群」開始社群檢測。</div>';
+            return html;
+        }
+
+        html += '<div class="card-grid">';
+        for (const c of communities) {
+            html += `
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">${this._esc(c.name || '未命名社群')}</span>
+                        <span class="card-meta">${c.uuid ? c.uuid.substring(0, 8) : ''}</span>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-summary">${this._esc(c.summary || '無摘要')}</p>
+                        ${c.group_id ? `<span class="tag">${this._esc(c.group_id)}</span>` : ''}
+                    </div>
+                    <div class="card-footer">
+                        <span class="card-date">${c.created_at ? new Date(c.created_at).toLocaleDateString() : ''}</span>
+                    </div>
+                </div>
+            `;
+        }
+        html += '</div>';
+
+        if (pages > 1) {
+            html += this.renderPagination(page, pages, 'App.goToCommunities');
+        }
+
+        return html;
+    },
+
+    /** 渲染三元組新增按鈕（用於事實頁面） */
+    renderTripletButton() {
+        return '<button class="btn btn-secondary" onclick="App.openTripletDialog()">+ 新增三元組</button>';
     },
 };

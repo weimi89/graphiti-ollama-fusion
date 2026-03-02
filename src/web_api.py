@@ -1120,6 +1120,320 @@ def create_web_routes(
             return JSONResponse({"error": str(e)}, status_code=500)
 
     # ------------------------------------------------------------------
+    # 批量添加 API（F1）
+    # ------------------------------------------------------------------
+
+    async def api_add_bulk(request: Request) -> JSONResponse:
+        """透過 Web API 批量添加記憶。"""
+        try:
+            body = await request.json()
+            episodes = body.get("episodes", [])
+            group_id = body.get("group_id", "default")
+
+            if not episodes:
+                return JSONResponse({"error": "episodes 列表不能為空"}, status_code=400)
+
+            for i, ep in enumerate(episodes):
+                if not isinstance(ep, dict) or "name" not in ep or "content" not in ep:
+                    return JSONResponse(
+                        {"error": f"第 {i+1} 個 episode 格式錯誤"},
+                        status_code=400,
+                    )
+
+            from graphiti_core.utils.bulk_utils import RawEpisode
+            from graphiti_core.nodes import EpisodeType
+
+            graphiti = await get_graphiti_fn()
+            now = datetime.now(timezone.utc)
+
+            raw_episodes = [
+                RawEpisode(
+                    name=ep["name"],
+                    content=ep["content"],
+                    source_description="Web UI Bulk",
+                    source=EpisodeType.text,
+                    reference_time=now,
+                )
+                for ep in episodes
+            ]
+
+            await graphiti.add_episode_bulk(
+                bulk_episodes=raw_episodes,
+                group_id=group_id,
+            )
+
+            return JSONResponse({
+                "success": True,
+                "message": f"成功批量添加 {len(episodes)} 條記憶",
+                "count": len(episodes),
+            })
+        except Exception as e:
+            logger.error(f"API add bulk error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ------------------------------------------------------------------
+    # 三元組添加 API（F2）
+    # ------------------------------------------------------------------
+
+    async def api_add_triplet(request: Request) -> JSONResponse:
+        """透過 Web API 添加三元組。"""
+        try:
+            body = await request.json()
+            source_name = body.get("source_name", "").strip()
+            relation_name = body.get("relation_name", "").strip()
+            target_name = body.get("target_name", "").strip()
+            fact = body.get("fact", "").strip()
+            group_id = body.get("group_id", "default")
+
+            if not all([source_name, relation_name, target_name, fact]):
+                return JSONResponse(
+                    {"error": "source_name, relation_name, target_name, fact 為必填"},
+                    status_code=400,
+                )
+
+            from graphiti_core.nodes import EntityNode
+            from graphiti_core.edges import EntityEdge
+
+            graphiti = await get_graphiti_fn()
+            now = datetime.now(timezone.utc)
+
+            source_node = EntityNode(
+                name=source_name, group_id=group_id,
+                labels=body.get("source_labels", []), created_at=now,
+            )
+            target_node = EntityNode(
+                name=target_name, group_id=group_id,
+                labels=body.get("target_labels", []), created_at=now,
+            )
+            edge = EntityEdge(
+                name=relation_name, group_id=group_id,
+                source_node_uuid=source_node.uuid,
+                target_node_uuid=target_node.uuid,
+                fact=fact, created_at=now, episodes=[],
+            )
+
+            await graphiti.add_triplet(
+                source_node=source_node, edge=edge, target_node=target_node,
+            )
+
+            return JSONResponse({
+                "success": True,
+                "message": f"三元組已添加: {source_name} --[{relation_name}]--> {target_name}",
+                "source_uuid": source_node.uuid,
+                "target_uuid": target_node.uuid,
+                "edge_uuid": edge.uuid,
+            })
+        except Exception as e:
+            logger.error(f"API add triplet error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ------------------------------------------------------------------
+    # 社群 API（F3）
+    # ------------------------------------------------------------------
+
+    async def api_communities(request: Request) -> JSONResponse:
+        """瀏覽社群節點。"""
+        try:
+            graphiti = await get_graphiti_fn()
+            group_id = request.query_params.get("group_id", "")
+            page = int(request.query_params.get("page", 1))
+            limit = min(int(request.query_params.get("limit", 20)), 100)
+            skip = (page - 1) * limit
+
+            group_clause = "WHERE n.group_id = $group_id" if group_id else ""
+            params = {"skip": skip, "limit": limit}
+            if group_id:
+                params["group_id"] = group_id
+
+            async with graphiti.driver.session() as session:
+                # 計數
+                count_q = f"MATCH (n:Community) {group_clause} RETURN count(n) AS total"
+                result = await session.run(count_q, params)
+                records = [r async for r in result]
+                total = records[0]["total"] if records else 0
+
+                # 分頁查詢
+                query = f"""
+                MATCH (n:Community) {group_clause}
+                RETURN n.uuid AS uuid, n.name AS name, n.summary AS summary,
+                       n.group_id AS group_id, n.created_at AS created_at
+                ORDER BY n.created_at DESC
+                SKIP $skip LIMIT $limit
+                """
+                result = await session.run(query, params)
+                communities = []
+                async for record in result:
+                    communities.append({
+                        "uuid": record["uuid"],
+                        "name": record["name"],
+                        "summary": (record["summary"] or "")[:300],
+                        "group_id": record["group_id"],
+                        "created_at": str(record["created_at"]) if record["created_at"] else None,
+                    })
+
+            pages = max(1, (total + limit - 1) // limit)
+            return JSONResponse({
+                "communities": communities,
+                "total": total,
+                "page": page,
+                "pages": pages,
+            })
+        except Exception as e:
+            logger.error(f"API communities error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_build_communities(request: Request) -> JSONResponse:
+        """觸發社群建構。"""
+        try:
+            body = await request.json()
+            group_ids = body.get("group_ids")
+
+            graphiti = await get_graphiti_fn()
+            community_nodes, community_edges = await graphiti.build_communities(
+                group_ids=group_ids,
+            )
+
+            return JSONResponse({
+                "success": True,
+                "message": f"社群建構完成",
+                "community_nodes": len(community_nodes),
+                "community_edges": len(community_edges),
+            })
+        except Exception as e:
+            logger.error(f"API build communities error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ------------------------------------------------------------------
+    # 進階搜尋 API（F4）
+    # ------------------------------------------------------------------
+
+    async def api_advanced_search(request: Request) -> JSONResponse:
+        """進階搜尋（支援搜尋策略選擇）。"""
+        try:
+            q = request.query_params.get("q", "").strip()
+            if not q:
+                return JSONResponse({"error": "缺少查詢參數 q"}, status_code=400)
+
+            recipe = request.query_params.get("recipe", "combined_cross_encoder")
+            limit_val = min(int(request.query_params.get("limit", 10)), 50)
+            group_ids_str = request.query_params.get("group_ids", "")
+            group_ids = [g.strip() for g in group_ids_str.split(",") if g.strip()] if group_ids_str else []
+
+            from graphiti_core.search.search_config_recipes import (
+                COMBINED_HYBRID_SEARCH_CROSS_ENCODER,
+            )
+
+            # 動態載入配方
+            import graphiti_mcp_server as server
+            recipes = getattr(server, "SEARCH_RECIPES", {})
+            if recipe not in recipes:
+                return JSONResponse({
+                    "error": f"未知的搜尋策略: {recipe}",
+                    "available": list(recipes.keys()),
+                }, status_code=400)
+
+            search_config = recipes[recipe].model_copy(deep=True)
+            search_config.limit = limit_val
+
+            graphiti = await get_graphiti_fn()
+            results = await asyncio.wait_for(
+                graphiti.search_(
+                    query=q, config=search_config, group_ids=group_ids,
+                ),
+                timeout=SEARCH_TIMEOUT,
+            )
+
+            # 簡化結果
+            simplified = {
+                "nodes": [
+                    {
+                        "name": getattr(n, "name", ""),
+                        "uuid": str(getattr(n, "uuid", "")),
+                        "summary": getattr(n, "summary", "")[:200],
+                        "group_id": getattr(n, "group_id", ""),
+                    }
+                    for n in (results.nodes or [])
+                ],
+                "edges": [
+                    {
+                        "uuid": str(getattr(e, "uuid", "")),
+                        "name": getattr(e, "name", ""),
+                        "fact": getattr(e, "fact", ""),
+                    }
+                    for e in (results.edges or [])
+                ],
+                "communities": [
+                    {
+                        "uuid": str(getattr(c, "uuid", "")),
+                        "name": getattr(c, "name", ""),
+                        "summary": getattr(c, "summary", "")[:200],
+                    }
+                    for c in (results.communities or [])
+                ],
+            }
+
+            return JSONResponse({
+                "query": q,
+                "recipe": recipe,
+                "results": simplified,
+            })
+        except asyncio.TimeoutError:
+            return JSONResponse({"error": "搜尋超時"}, status_code=504)
+        except Exception as e:
+            logger.error(f"API advanced search error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ------------------------------------------------------------------
+    # 過時記憶分析 API（F10）
+    # ------------------------------------------------------------------
+
+    async def api_analytics_stale(request: Request) -> JSONResponse:
+        """查詢過時記憶。"""
+        try:
+            from src.importance import get_stale_entities
+
+            graphiti = await get_graphiti_fn()
+            days = int(request.query_params.get("days", 30))
+            min_count = int(request.query_params.get("min_count", 2))
+            group_id = request.query_params.get("group_id", "")
+            limit_val = min(int(request.query_params.get("limit", 50)), 200)
+
+            result = await get_stale_entities(
+                driver=graphiti.driver,
+                days_threshold=days,
+                min_access_count=min_count,
+                group_id=group_id,
+                limit=limit_val,
+            )
+
+            return JSONResponse(result)
+        except Exception as e:
+            logger.error(f"API stale analysis error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_analytics_cleanup(request: Request) -> JSONResponse:
+        """清理過時記憶。"""
+        try:
+            from src.importance import cleanup_stale_entities
+
+            body = await request.json()
+            graphiti = await get_graphiti_fn()
+
+            result = await cleanup_stale_entities(
+                driver=graphiti.driver,
+                days_threshold=body.get("days_threshold", 30),
+                min_access_count=body.get("min_access_count", 2),
+                group_id=body.get("group_id", ""),
+                limit=min(body.get("limit", 50), 200),
+                dry_run=body.get("dry_run", True),
+            )
+
+            return JSONResponse(result)
+        except Exception as e:
+            logger.error(f"API cleanup error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ------------------------------------------------------------------
     # 首頁（提供 SPA 入口）
     # ------------------------------------------------------------------
 
@@ -1204,6 +1518,14 @@ def create_web_routes(
         Route("/api/analytics/quality", api_analytics_quality, methods=["GET"]),
         Route("/api/graph/subgraph", api_graph_subgraph, methods=["GET"]),
         Route("/api/ask", api_ask, methods=["GET"]),
+        # 新功能 API 端點
+        Route("/api/memory/add-bulk", api_add_bulk, methods=["POST"]),
+        Route("/api/memory/add-triplet", api_add_triplet, methods=["POST"]),
+        Route("/api/communities", api_communities, methods=["GET"]),
+        Route("/api/communities/build", api_build_communities, methods=["POST"]),
+        Route("/api/search/advanced", api_advanced_search, methods=["GET"]),
+        Route("/api/analytics/stale", api_analytics_stale, methods=["GET"]),
+        Route("/api/analytics/cleanup", api_analytics_cleanup, methods=["POST"]),
     ]
 
     # 靜態文件（CSS/JS）

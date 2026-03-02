@@ -26,6 +26,7 @@ const App = {
         this._initTheme();
         this._initRouter();
         this._initEvents();
+        this._initTripletForm();
         await this._loadGroups();
         this._handleRoute();
     },
@@ -172,6 +173,9 @@ const App = {
                     break;
                 case 'ask':
                     await this._renderAsk(app);
+                    break;
+                case 'communities':
+                    await this._renderCommunities(app);
                     break;
                 default:
                     app.innerHTML = '<div class="empty-state"><div class="empty-state-text">頁面不存在</div></div>';
@@ -780,6 +784,77 @@ const App = {
             this._confirmResolve = resolve;
             document.getElementById('confirm-message').textContent = message;
             document.getElementById('confirm-dialog').showModal();
+        });
+    },
+
+    // ============================================================
+    // 社群頁面
+    // ============================================================
+
+    async _renderCommunities(app) {
+        const data = await API.communities({
+            groupId: this.state.groupId,
+            page: this.state.currentPage,
+        });
+        app.innerHTML = Components.renderCommunitiesPage(data, this.state.currentPage);
+    },
+
+    async goToCommunities(page) {
+        this.state.currentPage = page;
+        await this._renderCommunities(document.getElementById('app'));
+    },
+
+    async buildCommunities() {
+        try {
+            this._toast('正在建構社群...', 'info');
+            const result = await API.buildCommunities({
+                groupIds: this.state.groupId ? [this.state.groupId] : null,
+            });
+            this._toast(result.message || '社群建構完成', 'success');
+            await this._renderCommunities(document.getElementById('app'));
+        } catch (err) {
+            this._toast('社群建構失敗: ' + err.message, 'error');
+        }
+    },
+
+    // ============================================================
+    // 三元組 Dialog
+    // ============================================================
+
+    openTripletDialog() {
+        const dialog = document.getElementById('add-triplet-dialog');
+        if (dialog) {
+            document.getElementById('add-triplet-form').reset();
+            const groupInput = document.getElementById('triplet-group');
+            if (groupInput && this.state.groupId) groupInput.value = this.state.groupId;
+            dialog.showModal();
+        }
+    },
+
+    closeTripletDialog() {
+        const dialog = document.getElementById('add-triplet-dialog');
+        if (dialog) dialog.close();
+    },
+
+    _initTripletForm() {
+        const form = document.getElementById('add-triplet-form');
+        if (!form) return;
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            try {
+                const result = await API.addTriplet({
+                    sourceName: document.getElementById('triplet-source').value.trim(),
+                    relationName: document.getElementById('triplet-relation').value.trim(),
+                    targetName: document.getElementById('triplet-target').value.trim(),
+                    fact: document.getElementById('triplet-fact').value.trim(),
+                    groupId: document.getElementById('triplet-group').value.trim() || 'default',
+                });
+                this._toast(result.message || '三元組已添加', 'success');
+                this.closeTripletDialog();
+                this._renderCurrentPage();
+            } catch (err) {
+                this._toast('添加三元組失敗: ' + err.message, 'error');
+            }
         });
     },
 

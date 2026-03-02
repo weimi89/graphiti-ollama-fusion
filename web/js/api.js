@@ -121,6 +121,71 @@ const API = {
         });
     },
 
+    /** 批量新增記憶 */
+    async addBulk({ episodes, groupId }) {
+        return this._post('/api/memory/add-bulk', {
+            episodes, group_id: groupId,
+        });
+    },
+
+    /** 新增三元組 */
+    async addTriplet({ sourceName, relationName, targetName, fact, groupId, sourceLabels, targetLabels }) {
+        return this._post('/api/memory/add-triplet', {
+            source_name: sourceName,
+            relation_name: relationName,
+            target_name: targetName,
+            fact,
+            group_id: groupId,
+            source_labels: sourceLabels || [],
+            target_labels: targetLabels || [],
+        });
+    },
+
+    /** 瀏覽社群節點 */
+    async communities({ groupId = '', page = 1, limit = 20 } = {}) {
+        const params = new URLSearchParams();
+        if (groupId) params.set('group_id', groupId);
+        if (page > 1) params.set('page', page);
+        if (limit !== 20) params.set('limit', limit);
+        return this._get(`/api/communities?${params}`);
+    },
+
+    /** 觸發社群建構 */
+    async buildCommunities({ groupIds } = {}) {
+        return this._post('/api/communities/build', {
+            group_ids: groupIds || null,
+        });
+    },
+
+    /** 進階搜尋 */
+    async advancedSearch(q, { recipe = 'combined_cross_encoder', groupIds = [], limit = 10 } = {}) {
+        const params = new URLSearchParams({ q, recipe });
+        if (groupIds.length) params.set('group_ids', groupIds.join(','));
+        if (limit !== 10) params.set('limit', limit);
+        return this._get(`/api/search/advanced?${params}`);
+    },
+
+    /** 過時記憶分析 */
+    async staleAnalysis({ days = 30, minCount = 2, groupId = '', limit = 50 } = {}) {
+        const params = new URLSearchParams();
+        if (days !== 30) params.set('days', days);
+        if (minCount !== 2) params.set('min_count', minCount);
+        if (groupId) params.set('group_id', groupId);
+        if (limit !== 50) params.set('limit', limit);
+        return this._get(`/api/analytics/stale?${params}`);
+    },
+
+    /** 清理過時記憶 */
+    async cleanupStale({ daysThreshold = 30, minAccessCount = 2, groupId = '', limit = 50, dryRun = true } = {}) {
+        return this._post('/api/analytics/cleanup', {
+            days_threshold: daysThreshold,
+            min_access_count: minAccessCount,
+            group_id: groupId,
+            limit,
+            dry_run: dryRun,
+        });
+    },
+
     /** 刪除實體節點 */
     async deleteNode(uuid) {
         return this._delete(`/api/nodes/${uuid}`);

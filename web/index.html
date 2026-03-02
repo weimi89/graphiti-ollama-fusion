@@ -22,6 +22,7 @@
             <a href="#/episodes" class="nav-link" data-page="episodes">記憶片段</a>
             <a href="#/overview" class="nav-link" data-page="overview">知識總覽</a>
             <a href="#/timeline" class="nav-link" data-page="timeline">時間線</a>
+            <a href="#/communities" class="nav-link" data-page="communities">社群</a>
             <a href="#/graph" class="nav-link" data-page="graph">圖譜</a>
             <a href="#/ask" class="nav-link" data-page="ask">知識問答</a>
         </div>
@@ -93,6 +94,41 @@
                 </div>
                 <div class="dialog-actions">
                     <button type="button" class="btn btn-secondary" onclick="App.closeAddMemory()">取消</button>
+                    <button type="submit" class="btn btn-primary">添加</button>
+                </div>
+            </form>
+        </div>
+    </dialog>
+
+    <!-- 新增三元組 Dialog -->
+    <dialog id="add-triplet-dialog" class="add-memory-dialog" aria-labelledby="add-triplet-title">
+        <div class="dialog-content">
+            <h3 id="add-triplet-title" class="dialog-title">新增三元組</h3>
+            <form id="add-triplet-form" class="memory-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="triplet-source">來源實體 *</label>
+                        <input type="text" id="triplet-source" required placeholder="例如: Alice">
+                    </div>
+                    <div class="form-group">
+                        <label for="triplet-relation">關係 *</label>
+                        <input type="text" id="triplet-relation" required placeholder="例如: works_at">
+                    </div>
+                    <div class="form-group">
+                        <label for="triplet-target">目標實體 *</label>
+                        <input type="text" id="triplet-target" required placeholder="例如: Google">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="triplet-fact">事實描述 *</label>
+                    <input type="text" id="triplet-fact" required placeholder="例如: Alice works at Google">
+                </div>
+                <div class="form-group">
+                    <label for="triplet-group">群組</label>
+                    <input type="text" id="triplet-group" placeholder="group_id（留空使用 default）">
+                </div>
+                <div class="dialog-actions">
+                    <button type="button" class="btn btn-secondary" onclick="App.closeTripletDialog()">取消</button>
                     <button type="submit" class="btn btn-primary">添加</button>
                 </div>
             </form>
