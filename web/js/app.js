@@ -596,6 +596,57 @@ const App = {
         }
     },
 
+    // -- 群組批量刪除 --
+    _selectedGroups: new Set(),
+
+    toggleGroupBatch() {
+        const bar = document.getElementById('group-batch-bar');
+        const btn = document.getElementById('group-batch-toggle');
+        const cbs = document.querySelectorAll('.group-batch-cb');
+        const active = bar && bar.style.display === 'none';
+        if (bar) bar.style.display = active ? '' : 'none';
+        if (btn) btn.style.display = active ? 'none' : '';
+        cbs.forEach(cb => cb.style.display = active ? '' : 'none');
+        if (!active) {
+            this._selectedGroups.clear();
+            cbs.forEach(cb => { cb.querySelector('input').checked = false; });
+        }
+    },
+
+    toggleGroupSelect(groupId) {
+        if (this._selectedGroups.has(groupId)) {
+            this._selectedGroups.delete(groupId);
+        } else {
+            this._selectedGroups.add(groupId);
+        }
+        const cnt = document.getElementById('group-batch-count');
+        if (cnt) cnt.textContent = this._selectedGroups.size;
+    },
+
+    async batchDeleteGroups() {
+        const count = this._selectedGroups.size;
+        if (!count) return;
+        const names = [...this._selectedGroups].join(', ');
+        const ok = await this._confirm(`確定要刪除 ${count} 個群組嗎？\n\n${names}\n\n此操作會清除這些群組下的所有實體、事實和記憶片段。`);
+        if (!ok) return;
+        let success = 0, failed = 0;
+        for (const gid of this._selectedGroups) {
+            try {
+                await API.deleteGroup(gid);
+                success++;
+            } catch {
+                failed++;
+            }
+        }
+        this._selectedGroups.clear();
+        this._toast(`已刪除 ${success} 個群組${failed ? `，${failed} 個失敗` : ''}`, success ? 'success' : 'error');
+        if (this.state.groupId && !document.querySelector(`[data-group-id="${this.state.groupId}"]`)) {
+            this.state.groupId = '';
+        }
+        await this._loadGroups();
+        this._renderCurrentPage();
+    },
+
     copyText(text) {
         navigator.clipboard.writeText(text).then(() => {
             this._toast('已複製 UUID', 'info');

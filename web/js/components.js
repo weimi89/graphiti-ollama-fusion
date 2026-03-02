@@ -458,9 +458,19 @@ const Components = {
             </div>
 
             <div class="dashboard-section">
-                <div class="section-title">群組健康度（${groups.length} 個群組）</div>
+                <div class="section-title" style="display:flex;align-items:center;gap:12px;">
+                    群組健康度（${groups.length} 個群組）
+                    ${groups.length ? `
+                        <button class="btn btn-sm btn-secondary" onclick="App.toggleGroupBatch()" id="group-batch-toggle">批量刪除</button>
+                        <span id="group-batch-bar" style="display:none;font-size:13px;color:var(--text-muted);">
+                            已選取 <span id="group-batch-count">0</span> 個
+                            <button class="btn btn-sm btn-danger" onclick="App.batchDeleteGroups()" style="margin-left:8px;">刪除選取</button>
+                            <button class="btn btn-sm btn-secondary" onclick="App.toggleGroupBatch()" style="margin-left:4px;">取消</button>
+                        </span>
+                    ` : ''}
+                </div>
                 ${groups.length
-                    ? `<div class="groups-grid">
+                    ? `<div class="groups-grid" id="groups-grid">
                         ${groups.map(g => this.renderGroupCard(g)).join('')}
                        </div>`
                     : this._empty('尚無群組資料')
@@ -471,10 +481,14 @@ const Components = {
 
     renderGroupCard(group) {
         const total = group.nodes + group.facts + group.episodes;
+        const gid = this._esc(group.group_id);
         return `
-            <div class="group-card">
+            <div class="group-card" data-group-id="${gid}">
                 <div class="group-card-header">
-                    <span class="group-card-name">${this._esc(group.group_id)}</span>
+                    <label class="group-batch-cb" style="display:none;">
+                        <input type="checkbox" onchange="App.toggleGroupSelect('${gid}')">
+                    </label>
+                    <span class="group-card-name">${gid}</span>
                     <span class="group-card-total">${total} 筆</span>
                 </div>
                 <div class="group-card-stats">

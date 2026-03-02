@@ -1196,6 +1196,15 @@ body {
     align-items: center;
     margin-bottom: 12px;
 }
+.group-batch-cb {
+    margin-right: 8px;
+    cursor: pointer;
+}
+.group-batch-cb input {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
 
 .group-card-name {
     font-size: 15px;
