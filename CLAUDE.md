@@ -34,7 +34,7 @@ docker run -p 8000:8000 --env-file .env graphiti-mcp
 ## Testing
 
 ```bash
-# 運行所有測試（111 個單元測試）
+# 運行所有測試（143 個單元測試）
 uv run python -m pytest tests/
 
 # 僅執行內容切分測試
@@ -64,22 +64,24 @@ uv run python tools/batch_reprocess.py         # 批次重新處理
 ## Architecture
 
 ```
-graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 MCP 工具（11 個）
+graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 MCP 工具（19 個）
 ├── src/
 │   ├── config.py                # 配置管理（GraphitiConfig）支援 JSON/.env 層疊載入
-│   ├── web_api.py               # Web 管理介面 REST API 路由
+│   ├── web_api.py               # Web 管理介面 REST API 路由（20+ 端點）
 │   ├── ollama_graphiti_client.py # Ollama LLM 客戶端適配器（支援雙模型分流）
 │   ├── ollama_embedder.py       # Ollama 嵌入模型適配器
 │   ├── content_preprocessor.py  # 智慧內容切分（長文本自動分段處理）
+│   ├── deduplication.py         # 記憶去重（餘弦相似度比對）
+│   ├── importance.py            # 重要性追蹤與智慧遺忘
 │   ├── safe_memory_add.py       # 安全記憶添加（跳過實體提取）
 │   ├── exceptions.py            # 結構化異常處理（12 種異常類別）
 │   └── logging_setup.py         # 日誌配置（時間輪轉 + 性能監控）
 ├── web/                         # Web 管理介面前端（SPA，純 HTML/CSS/JS，無 build）
-│   ├── index.html               # 主頁面
+│   ├── index.html               # 主頁面（含社群導航、三元組表單）
 │   ├── css/style.css            # 主題系統（深色/淺色）與佈局
 │   └── js/
 │       ├── api.js               # REST API 封裝
-│       ├── components.js        # UI 組件渲染
+│       ├── components.js        # UI 組件渲染（含社群頁面）
 │       └── app.js               # SPA 路由、狀態管理、主題切換
 ├── tools/                       # 診斷與維護工具
 │   ├── status_report.py         # 統合狀態報告
@@ -87,8 +89,9 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 │   ├── batch_reprocess.py       # 批次重新處理
 │   ├── inspect_schema.py        # Neo4j 結構檢查
 │   └── performance_diagnose.py  # 性能診斷
-├── tests/                       # 測試套件（111 個測試）
+├── tests/                       # 測試套件（143 個測試）
 │   ├── test_content_preprocessor.py # 智慧切分邏輯測試（17 個）
+│   ├── test_new_features.py     # 新功能測試（32 個）
 │   ├── test_unit.py             # 單元測試
 │   ├── test_web_api.py          # Web API 測試
 │   ├── test_web_ui_features.py  # Web UI 功能測試
@@ -119,14 +122,30 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **完整模式（預設）**：`add_memory_simple` 預設使用 `use_safe_mode=False`，透過完整的實體提取流程建立 Entity 節點和關係，使記憶可被 `search_memory_nodes` 和 `search_memory_facts` 搜尋。安全模式（`use_safe_mode=True`）僅建立 EpisodicNode，速度快但無法被搜尋。
 
-## MCP Tools (11 tools)
+**記憶去重**：`src/deduplication.py` 提供 `check_episode_similarity()` 函數，在 `add_memory_simple` 完整模式前檢查餘弦相似度，超過閾值（預設 0.9）時警告。`force=True` 跳過檢查。
+
+**重要性追蹤**：`src/importance.py` 在搜尋操作完成後，用 `asyncio.create_task()` 非同步更新 `access_count` 和 `last_accessed` 屬性。`get_stale_memories` 和 `cleanup_stale_memories` 工具基於這些屬性識別過時記憶。
+
+**進階搜尋**：`SEARCH_RECIPES` 字典映射 16 個 `SearchConfig` 預設方案，`_build_search_filters()` 輔助函數將簡化參數轉換為 `SearchFilters` 物件。`search_memory_facts` 已升級為使用 `graphiti.search_()` API。
+
+**社群檢測**：`build_communities` 工具包裝 graphiti-core 的 Label Propagation 演算法，預設背景執行。Web UI 新增社群瀏覽頁面。
+
+## MCP Tools (19 tools)
 
 | 類別 | 工具 | 說明 |
 |------|------|------|
-| 記憶管理 | `add_memory_simple` | 添加記憶（支援背景處理、智慧切分） |
-| 記憶管理 | `search_memory_nodes` | 搜尋記憶節點（實體） |
-| 記憶管理 | `search_memory_facts` | 搜尋記憶事實（關係） |
+| 記憶管理 | `add_memory_simple` | 添加記憶（支援背景處理、智慧切分、去重檢查） |
+| 記憶管理 | `add_episode_bulk` | 批量添加多筆記憶（預設背景處理） |
+| 記憶管理 | `add_triplet` | 結構化三元組添加（跳過 LLM，秒速完成） |
+| 記憶管理 | `search_memory_nodes` | 搜尋記憶節點（支援搜尋策略、時間過濾） |
+| 記憶管理 | `search_memory_facts` | 搜尋記憶事實（支援關係類型、時間、有效性過濾） |
+| 記憶管理 | `advanced_search` | 進階搜尋（16 種策略，回傳完整結果） |
 | 記憶管理 | `get_episodes` | 獲取最近的記憶片段 |
+| 知識分析 | `check_conflicts` | 檢測兩實體間的事實衝突 |
+| 知識分析 | `get_node_edges` | 探索節點的入邊和出邊關係 |
+| 知識分析 | `build_communities` | 社群檢測與聚類（預設背景處理） |
+| 記憶維護 | `get_stale_memories` | 查詢過時、低存取量的記憶 |
+| 記憶維護 | `cleanup_stale_memories` | 清理過時記憶（預設 dry_run） |
 | 任務管理 | `get_memory_task_status` | 查詢背景記憶處理任務進度 |
 | 刪除查詢 | `delete_episode` | 刪除記憶片段 |
 | 刪除查詢 | `delete_entity_edge` | 刪除實體邊（關係） |
@@ -147,13 +166,14 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 | `episode_uuid` | str | None | 自定義 UUID |
 | `use_safe_mode` | bool | `False` | 安全模式（跳過實體提取，快但不可搜尋） |
 | `background` | bool | `False` | 背景處理（立即返回 task_id） |
+| `force` | bool | `False` | 跳過去重檢查（強制添加） |
 | `excluded_entity_types` | list | None | 排除的實體類型（減少提取量） |
 
 ## Web 管理介面
 
 HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 
-**功能**：儀表板統計、實體節點/事實/記憶片段瀏覽與搜尋、group 篩選與刪除、深色/淺色主題、節點/事實/片段刪除操作、資料匯出、知識圖譜視覺化、AI 問答、品質分析。
+**功能**：儀表板統計、實體節點/事實/記憶片段瀏覽與搜尋、社群瀏覽與建構、三元組表單、group 篩選與刪除、深色/淺色主題、節點/事實/片段刪除操作、資料匯出、知識圖譜視覺化、AI 問答、品質分析。
 
 **REST API**：
 
@@ -166,8 +186,15 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 | `GET /api/episodes` | 瀏覽記憶片段（分頁） |
 | `GET /api/search/nodes` | 向量搜尋節點 |
 | `GET /api/search/facts` | 向量搜尋事實 |
+| `GET /api/search/advanced` | 進階搜尋（16 種策略） |
+| `GET /api/communities` | 瀏覽社群節點（分頁） |
+| `POST /api/communities/build` | 觸發社群建構 |
+| `POST /api/memory/add-bulk` | 批量添加記憶 |
+| `POST /api/memory/add-triplet` | 添加三元組 |
 | `GET /api/memory/tasks` | 列出背景記憶處理任務 |
 | `GET /api/memory/tasks/{id}` | 查詢單一任務狀態 |
+| `GET /api/analytics/stale` | 查詢過時記憶 |
+| `POST /api/analytics/cleanup` | 清理過時記憶 |
 | `DELETE /api/nodes/{uuid}` | 刪除節點 |
 | `DELETE /api/episodes/{uuid}` | 刪除記憶片段 |
 | `DELETE /api/facts/{uuid}` | 刪除事實 |
@@ -200,6 +227,10 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 | `GRAPHITI_MAX_CHUNK_SIZE` | 切分後每段最大字元數 | `600` |
 | `GRAPHITI_MAX_COROUTINES` | 最大並行協程數 | `5` |
 | `GRAPHITI_DEFAULT_BACKGROUND` | 預設背景處理 | `false` |
+| `ENABLE_IMPORTANCE_TRACKING` | 啟用存取追蹤 | `true` |
+| `IMPORTANCE_WEIGHT` | 重要性權重 | `0.1` |
+| `STALE_DAYS_THRESHOLD` | 過時天數閾值 | `30` |
+| `STALE_MIN_ACCESS_COUNT` | 最低存取次數 | `2` |
 
 完整環境變數列表參見 `.env.example`。
 
@@ -211,4 +242,4 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 
 ## Upstream Reference
 
-本專案基於 [getzep/graphiti/mcp_server](https://github.com/getzep/graphiti/tree/main/mcp_server) 擴充開發。本地新增功能包括：Ollama 深度適配（含雙模型分流）、Web 管理介面、安全模式（Safe Mode）、智慧內容切分、背景記憶處理、完整異常/日誌系統。上游使用 graphiti-core 最新版，本地依賴 >=0.24.3。
+本專案基於 [getzep/graphiti/mcp_server](https://github.com/getzep/graphiti/tree/main/mcp_server) 擴充開發。本地新增功能包括：Ollama 深度適配（含雙模型分流）、Web 管理介面（含社群瀏覽、三元組表單）、19 個 MCP 工具（含進階搜尋、衝突偵測、去重、重要性追蹤、智慧遺忘）、安全模式（Safe Mode）、智慧內容切分、背景記憶處理、完整異常/日誌系統。上游使用 graphiti-core 最新版，本地依賴 >=0.24.3。

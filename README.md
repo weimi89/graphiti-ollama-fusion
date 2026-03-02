@@ -8,11 +8,19 @@
 
 - **智能記憶管理** — 使用知識圖譜儲存和檢索複雜的記憶關係
 - **語意搜尋** — 基於向量嵌入的混合搜尋（向量 + 關鍵字 + 圖遍歷）
+- **16 種搜尋策略** — 進階搜尋支援 RRF、MMR、Cross-Encoder 等多種重排序方式
 - **完全本地化** — 使用 Ollama 本地 LLM，無需外部 API，資料不離開本機
 - **雙模型分流** — 複雜任務使用主模型，簡單任務自動切換小模型以提升效能
 - **智慧內容切分** — 長文本自動分段處理，降低 LLM 負載（可配置閾值）
 - **背景記憶處理** — 記憶添加可在背景執行，MCP 呼叫立即返回
-- **Web 管理介面** — 內建儀表板、瀏覽、搜尋、知識圖譜視覺化、AI 問答
+- **記憶去重** — 自動偵測高度相似的既有記憶，避免重複儲存
+- **衝突偵測** — 檢測兩實體間的矛盾事實，識別已失效與有效的資訊
+- **社群檢測** — 基於 Label Propagation 演算法自動聚類相關實體
+- **重要性追蹤** — 自動記錄實體存取頻率，搜尋結果依重要性排序
+- **智慧遺忘** — 識別並清理過時、低存取量的記憶，保持圖譜精簡
+- **批量匯入** — 一次提交多筆記憶，適合大量資料遷移
+- **結構化三元組** — 直接添加「主體-關係-客體」，跳過 LLM 提取，秒速完成
+- **Web 管理介面** — 內建儀表板、瀏覽、搜尋、知識圖譜視覺化、AI 問答、社群瀏覽
 - **深色/淺色主題** — Web 介面支援主題切換
 - **安全模式** — 可選擇跳過實體提取的快速記憶添加
 - **Docker 支援** — 內建 Dockerfile，支援容器化部署
@@ -110,13 +118,15 @@ pm2 start ecosystem.config.cjs
 
 ```
 graphiti/
-├── graphiti_mcp_server.py        # 主入口 — MCP 工具定義（11 個工具）
+├── graphiti_mcp_server.py        # 主入口 — MCP 工具定義（19 個工具）
 ├── src/
 │   ├── config.py                 # 配置管理（GraphitiConfig，支援 JSON/.env 層疊）
-│   ├── web_api.py                # Web 管理介面 REST API
+│   ├── web_api.py                # Web 管理介面 REST API（20+ 端點）
 │   ├── ollama_graphiti_client.py  # Ollama LLM 客戶端（雙模型分流）
 │   ├── ollama_embedder.py        # Ollama 嵌入模型適配器
 │   ├── content_preprocessor.py   # 智慧內容切分（長文本自動分段）
+│   ├── deduplication.py          # 記憶去重（餘弦相似度比對）
+│   ├── importance.py             # 重要性追蹤與智慧遺忘
 │   ├── safe_memory_add.py        # 安全記憶添加（跳過實體提取）
 │   ├── exceptions.py             # 結構化異常處理（12 種異常類別）
 │   └── logging_setup.py          # 日誌系統（時間輪轉 + 性能監控）
@@ -125,10 +135,11 @@ graphiti/
 │   ├── css/style.css
 │   └── js/
 │       ├── api.js                # REST API 封裝
-│       ├── components.js         # UI 組件渲染
+│       ├── components.js         # UI 組件渲染（含社群頁面）
 │       └── app.js                # SPA 路由、狀態管理
-├── tests/                        # 測試套件（111 個測試）
-│   ├── test_content_preprocessor.py  # 切分邏輯測試
+├── tests/                        # 測試套件（143 個測試）
+│   ├── test_content_preprocessor.py  # 切分邏輯測試（17 個）
+│   ├── test_new_features.py      # 新功能測試（32 個）
 │   ├── test_unit.py              # 單元測試
 │   ├── test_web_api.py           # Web API 測試
 │   ├── test_web_ui_features.py   # Web UI 功能測試
@@ -191,16 +202,34 @@ graphiti/
 
 > **注意**：SSE 模式（`--transport sse`）已不建議使用。MCP 1.x 有 session 初始化相容性問題，請改用 HTTP 模式。
 
-## MCP 工具（11 個）
+## MCP 工具（19 個）
 
-### 記憶管理
+### 記憶管理（7 個）
 
 | 工具 | 說明 |
 |------|------|
-| `add_memory_simple` | 添加記憶到知識圖譜（支援背景處理、智慧切分） |
-| `search_memory_nodes` | 搜尋記憶節點（實體），支援向量 + 關鍵字混合搜尋 |
-| `search_memory_facts` | 搜尋記憶事實（關係），支援中心節點搜尋 |
+| `add_memory_simple` | 添加記憶到知識圖譜（支援背景處理、智慧切分、去重檢查） |
+| `add_episode_bulk` | 批量添加多筆記憶（預設背景處理） |
+| `add_triplet` | 結構化三元組添加（跳過 LLM，秒速完成） |
+| `search_memory_nodes` | 搜尋記憶節點（支援 16 種搜尋策略、時間過濾） |
+| `search_memory_facts` | 搜尋記憶事實（支援關係類型過濾、時間範圍、有效性過濾） |
+| `advanced_search` | 進階搜尋（16 種策略，回傳節點+邊+社群+片段） |
 | `get_episodes` | 獲取最近的記憶片段 |
+
+### 知識分析（3 個）
+
+| 工具 | 說明 |
+|------|------|
+| `check_conflicts` | 檢測兩實體間的事實衝突（有效 vs 已失效） |
+| `get_node_edges` | 探索節點的入邊和出邊關係 |
+| `build_communities` | 觸發社群檢測與聚類（預設背景處理） |
+
+### 記憶維護（2 個）
+
+| 工具 | 說明 |
+|------|------|
+| `get_stale_memories` | 查詢過時、低存取量的記憶 |
+| `cleanup_stale_memories` | 清理過時記憶（預設 dry_run 預覽模式） |
 
 ### 任務管理
 
@@ -237,6 +266,7 @@ graphiti/
 | `source_description` | string | | `"MCP Server"` | 來源描述 |
 | `use_safe_mode` | bool | | `false` | 安全模式（跳過實體提取，快但記憶不可被搜尋） |
 | `background` | bool | | `false` | 背景處理（立即返回 task_id，適合長文本） |
+| `force` | bool | | `false` | 跳過去重檢查（強制添加） |
 | `excluded_entity_types` | list | | | 排除的實體類型（減少不需要的提取量） |
 
 > **效能提示**：
@@ -244,6 +274,28 @@ graphiti/
 > - 長文本（>800 字元）：自動切分為多段，每段獨立處理
 > - 使用 `background=true` 可避免 MCP 呼叫阻塞，透過 `get_memory_task_status` 追蹤進度
 > - `use_safe_mode=true` 秒速完成但記憶無法被 search 工具找到
+> - 啟用去重時，高度相似的記憶會被警告（`force=true` 可跳過）
+
+### add_episode_bulk
+
+| 參數 | 類型 | 必填 | 預設值 | 說明 |
+|------|------|------|--------|------|
+| `episodes` | list | Y | | 記憶列表，每項含 `name` 和 `content` |
+| `group_id` | string | | `"default"` | 分組 ID |
+| `source` | string | | `"text"` | 來源類型 |
+| `background` | bool | | `true` | 背景處理（批量通常耗時） |
+
+### add_triplet
+
+| 參數 | 類型 | 必填 | 預設值 | 說明 |
+|------|------|------|--------|------|
+| `source_name` | string | Y | | 來源實體名稱（如 "Alice"） |
+| `target_name` | string | Y | | 目標實體名稱（如 "Google"） |
+| `relation_name` | string | Y | | 關係名稱（如 "works_at"） |
+| `fact` | string | Y | | 事實描述（如 "Alice works at Google"） |
+| `group_id` | string | | `"default"` | 分組 ID |
+| `source_labels` | list | | | 來源實體標籤 |
+| `target_labels` | list | | | 目標實體標籤 |
 
 ### search_memory_nodes
 
@@ -253,6 +305,9 @@ graphiti/
 | `max_nodes` | int | | `10` | 最大返回數量 |
 | `group_ids` | list | | | 分組過濾（多個 group 聯合搜尋） |
 | `entity_types` | list | | | 實體類型過濾 |
+| `search_recipe` | string | | | 搜尋策略（見進階搜尋） |
+| `created_after` | string | | | 建立時間下限（ISO datetime） |
+| `created_before` | string | | | 建立時間上限（ISO datetime） |
 
 ### search_memory_facts
 
@@ -262,6 +317,76 @@ graphiti/
 | `max_facts` | int | | `10` | 最大返回數量 |
 | `group_ids` | list | | | 分組過濾 |
 | `center_node_uuid` | string | | | 中心節點 UUID（探索特定節點的關係） |
+| `edge_types` | list | | | 關係類型過濾（如 `["works_at"]`） |
+| `created_after` | string | | | 建立時間下限（ISO datetime） |
+| `created_before` | string | | | 建立時間上限（ISO datetime） |
+| `only_valid` | bool | | `false` | 僅返回未失效的事實 |
+
+### advanced_search
+
+| 參數 | 類型 | 必填 | 預設值 | 說明 |
+|------|------|------|--------|------|
+| `query` | string | Y | | 搜尋關鍵字 |
+| `search_recipe` | string | | `"combined_rrf"` | 搜尋策略（16 種可選） |
+| `max_results` | int | | `10` | 最大返回數量 |
+| `group_ids` | list | | | 分組過濾 |
+| `center_node_uuid` | string | | | 中心節點 UUID |
+
+**可用搜尋策略（search_recipe）：**
+
+| 類別 | 策略 | 說明 |
+|------|------|------|
+| 綜合 | `combined_rrf` | 綜合 RRF 融合（預設，推薦） |
+| 綜合 | `combined_mmr` | 綜合 MMR 多樣性重排 |
+| 綜合 | `combined_cross_encoder` | 綜合 Cross-Encoder 精排 |
+| 邊 | `edge_rrf` / `edge_mmr` / `edge_cross_encoder` | 邊搜尋（3 種排序） |
+| 邊 | `edge_node_distance` / `edge_episode_mentions` | 邊搜尋（圖距離/引用次數） |
+| 節點 | `node_rrf` / `node_mmr` / `node_cross_encoder` | 節點搜尋（3 種排序） |
+| 節點 | `node_node_distance` / `node_episode_mentions` | 節點搜尋（圖距離/引用次數） |
+| 社群 | `community_rrf` / `community_mmr` / `community_cross_encoder` | 社群搜尋 |
+
+### check_conflicts
+
+| 參數 | 類型 | 必填 | 預設值 | 說明 |
+|------|------|------|--------|------|
+| `source_name` | string | Y | | 來源實體名稱 |
+| `target_name` | string | Y | | 目標實體名稱 |
+| `group_id` | string | | `"default"` | 分組 ID |
+
+### get_node_edges
+
+| 參數 | 類型 | 必填 | 預設值 | 說明 |
+|------|------|------|--------|------|
+| `node_uuid` | string | Y | | 節點 UUID |
+| `include_inbound` | bool | | `true` | 包含入邊 |
+| `include_outbound` | bool | | `true` | 包含出邊 |
+| `max_edges` | int | | `50` | 最大返回數量 |
+
+### build_communities
+
+| 參數 | 類型 | 必填 | 預設值 | 說明 |
+|------|------|------|--------|------|
+| `group_ids` | list | | | 指定分組（留空則全部） |
+| `background` | bool | | `true` | 背景處理 |
+
+### get_stale_memories
+
+| 參數 | 類型 | 必填 | 預設值 | 說明 |
+|------|------|------|--------|------|
+| `days_threshold` | int | | `30` | 超過多少天未存取視為過時 |
+| `min_access_count` | int | | `2` | 存取次數低於此值才列入 |
+| `group_id` | string | | | 分組過濾 |
+| `limit` | int | | `50` | 最大返回數量 |
+
+### cleanup_stale_memories
+
+| 參數 | 類型 | 必填 | 預設值 | 說明 |
+|------|------|------|--------|------|
+| `days_threshold` | int | | `30` | 過時天數閾值 |
+| `min_access_count` | int | | `2` | 最低存取次數閾值 |
+| `group_id` | string | | | 分組過濾 |
+| `dry_run` | bool | | `true` | 預覽模式（不實際刪除） |
+| `limit` | int | | `50` | 最大處理數量 |
 
 ### get_memory_task_status
 
@@ -278,6 +403,8 @@ HTTP 模式下訪問 `http://localhost:8000/` 即可使用。
 - 實體節點 — 瀏覽、篩選、向量搜尋
 - 事實關係 — 瀏覽、篩選、向量搜尋
 - 記憶片段 — 瀏覽、全文搜尋、刪除
+- 社群瀏覽 — 社群節點列表、摘要、觸發社群建構
+- 三元組表單 — 直接添加「主體-關係-客體」結構化知識
 - Group 管理 — 按分組過濾、批次刪除
 - 知識圖譜視覺化 — 節點關係圖形化展示
 - AI 問答 — 基於知識圖譜的智能問答
@@ -295,8 +422,15 @@ HTTP 模式下訪問 `http://localhost:8000/` 即可使用。
 | `/api/episodes` | GET | 瀏覽記憶片段（分頁） |
 | `/api/search/nodes` | GET | 向量搜尋節點 |
 | `/api/search/facts` | GET | 向量搜尋事實 |
+| `/api/search/advanced` | GET | 進階搜尋（16 種策略） |
+| `/api/communities` | GET | 瀏覽社群節點（分頁） |
+| `/api/communities/build` | POST | 觸發社群建構 |
+| `/api/memory/add-bulk` | POST | 批量添加記憶 |
+| `/api/memory/add-triplet` | POST | 添加三元組 |
 | `/api/memory/tasks` | GET | 列出背景任務（支援狀態篩選） |
 | `/api/memory/tasks/{id}` | GET | 查詢單一任務狀態 |
+| `/api/analytics/stale` | GET | 查詢過時記憶 |
+| `/api/analytics/cleanup` | POST | 清理過時記憶 |
 | `/api/nodes/{uuid}` | DELETE | 刪除節點 |
 | `/api/episodes/{uuid}` | DELETE | 刪除記憶片段 |
 | `/api/facts/{uuid}` | DELETE | 刪除事實 |
@@ -329,6 +463,12 @@ GRAPHITI_CHUNK_THRESHOLD=800         # 觸發智慧切分的字元數閾值
 GRAPHITI_MAX_CHUNK_SIZE=600          # 每段最大字元數
 GRAPHITI_MAX_COROUTINES=5            # 最大並行協程數
 GRAPHITI_DEFAULT_BACKGROUND=false    # 是否預設背景處理
+
+# === 重要性追蹤與智慧遺忘（可選） ===
+ENABLE_IMPORTANCE_TRACKING=true      # 啟用存取追蹤
+IMPORTANCE_WEIGHT=0.1                # 重要性權重
+STALE_DAYS_THRESHOLD=30              # 過時天數閾值
+STALE_MIN_ACCESS_COUNT=2             # 最低存取次數
 
 # === 日誌 ===
 LOG_FILE=logs/graphiti_mcp_server.log
@@ -404,7 +544,7 @@ docker run -p 8000:8000 \
 ## 測試
 
 ```bash
-# 執行所有測試（111 個，約 1 秒）
+# 執行所有測試（143 個，約 1 秒）
 uv run python -m pytest tests/
 
 # 詳細輸出
@@ -412,10 +552,11 @@ uv run python -m pytest tests/ -v
 
 # 僅執行特定測試
 uv run python -m pytest tests/test_content_preprocessor.py -v
+uv run python -m pytest tests/test_new_features.py -v
 uv run python -m pytest tests/test_unit.py -v
 ```
 
-> **注意**：`test_integration_manual.py` 中的 3 個 async 測試需要安裝 `pytest-asyncio`，缺少時會顯示 Failed 但不影響其他 111 個測試。
+> **注意**：`test_integration_manual.py` 中的 3 個 async 測試需要安裝 `pytest-asyncio`，缺少時會顯示 Failed 但不影響其他 143 個測試。
 
 ## 故障排除
 
