@@ -220,6 +220,7 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 |------|------|--------|
 | `OLLAMA_MODEL` | 主 LLM 模型 | `qwen2.5:7b` |
 | `OLLAMA_SMALL_MODEL` | 小 LLM 模型（簡單任務） | 與主模型相同 |
+| `OLLAMA_TARGET_LANGUAGE` | 強制 LLM 輸出語言（如 "Traditional Chinese"） | (未設定) |
 | `OLLAMA_EMBEDDING_MODEL` | 嵌入模型 | `nomic-embed-text:v1.5` |
 | `NEO4J_URI` | Neo4j 連接 URI | `bolt://localhost:7687` |
 | `NEO4J_PASSWORD` | Neo4j 密碼 | (必填) |

@@ -299,10 +299,14 @@ def _create_llm_client() -> Optional[OptimizedOllamaClient]:
             small_model=small_model,
             temperature=app_config.ollama.temperature,
         )
-        client = OptimizedOllamaClient(config=llm_config)
+        client = OptimizedOllamaClient(
+            config=llm_config,
+            target_language=app_config.ollama.target_language,
+        )
+        lang_info = f", 目標語言: {app_config.ollama.target_language}" if app_config.ollama.target_language else ""
         logging.getLogger("graphiti").info(
             f"LLM 客戶端初始化成功 (主模型: {app_config.ollama.model}, "
-            f"小模型: {small_model})"
+            f"小模型: {small_model}{lang_info})"
         )
         return client
     except Exception as e:

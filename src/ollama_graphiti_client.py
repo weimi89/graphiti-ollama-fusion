@@ -115,25 +115,29 @@ class OptimizedOllamaClient(LLMClient):
         temperature: 生成溫度
     """
 
-    def __init__(self, config: LLMConfig):
+    def __init__(self, config: LLMConfig, target_language: Optional[str] = None):
         """
         初始化客戶端。
 
         Args:
             config: LLM 配置物件，包含主模型、小模型、溫度等設定。
                     small_model 為 None 時，所有任務均使用主模型。
+            target_language: 強制 LLM 輸出使用的語言（如 "Traditional Chinese"）
         """
         super().__init__(config)
         self.base_url = config.base_url or "http://localhost:11434"
         self.model = config.model or "llama3.2:3b"
         self.small_model = config.small_model
         self.temperature = config.temperature if config.temperature is not None else 0.0
+        self.target_language = target_language
         self._session: aiohttp.ClientSession | None = None
 
         # 記錄模型配置，方便排查問題
         logger.info(f"    主模型: {self.model}")
         if self.small_model and self.small_model != self.model:
             logger.info(f"    小模型: {self.small_model}")
+        if self.target_language:
+            logger.info(f"    目標語言: {self.target_language}")
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """取得或建立共用的 aiohttp session（利用 HTTP keep-alive 和連線池）。"""
@@ -249,7 +253,7 @@ class OptimizedOllamaClient(LLMClient):
     # =========================================================================
 
     def _convert_messages(self, messages: List[Any]) -> List[Dict[str, str]]:
-        """轉換訊息格式為 Ollama 格式。"""
+        """轉換訊息格式為 Ollama 格式，並注入語言指令。"""
         ollama_messages = []
         for msg in messages:
             if isinstance(msg, dict):
@@ -261,6 +265,29 @@ class OptimizedOllamaClient(LLMClient):
                         "content": getattr(msg, "content", str(msg)),
                     }
                 )
+
+        # 注入語言指令到第一個 system 訊息
+        if self.target_language:
+            lang_instruction = (
+                f"\n\nIMPORTANT: All output text (entity names, summaries, descriptions, "
+                f"facts, observations) MUST be in {self.target_language}. "
+                f"Do NOT use any other language variant."
+            )
+            injected = False
+            for msg in ollama_messages:
+                if msg.get("role") == "system":
+                    msg["content"] += lang_instruction
+                    injected = True
+                    break
+            if not injected:
+                ollama_messages.insert(0, {
+                    "role": "system",
+                    "content": (
+                        f"You MUST respond in {self.target_language}. "
+                        f"All output text MUST be in {self.target_language}."
+                    ),
+                })
+
         return ollama_messages
 
     async def _make_request(

@@ -44,6 +44,7 @@ class OllamaConfig:
         temperature: 生成溫度（0.0-2.0）
         max_tokens: 最大輸出 token 數
         timeout: 請求超時時間（秒）
+        target_language: 強制 LLM 輸出使用的語言（如 "Traditional Chinese"）
     """
 
     model: str = "qwen2.5:7b"
@@ -52,6 +53,7 @@ class OllamaConfig:
     temperature: float = 0.1
     max_tokens: Optional[int] = None
     timeout: int = 120
+    target_language: Optional[str] = None
 
     def validate(self) -> bool:
         """驗證配置是否有效。"""
@@ -341,6 +343,9 @@ class GraphitiConfig:
         config.ollama.temperature = float(
             os.getenv("OLLAMA_TEMPERATURE", config.ollama.temperature)
         )
+        config.ollama.target_language = os.getenv(
+            "OLLAMA_TARGET_LANGUAGE", config.ollama.target_language
+        )
 
         # 嵌入器配置
         config.embedder.model = os.getenv("OLLAMA_EMBEDDING_MODEL", config.embedder.model)
@@ -549,6 +554,8 @@ class GraphitiConfig:
             self.ollama.base_url = os.getenv("OLLAMA_BASE_URL")
         if os.getenv("OLLAMA_TEMPERATURE"):
             self.ollama.temperature = float(os.getenv("OLLAMA_TEMPERATURE"))
+        if os.getenv("OLLAMA_TARGET_LANGUAGE"):
+            self.ollama.target_language = os.getenv("OLLAMA_TARGET_LANGUAGE")
 
         # 嵌入器配置
         if os.getenv("OLLAMA_EMBEDDING_MODEL"):
@@ -613,6 +620,7 @@ class GraphitiConfig:
         return {
             "ollama_model": self.ollama.model,
             "ollama_small_model": self.ollama.small_model or self.ollama.model,
+            "ollama_target_language": self.ollama.target_language,
             "embedder_model": self.embedder.model,
             "embedder_dimensions": self.embedder.dimensions,
             "neo4j_uri": self.neo4j.uri,
