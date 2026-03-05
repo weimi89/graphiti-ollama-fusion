@@ -30,6 +30,7 @@ import time
 import uuid as uuid_mod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -116,8 +117,8 @@ SEARCH_RECIPES: Dict[str, SearchConfig] = {
     "community_cross_encoder": COMMUNITY_HYBRID_SEARCH_CROSS_ENCODER,
 }
 
-# 載入環境變數
-load_dotenv()
+# 載入環境變數（明確指定 .env 路徑，避免 PM2/MCP 啟動時 cwd 不在專案根目錄）
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 
 # ============================================================================
@@ -546,9 +547,11 @@ async def _sync_add_memory(
                     excluded_entity_types=excluded_entity_types,
                 )
             except Exception as full_err:
+                import traceback
                 logger.warning(
                     f"完整模式失敗，自動降級到安全模式: {str(full_err)[:200]}"
                 )
+                logger.warning(f"完整模式 traceback:\n{traceback.format_exc()}")
                 safe_result = await _add_memory_safe_mode(
                     graphiti, name, episode_body, group_id,
                     source_description, source, start_time

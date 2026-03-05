@@ -28,6 +28,8 @@ import re
 import sys
 from typing import Any, Dict, List, Optional
 
+from pathlib import Path
+
 import aiohttp
 from dotenv import load_dotenv
 
@@ -40,7 +42,8 @@ from .ollama_embedder import OllamaEmbedder
 
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+# 明確指定 .env 路徑，避免 PM2/MCP 啟動時 cwd 不在專案根目錄
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # 確保導入路徑
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -411,7 +414,24 @@ class OptimizedOllamaClient(LLMClient):
         return self._validate_response(json_data, response_model)
 
     def _build_entity_extraction_prompt(self, response_model: Any) -> str:
-        """建立實體提取的系統提示。"""
+        """建立結構化輸出的 JSON schema 提示。
+
+        僅補充 JSON 格式範例，不重新定義實體類型或提取規則，
+        避免與 graphiti_core 原始 prompt 衝突。
+        """
+        try:
+            schema = response_model.model_json_schema()
+            schema_str = json.dumps(schema, ensure_ascii=False, indent=2)
+        except Exception:
+            schema_str = None
+
+        if schema_str:
+            return (
+                "Respond with valid JSON only. "
+                f"Your response MUST conform to this JSON schema:\n{schema_str}"
+            )
+
+        # fallback：手動產生簡易提示
         fields = {}
         for field_name, field_type in response_model.__annotations__.items():
             if hasattr(field_type, "__origin__"):
@@ -423,27 +443,15 @@ class OptimizedOllamaClient(LLMClient):
                     fields[field_name] = "string"
             else:
                 type_map = {
-                    str: "string",
-                    int: "number",
-                    float: "number",
-                    bool: "boolean",
-                    list: "array",
-                    dict: "object",
+                    str: "string", int: "number", float: "number",
+                    bool: "boolean", list: "array", dict: "object",
                 }
                 fields[field_name] = type_map.get(field_type, "string")
 
-        schema_hint = f"Return a JSON object with these fields: {json.dumps(fields)}"
-
-        return f"""You are an entity extraction assistant. Extract ALL entities and relationships from text.
-
-IMPORTANT:
-1. Extract ALL entities mentioned (people, organizations, technologies, concepts)
-2. Each entity should have a unique name
-3. Entity types: 0=Person, 1=Organization, 2=Technology, 3=Concept, 4=Place, 5=Other
-4. Include observations about each entity
-5. Respond with valid JSON only
-
-{schema_hint}"""
+        return (
+            "Respond with valid JSON only. "
+            f"Return a JSON object with these fields: {json.dumps(fields)}"
+        )
 
     def _extract_json_from_response(self, response: str) -> Dict:
         """從響應中提取 JSON。"""
