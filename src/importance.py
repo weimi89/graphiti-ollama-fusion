@@ -10,6 +10,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, List
 
+from src.timezone_utils import format_timestamp
+
 logger = logging.getLogger(__name__)
 
 
@@ -125,7 +127,7 @@ async def get_stale_entities(
                     "group_id": record["group_id"],
                     "access_count": record["access_count"],
                     "last_accessed": record["last_accessed"],
-                    "created_at": str(record["created_at"]) if record["created_at"] else None,
+                    "created_at": format_timestamp(record["created_at"]),
                 })
 
             result = await session.run(edge_query, params)
@@ -139,7 +141,7 @@ async def get_stale_entities(
                     "target_name": record["target_name"],
                     "access_count": record["access_count"],
                     "last_accessed": record["last_accessed"],
-                    "created_at": str(record["created_at"]) if record["created_at"] else None,
+                    "created_at": format_timestamp(record["created_at"]),
                 })
 
         return {

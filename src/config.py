@@ -319,6 +319,9 @@ class GraphitiConfig:
     stale_days_threshold: int = 30
     stale_min_access_count: int = 2
 
+    # 顯示時區（API 回傳時間戳轉換用）
+    display_timezone: str = "UTC"
+
     @classmethod
     def from_env(cls) -> "GraphitiConfig":
         """
@@ -389,6 +392,11 @@ class GraphitiConfig:
             except json.JSONDecodeError:
                 logger.warning("GRAPHITI_LOG_THIRD_PARTY_LEVELS 格式無效（需 JSON），已忽略")
 
+        # 顯示時區
+        config.display_timezone = os.getenv(
+            "GRAPHITI_DISPLAY_TIMEZONE", config.display_timezone
+        )
+
         # 記憶效能配置
         _load_memory_performance_settings(config)
 
@@ -435,6 +443,7 @@ class GraphitiConfig:
                 "importance_weight",
                 "stale_days_threshold",
                 "stale_min_access_count",
+                "display_timezone",
             ]:
                 if key in config_data:
                     setattr(config, key, config_data[key])
@@ -524,6 +533,7 @@ class GraphitiConfig:
                 "importance_weight": self.importance_weight,
                 "stale_days_threshold": self.stale_days_threshold,
                 "stale_min_access_count": self.stale_min_access_count,
+                "display_timezone": self.display_timezone,
             }
 
             config_file = Path(config_path)
@@ -604,6 +614,10 @@ class GraphitiConfig:
             except json.JSONDecodeError:
                 logger.warning("GRAPHITI_LOG_THIRD_PARTY_LEVELS 格式無效（需 JSON），已忽略")
 
+        # 顯示時區
+        if os.getenv("GRAPHITI_DISPLAY_TIMEZONE"):
+            self.display_timezone = os.getenv("GRAPHITI_DISPLAY_TIMEZONE")
+
         # 記憶效能配置
         _load_memory_performance_settings(self)
 
@@ -633,6 +647,7 @@ class GraphitiConfig:
             "max_coroutines": self.memory_performance.max_coroutines,
             "chunk_threshold": self.memory_performance.chunk_threshold,
             "importance_tracking": self.enable_importance_tracking,
+            "display_timezone": self.display_timezone,
         }
 
 

@@ -54,6 +54,7 @@ from src.logging_setup import (
 )
 from src.ollama_graphiti_client import OptimizedOllamaClient
 from src.ollama_embedder import OllamaEmbedder
+from src.timezone_utils import configure_timezone, format_timestamp
 
 # 載入 Graphiti 核心模組
 from graphiti_core import Graphiti
@@ -380,7 +381,7 @@ def _simplify_community_node(node: Any) -> dict:
         "name": getattr(node, "name", ""),
         "summary": getattr(node, "summary", "")[:300],
         "group_id": getattr(node, "group_id", ""),
-        "created_at": str(getattr(node, "created_at", "")),
+        "created_at": format_timestamp(getattr(node, "created_at", "")),
     }
 
 
@@ -395,7 +396,7 @@ def _simplify_search_results(results: SearchResults) -> dict:
                 "content": getattr(ep, "content", "")[:500],
                 "uuid": str(getattr(ep, "uuid", "")),
                 "group_id": getattr(ep, "group_id", ""),
-                "created_at": str(getattr(ep, "created_at", "")),
+                "created_at": format_timestamp(getattr(ep, "created_at", "")),
             }
             for ep in (results.episodes or [])
         ],
@@ -491,7 +492,7 @@ async def add_memory_simple(
             name=name,
             group_id=group_id,
             status="pending",
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=format_timestamp(datetime.now(timezone.utc)),
         )
         _memory_tasks[task_id] = task
 
@@ -920,7 +921,7 @@ def _simplify_node(node: Any) -> dict:
     return {
         "name": getattr(node, "name", ""),
         "uuid": str(getattr(node, "uuid", "")),
-        "created_at": str(getattr(node, "created_at", "")),
+        "created_at": format_timestamp(getattr(node, "created_at", "")),
         "summary": getattr(node, "summary", "")[:200],
         "group_id": getattr(node, "group_id", ""),
         "labels": getattr(node, "labels", []),
@@ -1044,9 +1045,9 @@ def _simplify_edge(edge: Any) -> dict:
         "group_id": getattr(edge, "group_id", ""),
         "source_node_uuid": str(getattr(edge, "source_node_uuid", "")),
         "target_node_uuid": str(getattr(edge, "target_node_uuid", "")),
-        "created_at": str(getattr(edge, "created_at", "")),
-        "valid_at": str(getattr(edge, "valid_at", "")),
-        "invalid_at": str(invalid_at) if invalid_at else None,
+        "created_at": format_timestamp(getattr(edge, "created_at", "")),
+        "valid_at": format_timestamp(getattr(edge, "valid_at", "")),
+        "invalid_at": format_timestamp(invalid_at) if invalid_at else None,
         "episodes": getattr(edge, "episodes", []),
     }
 
@@ -1110,7 +1111,7 @@ async def add_episode_bulk(
             name=f"bulk_add_{len(episodes)}_episodes",
             group_id=group_id,
             status="pending",
-            created_at=now.isoformat(),
+            created_at=format_timestamp(now),
             chunks_total=len(episodes),
         )
         _memory_tasks[task_id] = task
@@ -1294,7 +1295,7 @@ async def build_communities(
             name="build_communities",
             group_id=",".join(group_ids) if group_ids else "all",
             status="pending",
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=format_timestamp(datetime.now(timezone.utc)),
         )
         _memory_tasks[task_id] = task
 
@@ -1474,7 +1475,7 @@ async def get_episodes(last_n: int = 10, group_id: str = "") -> dict:
                 "content": getattr(ep, "content", "")[:500],
                 "uuid": str(getattr(ep, "uuid", "")),
                 "group_id": getattr(ep, "group_id", ""),
-                "created_at": str(getattr(ep, "created_at", "")),
+                "created_at": format_timestamp(getattr(ep, "created_at", "")),
             }
             for ep in episodes
         ]
@@ -1644,8 +1645,8 @@ async def get_node_edges(
                         "source_name": record["source_name"],
                         "target_name": record["target_name"],
                         "target_uuid": record["target_uuid"],
-                        "created_at": str(record["created_at"]) if record["created_at"] else None,
-                        "invalid_at": str(record["invalid_at"]) if record["invalid_at"] else None,
+                        "created_at": format_timestamp(record["created_at"]),
+                        "invalid_at": format_timestamp(record["invalid_at"]) if record["invalid_at"] else None,
                     })
 
             if include_inbound:
@@ -1671,8 +1672,8 @@ async def get_node_edges(
                         "source_name": record["source_name"],
                         "target_name": record["target_name"],
                         "source_uuid": record["source_uuid"],
-                        "created_at": str(record["created_at"]) if record["created_at"] else None,
-                        "invalid_at": str(record["invalid_at"]) if record["invalid_at"] else None,
+                        "created_at": format_timestamp(record["created_at"]),
+                        "invalid_at": format_timestamp(record["invalid_at"]) if record["invalid_at"] else None,
                     })
 
         duration = time.time() - start_time
@@ -2026,9 +2027,9 @@ async def get_entity_edge(uuid: str) -> dict:
                 "fact": getattr(entity_edge, "fact", ""),
                 "name": getattr(entity_edge, "name", ""),
                 "group_id": getattr(entity_edge, "group_id", ""),
-                "created_at": str(getattr(entity_edge, "created_at", "")),
-                "valid_at": str(getattr(entity_edge, "valid_at", "")),
-                "invalid_at": str(invalid_at) if invalid_at else None,
+                "created_at": format_timestamp(getattr(entity_edge, "created_at", "")),
+                "valid_at": format_timestamp(getattr(entity_edge, "valid_at", "")),
+                "invalid_at": format_timestamp(invalid_at) if invalid_at else None,
                 "episodes": getattr(entity_edge, "episodes", []),
             },
             "duration": round(duration, 2),
@@ -2230,6 +2231,9 @@ def main() -> None:
             app_config.server.host = args.host
         if args.port != 8000:
             app_config.server.port = args.port
+
+        # 設定顯示時區
+        configure_timezone(app_config.display_timezone)
 
         # 設置日誌
         graphiti_logger = setup_logging(app_config.logging)

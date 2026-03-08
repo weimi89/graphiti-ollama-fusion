@@ -536,7 +536,7 @@ class TestSimplifyEdge:
             episodes=[],
         )
         result = _simplify_edge(edge)
-        assert result["invalid_at"] == "2026-06-01"
+        assert result["invalid_at"] == "2026-06-01T00:00:00+00:00"
 
 
 class TestParseEpisodeType:

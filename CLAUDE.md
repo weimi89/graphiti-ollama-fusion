@@ -74,6 +74,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 │   ├── deduplication.py         # 記憶去重（餘弦相似度比對）
 │   ├── importance.py            # 重要性追蹤與智慧遺忘
 │   ├── safe_memory_add.py       # 安全記憶添加（跳過實體提取）
+│   ├── timezone_utils.py        # 時區轉換工具（UTC→本地時區顯示轉換）
 │   ├── exceptions.py            # 結構化異常處理（12 種異常類別）
 │   └── logging_setup.py         # 日誌配置（時間輪轉 + 性能監控）
 ├── web/                         # Web 管理介面前端（SPA，純 HTML/CSS/JS，無 build）
@@ -224,6 +225,7 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 | `OLLAMA_EMBEDDING_MODEL` | 嵌入模型 | `nomic-embed-text:v1.5` |
 | `NEO4J_URI` | Neo4j 連接 URI | `bolt://localhost:7687` |
 | `NEO4J_PASSWORD` | Neo4j 密碼 | (必填) |
+| `GRAPHITI_DISPLAY_TIMEZONE` | API 回傳時間戳的顯示時區（IANA 名稱） | `UTC` |
 | `GRAPHITI_CHUNK_THRESHOLD` | 觸發智慧切分的字元數 | `800` |
 | `GRAPHITI_MAX_CHUNK_SIZE` | 切分後每段最大字元數 | `600` |
 | `GRAPHITI_MAX_COROUTINES` | 最大並行協程數 | `5` |

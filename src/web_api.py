@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Coroutine, Any, List
 
+from src.timezone_utils import format_timestamp
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -218,7 +219,7 @@ def create_web_routes(
                         "name": r["name"] or "",
                         "summary": (r["summary"] or "")[:200],
                         "group_id": r["group_id"] or "",
-                        "created_at": str(r["created_at"]) if r["created_at"] else "",
+                        "created_at": format_timestamp(r["created_at"]),
                         "labels": [l for l in (r["labels"] or []) if l not in ("Entity", "__Entity__")],
                     })
             duration = round(time.monotonic() - t0, 2) if t0 is not None else None
@@ -288,7 +289,7 @@ def create_web_routes(
                         "name": r["name"] or "",
                         "fact": (r["fact"] or "")[:300],
                         "group_id": r["group_id"] or "",
-                        "created_at": str(r["created_at"]) if r["created_at"] else "",
+                        "created_at": format_timestamp(r["created_at"]),
                         "source_name": r["source_name"] or "",
                         "target_name": r["target_name"] or "",
                         "source_uuid": r["source_uuid"] or "",
@@ -359,7 +360,7 @@ def create_web_routes(
                         "name": r["name"] or "",
                         "content": (r["content"] or "")[:500],
                         "group_id": r["group_id"] or "",
-                        "created_at": str(r["created_at"]) if r["created_at"] else "",
+                        "created_at": format_timestamp(r["created_at"]),
                         "source_description": r["source_description"] or "",
                     })
             duration = round(time.monotonic() - t0, 2) if t0 is not None else None
@@ -507,7 +508,7 @@ def create_web_routes(
                     "name": getattr(n, "name", ""),
                     "summary": (getattr(n, "summary", "") or "")[:200],
                     "group_id": getattr(n, "group_id", ""),
-                    "created_at": str(getattr(n, "created_at", "")),
+                    "created_at": format_timestamp(getattr(n, "created_at", "")),
                     "labels": getattr(n, "labels", []),
                 })
 
@@ -555,7 +556,7 @@ def create_web_routes(
                     "name": getattr(e, "name", ""),
                     "fact": (getattr(e, "fact", "") or "")[:300],
                     "group_id": getattr(e, "group_id", ""),
-                    "created_at": str(getattr(e, "created_at", "")),
+                    "created_at": format_timestamp(getattr(e, "created_at", "")),
                     "source_node_uuid": str(getattr(e, "source_node_uuid", "")),
                     "target_node_uuid": str(getattr(e, "target_node_uuid", "")),
                 })
@@ -615,7 +616,7 @@ def create_web_routes(
                     "name": getattr(ep, "name", ""),
                     "content": (getattr(ep, "content", "") or "")[:500],
                     "group_id": getattr(ep, "group_id", ""),
-                    "created_at": str(getattr(ep, "created_at", "")),
+                    "created_at": format_timestamp(getattr(ep, "created_at", "")),
                     "source_description": getattr(ep, "source_description", ""),
                 }
                 for ep in (results.episodes or [])
@@ -844,7 +845,7 @@ def create_web_routes(
                         "name": r["name"] or "",
                         "summary": (r["summary"] or "")[:200],
                         "group_id": r["group_id"] or "",
-                        "created_at": str(r["created_at"]) if r["created_at"] else "",
+                        "created_at": format_timestamp(r["created_at"]),
                         "degree": r["degree"],
                     })
 
@@ -1268,7 +1269,7 @@ def create_web_routes(
                         "name": record["name"],
                         "summary": (record["summary"] or "")[:300],
                         "group_id": record["group_id"],
-                        "created_at": str(record["created_at"]) if record["created_at"] else None,
+                        "created_at": format_timestamp(record["created_at"]),
                     })
 
             pages = max(1, (total + limit - 1) // limit)
