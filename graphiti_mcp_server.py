@@ -56,6 +56,21 @@ from src.ollama_graphiti_client import OptimizedOllamaClient
 from src.ollama_embedder import OllamaEmbedder
 from src.timezone_utils import configure_timezone, format_timestamp
 
+# Groq 客戶端（按需載入）
+try:
+    from graphiti_core.llm_client.groq_client import GroqClient
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+
+# GLM（智谱 AI）客戶端
+try:
+    from src.glm_client import GlmClient
+    from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
+    GLM_AVAILABLE = True
+except ImportError:
+    GLM_AVAILABLE = False
+
 # 載入 Graphiti 核心模組
 from graphiti_core import Graphiti
 from graphiti_core.llm_client.config import LLMConfig
@@ -241,12 +256,15 @@ async def initialize_graphiti() -> Graphiti:
             # 初始化 LLM 客戶端（失敗時設為 None）
             llm_client = _create_llm_client()
 
-            # 建立嵌入器
-            embedder = OllamaEmbedder(
-                model=app_config.embedder.model,
-                base_url=app_config.embedder.base_url,
-                dimensions=app_config.embedder.dimensions,
-            )
+            # 建立嵌入器（GLM 模式使用 GLM Embedding，否則使用 Ollama）
+            if app_config.llm_provider == "glm":
+                embedder = _create_glm_embedder(logging.getLogger("graphiti"))
+            else:
+                embedder = OllamaEmbedder(
+                    model=app_config.embedder.model,
+                    base_url=app_config.embedder.base_url,
+                    dimensions=app_config.embedder.dimensions,
+                )
 
             # 建立 Graphiti 實例
             max_coroutines = app_config.memory_performance.max_coroutines if app_config else 5
@@ -277,43 +295,119 @@ async def initialize_graphiti() -> Graphiti:
             raise handle_exception(e, "Graphiti 初始化失敗")
 
 
-def _create_llm_client() -> Optional[OptimizedOllamaClient]:
+def _create_llm_client():
     """
-    建立 Ollama LLM 客戶端。
+    根據 LLM_PROVIDER 設定建立對應的 LLM 客戶端。
 
-    small_model 未設定時自動回退為主模型，確保 LLMConfig 始終有有效值。
-    客戶端內部的 _get_model_for_size() 會根據 graphiti-core 傳入的
-    ModelSize 參數自動分流到對應模型。
+    支援的提供者：
+        - "ollama"（預設）：使用 OptimizedOllamaClient，支援雙模型分流和 target_language
+        - "groq"：使用 graphiti-core 內建的 GroqClient，適合高速推理
 
     Returns:
-        OptimizedOllamaClient: 成功時返回客戶端實例
+        LLMClient: 成功時返回客戶端實例
         None: 初始化失敗時返回 None
-
-    Note:
-        此函數不會拋出例外，失敗時僅記錄警告並返回 None。
     """
+    provider = app_config.llm_provider
+    glog = logging.getLogger("graphiti")
+
     try:
-        # small_model 回退策略：未設定時使用主模型，避免 None 傳入 LLMConfig
-        small_model = app_config.ollama.small_model or app_config.ollama.model
-        llm_config = LLMConfig(
-            base_url=app_config.ollama.base_url,
-            model=app_config.ollama.model,
-            small_model=small_model,
-            temperature=app_config.ollama.temperature,
-        )
-        client = OptimizedOllamaClient(
-            config=llm_config,
-            target_language=app_config.ollama.target_language,
-        )
-        lang_info = f", 目標語言: {app_config.ollama.target_language}" if app_config.ollama.target_language else ""
-        logging.getLogger("graphiti").info(
-            f"LLM 客戶端初始化成功 (主模型: {app_config.ollama.model}, "
-            f"小模型: {small_model}{lang_info})"
-        )
-        return client
+        if provider == "glm":
+            return _create_glm_client(glog)
+        elif provider == "groq":
+            return _create_groq_client(glog)
+        else:
+            return _create_ollama_client(glog)
     except Exception as e:
-        logging.getLogger("graphiti").warning(f"LLM 客戶端初始化失敗，使用 None: {e}")
+        glog.warning(f"LLM 客戶端初始化失敗 (provider={provider})，使用 None: {e}")
         return None
+
+
+def _create_ollama_client(glog) -> Optional[OptimizedOllamaClient]:
+    """建立 Ollama LLM 客戶端。"""
+    small_model = app_config.ollama.small_model or app_config.ollama.model
+    llm_config = LLMConfig(
+        base_url=app_config.ollama.base_url,
+        model=app_config.ollama.model,
+        small_model=small_model,
+        temperature=app_config.ollama.temperature,
+    )
+    client = OptimizedOllamaClient(
+        config=llm_config,
+        target_language=app_config.ollama.target_language,
+    )
+    lang_info = f", 目標語言: {app_config.ollama.target_language}" if app_config.ollama.target_language else ""
+    glog.info(
+        f"LLM 客戶端初始化成功 [Ollama] (主模型: {app_config.ollama.model}, "
+        f"小模型: {small_model}{lang_info})"
+    )
+    return client
+
+
+def _create_groq_client(glog):
+    """建立 Groq LLM 客戶端。"""
+    if not GROQ_AVAILABLE:
+        raise ImportError("groq 套件未安裝，請執行: uv add groq")
+
+    groq_cfg = app_config.groq
+    if not groq_cfg.api_key:
+        raise ValueError("GROQ_API_KEY 未設定")
+
+    llm_config = LLMConfig(
+        api_key=groq_cfg.api_key,
+        model=groq_cfg.model,
+        temperature=groq_cfg.temperature,
+        max_tokens=groq_cfg.max_tokens,
+    )
+    client = GroqClient(config=llm_config)
+    glog.info(
+        f"LLM 客戶端初始化成功 [Groq] (模型: {groq_cfg.model}, "
+        f"max_tokens: {groq_cfg.max_tokens})"
+    )
+    return client
+
+
+def _create_glm_client(glog):
+    """建立 GLM（智谱 AI）LLM 客戶端，使用 OpenAI 相容 API。"""
+    if not GLM_AVAILABLE:
+        raise ImportError("openai 套件未安裝")
+
+    glm_cfg = app_config.glm
+    if not glm_cfg.api_key:
+        raise ValueError("GLM_API_KEY 未設定")
+
+    llm_config = LLMConfig(
+        api_key=glm_cfg.api_key,
+        base_url=glm_cfg.base_url,
+        model=glm_cfg.model,
+        temperature=glm_cfg.temperature,
+        max_tokens=glm_cfg.max_tokens,
+    )
+    client = GlmClient(config=llm_config)
+    glog.info(
+        f"LLM 客戶端初始化成功 [GLM] (模型: {glm_cfg.model}, "
+        f"base_url: {glm_cfg.base_url})"
+    )
+    return client
+
+
+def _create_glm_embedder(glog):
+    """建立 GLM Embedding 客戶端，使用 OpenAI 相容 API。"""
+    if not GLM_AVAILABLE:
+        raise ImportError("openai 套件未安裝")
+
+    glm_cfg = app_config.glm
+    embedder_config = OpenAIEmbedderConfig(
+        embedding_model=glm_cfg.embedding_model,
+        api_key=glm_cfg.api_key,
+        base_url=glm_cfg.base_url,
+        embedding_dim=glm_cfg.embedding_dimensions,
+    )
+    embedder = OpenAIEmbedder(config=embedder_config)
+    glog.info(
+        f"Embedder 初始化成功 [GLM] (模型: {glm_cfg.embedding_model}, "
+        f"維度: {glm_cfg.embedding_dimensions})"
+    )
+    return embedder
 
 
 # ============================================================================

@@ -74,6 +74,82 @@ class OllamaConfig:
 
 
 @dataclass
+class GlmConfig:
+    """
+    智谱 AI (GLM) 服務配置。
+
+    OpenAI 相容 API，同時提供 LLM 和 Embedding。
+
+    Attributes:
+        api_key: 智谱 AI API 金鑰
+        base_url: API 端點
+        model: LLM 模型名稱
+        embedding_model: Embedding 模型名稱
+        embedding_dimensions: Embedding 向量維度（64-2048）
+        temperature: 生成溫度
+        max_tokens: 最大輸出 token 數
+    """
+
+    api_key: str = ""
+    base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
+    model: str = "glm-4-flash"
+    embedding_model: str = "embedding-3"
+    embedding_dimensions: int = 768
+    temperature: float = 0.1
+    max_tokens: int = 4096
+
+    def validate(self) -> bool:
+        """驗證配置是否有效。"""
+        return not self.get_errors()
+
+    def get_errors(self) -> list[str]:
+        """返回配置中的具體錯誤列表。"""
+        errors = []
+        if not self.api_key:
+            errors.append("glm.api_key 不能為空")
+        if not self.model:
+            errors.append("glm.model 不能為空")
+        if not 0.0 <= self.temperature <= 2.0:
+            errors.append(f"glm.temperature 超出範圍 (0.0-2.0): {self.temperature}")
+        if not 64 <= self.embedding_dimensions <= 2048:
+            errors.append(f"glm.embedding_dimensions 超出範圍 (64-2048): {self.embedding_dimensions}")
+        return errors
+
+
+@dataclass
+class GroqConfig:
+    """
+    Groq LLM 服務配置。
+
+    Attributes:
+        api_key: Groq API 金鑰
+        model: 使用的模型名稱
+        max_tokens: 最大輸出 token 數
+        temperature: 生成溫度（0.0-2.0）
+    """
+
+    api_key: str = ""
+    model: str = "llama-3.3-70b-versatile"
+    max_tokens: int = 2048
+    temperature: float = 0.1
+
+    def validate(self) -> bool:
+        """驗證配置是否有效。"""
+        return not self.get_errors()
+
+    def get_errors(self) -> list[str]:
+        """返回配置中的具體錯誤列表。"""
+        errors = []
+        if not self.api_key:
+            errors.append("groq.api_key 不能為空")
+        if not self.model:
+            errors.append("groq.model 不能為空")
+        if not 0.0 <= self.temperature <= 2.0:
+            errors.append(f"groq.temperature 超出範圍 (0.0-2.0): {self.temperature}")
+        return errors
+
+
+@dataclass
 class OllamaEmbedderConfig:
     """
     Ollama 嵌入器配置。
@@ -298,7 +374,12 @@ class GraphitiConfig:
         cosine_similarity_threshold: 餘弦相似度閾值
     """
 
+    # LLM 提供者選擇（"ollama", "groq", "glm"）
+    llm_provider: str = "ollama"
+
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
+    groq: GroqConfig = field(default_factory=GroqConfig)
+    glm: GlmConfig = field(default_factory=GlmConfig)
     embedder: OllamaEmbedderConfig = field(default_factory=OllamaEmbedderConfig)
     neo4j: Neo4jConfig = field(default_factory=Neo4jConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -338,6 +419,29 @@ class GraphitiConfig:
             GraphitiConfig: 載入的配置實例
         """
         config = cls()
+
+        # LLM 提供者
+        config.llm_provider = os.getenv("LLM_PROVIDER", config.llm_provider).lower()
+
+        # GLM（智谱 AI）配置
+        config.glm.api_key = os.getenv("GLM_API_KEY", config.glm.api_key)
+        config.glm.base_url = os.getenv("GLM_BASE_URL", config.glm.base_url)
+        config.glm.model = os.getenv("GLM_MODEL", config.glm.model)
+        config.glm.embedding_model = os.getenv("GLM_EMBEDDING_MODEL", config.glm.embedding_model)
+        if os.getenv("GLM_EMBEDDING_DIMENSIONS"):
+            config.glm.embedding_dimensions = int(os.getenv("GLM_EMBEDDING_DIMENSIONS"))
+        if os.getenv("GLM_MAX_TOKENS"):
+            config.glm.max_tokens = int(os.getenv("GLM_MAX_TOKENS"))
+        if os.getenv("GLM_TEMPERATURE"):
+            config.glm.temperature = float(os.getenv("GLM_TEMPERATURE"))
+
+        # Groq 配置
+        config.groq.api_key = os.getenv("GROQ_API_KEY", config.groq.api_key)
+        config.groq.model = os.getenv("GROQ_MODEL", config.groq.model)
+        if os.getenv("GROQ_MAX_TOKENS"):
+            config.groq.max_tokens = int(os.getenv("GROQ_MAX_TOKENS"))
+        if os.getenv("GROQ_TEMPERATURE"):
+            config.groq.temperature = float(os.getenv("GROQ_TEMPERATURE"))
 
         # Ollama 配置
         config.ollama.model = os.getenv("OLLAMA_MODEL", config.ollama.model)
@@ -426,6 +530,10 @@ class GraphitiConfig:
                 config_data = json.load(f)
 
             config = cls()
+            if "llm_provider" in config_data:
+                config.llm_provider = config_data["llm_provider"]
+            _apply_config_section(config.glm, config_data.get("glm", {}))
+            _apply_config_section(config.groq, config_data.get("groq", {}))
             _apply_config_section(config.ollama, config_data.get("ollama", {}))
             _apply_config_section(config.embedder, config_data.get("embedder", {}))
             _apply_config_section(config.neo4j, config_data.get("neo4j", {}))
@@ -467,7 +575,14 @@ class GraphitiConfig:
             list[str]: 錯誤訊息列表，空列表表示全部通過
         """
         errors = []
-        for sub in [self.ollama, self.embedder, self.neo4j, self.logging, self.server, self.memory_performance]:
+        # 只驗證啟用的 LLM 提供者
+        if self.llm_provider == "glm":
+            errors.extend(self.glm.get_errors())
+        elif self.llm_provider == "groq":
+            errors.extend(self.groq.get_errors())
+        else:
+            errors.extend(self.ollama.get_errors())
+        for sub in [self.embedder, self.neo4j, self.logging, self.server, self.memory_performance]:
             errors.extend(sub.get_errors())
         return errors
 
@@ -486,6 +601,22 @@ class GraphitiConfig:
         """
         try:
             config_data = {
+                "llm_provider": self.llm_provider,
+                "glm": {
+                    "api_key": "***",
+                    "base_url": self.glm.base_url,
+                    "model": self.glm.model,
+                    "embedding_model": self.glm.embedding_model,
+                    "embedding_dimensions": self.glm.embedding_dimensions,
+                    "max_tokens": self.glm.max_tokens,
+                    "temperature": self.glm.temperature,
+                },
+                "groq": {
+                    "api_key": "***",
+                    "model": self.groq.model,
+                    "max_tokens": self.groq.max_tokens,
+                    "temperature": self.groq.temperature,
+                },
                 "ollama": {
                     "model": self.ollama.model,
                     "small_model": self.ollama.small_model,
@@ -555,6 +686,36 @@ class GraphitiConfig:
 
         適用於 JSON 配置為基礎、環境變數為覆蓋的部署場景（如 Docker）。
         """
+        # LLM 提供者
+        if os.getenv("LLM_PROVIDER"):
+            self.llm_provider = os.getenv("LLM_PROVIDER").lower()
+
+        # GLM（智谱 AI）配置
+        if os.getenv("GLM_API_KEY"):
+            self.glm.api_key = os.getenv("GLM_API_KEY")
+        if os.getenv("GLM_BASE_URL"):
+            self.glm.base_url = os.getenv("GLM_BASE_URL")
+        if os.getenv("GLM_MODEL"):
+            self.glm.model = os.getenv("GLM_MODEL")
+        if os.getenv("GLM_EMBEDDING_MODEL"):
+            self.glm.embedding_model = os.getenv("GLM_EMBEDDING_MODEL")
+        if os.getenv("GLM_EMBEDDING_DIMENSIONS"):
+            self.glm.embedding_dimensions = int(os.getenv("GLM_EMBEDDING_DIMENSIONS"))
+        if os.getenv("GLM_MAX_TOKENS"):
+            self.glm.max_tokens = int(os.getenv("GLM_MAX_TOKENS"))
+        if os.getenv("GLM_TEMPERATURE"):
+            self.glm.temperature = float(os.getenv("GLM_TEMPERATURE"))
+
+        # Groq 配置
+        if os.getenv("GROQ_API_KEY"):
+            self.groq.api_key = os.getenv("GROQ_API_KEY")
+        if os.getenv("GROQ_MODEL"):
+            self.groq.model = os.getenv("GROQ_MODEL")
+        if os.getenv("GROQ_MAX_TOKENS"):
+            self.groq.max_tokens = int(os.getenv("GROQ_MAX_TOKENS"))
+        if os.getenv("GROQ_TEMPERATURE"):
+            self.groq.temperature = float(os.getenv("GROQ_TEMPERATURE"))
+
         # Ollama 配置
         if os.getenv("OLLAMA_MODEL"):
             self.ollama.model = os.getenv("OLLAMA_MODEL")
@@ -632,9 +793,13 @@ class GraphitiConfig:
             dict: 不含敏感資訊的配置摘要
         """
         return {
+            "llm_provider": self.llm_provider,
             "ollama_model": self.ollama.model,
             "ollama_small_model": self.ollama.small_model or self.ollama.model,
             "ollama_target_language": self.ollama.target_language,
+            "groq_model": self.groq.model if self.llm_provider == "groq" else "(未啟用)",
+            "glm_model": self.glm.model if self.llm_provider == "glm" else "(未啟用)",
+            "glm_embedding": self.glm.embedding_model if self.llm_provider == "glm" else "(未啟用)",
             "embedder_model": self.embedder.model,
             "embedder_dimensions": self.embedder.dimensions,
             "neo4j_uri": self.neo4j.uri,
