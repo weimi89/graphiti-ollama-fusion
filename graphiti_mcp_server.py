@@ -2367,6 +2367,7 @@ def main() -> None:
         # 設置 MCP 伺服器
         mcp.settings.host = app_config.server.host
         mcp.settings.port = app_config.server.port
+        mcp.settings.stateless_http = True
 
         # 根據傳輸方式啟動
         _run_server(args.transport, main_logger)
