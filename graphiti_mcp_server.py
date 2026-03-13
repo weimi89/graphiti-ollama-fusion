@@ -134,7 +134,7 @@ SEARCH_RECIPES: Dict[str, SearchConfig] = {
 }
 
 # 載入環境變數（明確指定 .env 路徑，避免 PM2/MCP 啟動時 cwd 不在專案根目錄）
-load_dotenv(Path(__file__).resolve().parent / ".env")
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 
 # ============================================================================
@@ -213,8 +213,10 @@ Graphiti 是一個基於知識圖譜的 AI 代理記憶服務。
 每條資訊按 group_id 組織，讓您可以維護獨立的知識領域。
 """
 
-# 建立 FastMCP 應用程式
-mcp = FastMCP("graphiti-ollama-memory", instructions=GRAPHITI_MCP_INSTRUCTIONS)
+# 建立 FastMCP 應用程式（app_config 尚未載入，直接從環境變數取得 provider）
+_llm_provider = os.environ.get("LLM_PROVIDER", "ollama")
+_service_name = f"graphiti-{_llm_provider}-memory"
+mcp = FastMCP(_service_name, instructions=GRAPHITI_MCP_INSTRUCTIONS)
 
 
 # ============================================================================
@@ -1831,8 +1833,9 @@ async def test_connection() -> dict:
 async def _test_llm(graphiti: Graphiti) -> str:
     """測試 LLM 連接。"""
     try:
+        from graphiti_core.prompts.models import Message
         test_response = await graphiti.llm_client.generate_response(
-            [{"role": "user", "content": "請回答：1+1=?"}]
+            [Message(role="user", content="請回答：1+1=?")]
         )
         return "OK" if test_response else "回應為空"
     except Exception as e:
@@ -1842,7 +1845,7 @@ async def _test_llm(graphiti: Graphiti) -> str:
 async def _test_embedder(graphiti: Graphiti) -> str:
     """測試嵌入器連接。"""
     try:
-        test_embedding = await graphiti.embedder.create([{"text": "測試"}])
+        test_embedding = await graphiti.embedder.create("測試")
         return "正常" if test_embedding and len(test_embedding) > 0 else "嵌入生成失敗"
     except Exception as e:
         return f"錯誤: {str(e)[:100]}"
@@ -2147,7 +2150,7 @@ async def get_status() -> dict:
         start_time = time.time()
 
         status_info = {
-            "service": "graphiti-ollama-mcp",
+            "service": _service_name,
             "status": "checking",
             "components": {},
         }
@@ -2174,7 +2177,7 @@ async def get_status() -> dict:
 
     except Exception as e:
         return {
-            "service": "graphiti-ollama-mcp",
+            "service": _service_name,
             "status": "error",
             "error": str(e),
             "message": "服務狀態檢查失敗",
@@ -2202,12 +2205,19 @@ async def _check_llm_status() -> dict:
         graphiti = await initialize_graphiti()
 
         if graphiti.llm_client:
+            from graphiti_core.prompts.models import Message
             test_response = await graphiti.llm_client.generate_response(
-                [{"role": "user", "content": "回答: 1"}]
+                [Message(role="user", content="回答: 1")]
             )
+            # 根據 provider 取得對應模型名稱
+            if app_config.llm_provider == "glm":
+                model_name = app_config.glm.model
+            else:
+                model_name = app_config.ollama.model
             return {
                 "status": "connected" if test_response else "no_response",
-                "model": app_config.ollama.model,
+                "provider": app_config.llm_provider,
+                "model": model_name,
             }
         return {"status": "not_configured"}
     except Exception as e:
@@ -2219,11 +2229,18 @@ async def _check_embedder_status() -> dict:
     try:
         graphiti = await initialize_graphiti()
 
-        test_embedding = await graphiti.embedder.create([{"text": "test"}])
+        test_embedding = await graphiti.embedder.create("test")
+        # 根據 provider 取得對應 embedder 資訊
+        if app_config.llm_provider == "glm":
+            emb_model = app_config.glm.embedding_model
+            emb_dim = app_config.glm.embedding_dimensions
+        else:
+            emb_model = app_config.embedder.model
+            emb_dim = app_config.embedder.dimensions
         return {
             "status": "connected" if test_embedding else "no_response",
-            "model": app_config.embedder.model,
-            "dimensions": app_config.embedder.dimensions,
+            "model": emb_model,
+            "dimensions": emb_dim,
         }
     except Exception as e:
         return {"status": "error", "error": str(e)[:100]}
@@ -2396,14 +2413,24 @@ async def _startup_warmup() -> None:
         except Exception as e:
             warmup_logger.warning(f"⚠ Neo4j 連線失敗: {e}（將在首次工具呼叫時重試）")
 
-        # 驗證 Ollama LLM
+        # 驗證 LLM
+        provider = app_config.llm_provider
         if graphiti.llm_client:
-            warmup_logger.info(f"✓ Ollama LLM 就緒（模型: {app_config.ollama.model}）")
+            if provider == "glm":
+                model_name = app_config.glm.model
+            elif provider == "groq":
+                model_name = app_config.groq.model
+            else:
+                model_name = app_config.ollama.model
+            warmup_logger.info(f"✓ {provider.upper()} LLM 就緒（模型: {model_name}）")
         else:
-            warmup_logger.warning("⚠ Ollama LLM 客戶端未初始化")
+            warmup_logger.warning(f"⚠ {provider.upper()} LLM 客戶端未初始化")
 
         # 驗證嵌入器
-        warmup_logger.info(f"✓ 嵌入器就緒（模型: {app_config.embedder.model}）")
+        if provider == "glm":
+            warmup_logger.info(f"✓ 嵌入器就緒（模型: {app_config.glm.embedding_model}）")
+        else:
+            warmup_logger.info(f"✓ 嵌入器就緒（模型: {app_config.embedder.model}）")
 
     except Exception as e:
         warmup_logger.warning(f"⚠ 啟動預熱失敗: {e}（將在首次工具呼叫時重試）")
