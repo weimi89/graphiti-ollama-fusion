@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Graphiti MCP Server — 本地化知識圖譜記憶服務，整合 Ollama 本地 LLM 與 Neo4j 圖資料庫的 MCP (Model Context Protocol) 服務器。基於 [getzep/graphiti](https://github.com/getzep/graphiti) 擴充開發，專為本地 Ollama 環境優化。
+Graphiti MCP Server — 知識圖譜記憶服務，整合多 LLM 提供者（Ollama / GLM / GROQ）與 Neo4j 圖資料庫的 MCP (Model Context Protocol) 服務器。基於 [getzep/graphiti](https://github.com/getzep/graphiti) 擴充開發，支援本地 Ollama 和雲端 LLM 彈性切換。
 
 ## Build and Run Commands
 
@@ -44,6 +44,7 @@ uv run python -m pytest tests/test_content_preprocessor.py -v
 uv run python -c "import src.config; print('OK')"
 uv run python -c "import src.ollama_embedder; print('OK')"
 uv run python -c "from src.ollama_graphiti_client import OptimizedOllamaClient; print('OK')"
+uv run python -c "from src.glm_client import GlmClient; print('OK')"
 
 # MCP Inspector 互動測試
 npx @modelcontextprotocol/inspector uv run python graphiti_mcp_server.py --transport stdio
@@ -69,6 +70,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 │   ├── config.py                # 配置管理（GraphitiConfig）支援 JSON/.env 層疊載入
 │   ├── web_api.py               # Web 管理介面 REST API 路由（20+ 端點）
 │   ├── ollama_graphiti_client.py # Ollama LLM 客戶端適配器（支援雙模型分流）
+│   ├── glm_client.py            # GLM（智谱 AI）LLM 客戶端（OpenAI 相容，簡化 schema 注入）
 │   ├── ollama_embedder.py       # Ollama 嵌入模型適配器
 │   ├── content_preprocessor.py  # 智慧內容切分（長文本自動分段處理）
 │   ├── deduplication.py         # 記憶去重（餘弦相似度比對）
@@ -106,7 +108,11 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **MCP 工具定義**：在 `graphiti_mcp_server.py` 中使用 `@mcp.tool()` 裝飾器定義，所有工具都有標準化的錯誤處理模式。
 
-**配置層級**：JSON 配置檔為基礎 + 環境變數覆蓋（支援 Docker 部署場景）。主要配置類為 `GraphitiConfig`，支援 `get_errors()` 返回具體驗證錯誤。重要子配置：`OllamaConfig`（含 `small_model`）、`MemoryPerformanceConfig`（切分閾值、並行度）。
+**配置層級**：JSON 配置檔為基礎 + 環境變數覆蓋（支援 Docker 部署場景）。主要配置類為 `GraphitiConfig`，支援 `get_errors()` 返回具體驗證錯誤。重要子配置：`OllamaConfig`（含 `small_model`）、`GroqConfig`、`GlmConfig`、`MemoryPerformanceConfig`（切分閾值、並行度）。
+
+**多 LLM 提供者架構**：透過 `LLM_PROVIDER` 環境變數切換提供者（`ollama` / `groq` / `glm`）。`_create_llm_client()` 根據設定路由到對應工廠函數。GLM 模式同時使用 GLM Embedding（`embedding-3`），其他模式使用 Ollama 嵌入器。
+
+**GLM 客戶端**：`src/glm_client.py` 繼承 `LLMClient`，透過 OpenAI 相容 API 連接智谱 AI。覆寫 `generate_response` 以簡化 schema 注入（只注入字段名稱列表，避免 GLM 將完整 `$defs` JSON Schema 當資料回傳）。強制使用 `json_object` 模式（GLM 不支援 `json_schema`）。
 
 **並發安全**：使用 `asyncio.Lock` 保護 Graphiti 初始化，防止並發競態。`clear_graph` 後自動重建 Neo4j 索引。
 
@@ -208,23 +214,36 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 ## Required Services
 
 - **Neo4j**: `bolt://localhost:7687`（4.0+）
-- **Ollama**: `http://localhost:11434`
-  - LLM 主模型: `qwen2.5:3b`（推薦，速度與穩定性最佳平衡）
-  - LLM 小模型: `qwen2.5:3b`（用於簡單任務，可替換為更快的模型）
-  - Embedder: `nomic-embed-text:v1.5`（768 維向量）
+- **LLM 提供者**（三選一，透過 `LLM_PROVIDER` 切換）：
+  - **Ollama**（`ollama`，預設）：本地 LLM，`http://localhost:11434`
+    - LLM 主模型: `qwen2.5:3b`（推薦）、小模型: `qwen2.5:3b`
+    - Embedder: `nomic-embed-text:v1.5`（768 維向量）
+  - **GLM**（`glm`）：智谱 AI 雲端，免費 `glm-4-flash` 模型
+    - LLM: `glm-4-flash`（免費，穩定，~22s/短文本寫入）
+    - Embedder: `embedding-3`（768 維，需設 `GLM_EMBEDDING_DIMENSIONS=768`）
+  - **GROQ**（`groq`）：高速雲端推理，需搭配獨立嵌入器
+    - LLM: `llama-3.3-70b-versatile`（速度快但有 Rate Limit）
+    - 不提供 Embedding，需搭配 Ollama 或其他嵌入器
 
-> **模型選擇注意**：`qwen2.5:1.5b` 雖然更快但在 graphiti-core 的結構化 JSON 輸出上不穩定（成功率僅 33%）。`qwen2.5:3b` 是能穩定運行的最小可行模型（成功率 100%）。
+> **模型選擇注意**：Ollama 的 `qwen2.5:1.5b` 在 graphiti-core 結構化 JSON 輸出上不穩定（成功率僅 33%）。`qwen2.5:3b` 是能穩定運行的最小可行模型（成功率 100%）。GLM `glm-4-flash` 免費且穩定（零 Rate Limit 錯誤），但寫入速度比本地 Ollama 慢 2-5 倍。
 
 ## Key Environment Variables
 
 | 變數 | 說明 | 預設值 |
 |------|------|--------|
-| `OLLAMA_MODEL` | 主 LLM 模型 | `qwen2.5:7b` |
-| `OLLAMA_SMALL_MODEL` | 小 LLM 模型（簡單任務） | 與主模型相同 |
-| `OLLAMA_TARGET_LANGUAGE` | 強制 LLM 輸出語言（如 "Traditional Chinese"） | (未設定) |
-| `OLLAMA_EMBEDDING_MODEL` | 嵌入模型 | `nomic-embed-text:v1.5` |
+| `LLM_PROVIDER` | LLM 提供者（`ollama` / `groq` / `glm`） | `ollama` |
 | `NEO4J_URI` | Neo4j 連接 URI | `bolt://localhost:7687` |
 | `NEO4J_PASSWORD` | Neo4j 密碼 | (必填) |
+| `OLLAMA_MODEL` | Ollama 主 LLM 模型 | `qwen2.5:7b` |
+| `OLLAMA_SMALL_MODEL` | Ollama 小 LLM 模型（簡單任務） | 與主模型相同 |
+| `OLLAMA_TARGET_LANGUAGE` | 強制 LLM 輸出語言（如 "Traditional Chinese"） | (未設定) |
+| `OLLAMA_EMBEDDING_MODEL` | Ollama 嵌入模型 | `nomic-embed-text:v1.5` |
+| `GLM_API_KEY` | 智谱 AI API Key | (GLM 模式必填) |
+| `GLM_MODEL` | GLM LLM 模型 | `glm-4-flash` |
+| `GLM_EMBEDDING_MODEL` | GLM 嵌入模型 | `embedding-3` |
+| `GLM_EMBEDDING_DIMENSIONS` | GLM 嵌入維度（需與 Neo4j 索引一致） | `768` |
+| `GROQ_API_KEY` | GROQ API Key | (GROQ 模式必填) |
+| `GROQ_MODEL` | GROQ LLM 模型 | `llama-3.3-70b-versatile` |
 | `GRAPHITI_DISPLAY_TIMEZONE` | API 回傳時間戳的顯示時區（IANA 名稱） | `UTC` |
 | `GRAPHITI_CHUNK_THRESHOLD` | 觸發智慧切分的字元數 | `800` |
 | `GRAPHITI_MAX_CHUNK_SIZE` | 切分後每段最大字元數 | `600` |
@@ -245,4 +264,4 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 
 ## Upstream Reference
 
-本專案基於 [getzep/graphiti/mcp_server](https://github.com/getzep/graphiti/tree/main/mcp_server) 擴充開發。本地新增功能包括：Ollama 深度適配（含雙模型分流）、Web 管理介面（含社群瀏覽、三元組表單）、19 個 MCP 工具（含進階搜尋、衝突偵測、去重、重要性追蹤、智慧遺忘）、安全模式（Safe Mode）、智慧內容切分、背景記憶處理、完整異常/日誌系統。上游使用 graphiti-core 最新版，本地依賴 >=0.24.3。
+本專案基於 [getzep/graphiti/mcp_server](https://github.com/getzep/graphiti/tree/main/mcp_server) 擴充開發。本地新增功能包括：多 LLM 提供者架構（Ollama / GLM / GROQ 動態切換）、Ollama 深度適配（含雙模型分流）、GLM 客戶端（簡化 schema 注入）、Web 管理介面（含社群瀏覽、三元組表單）、19 個 MCP 工具（含進階搜尋、衝突偵測、去重、重要性追蹤、智慧遺忘）、安全模式（Safe Mode）、智慧內容切分、背景記憶處理、完整異常/日誌系統。上游使用 graphiti-core 最新版，本地依賴 >=0.24.3。

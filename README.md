@@ -1,16 +1,16 @@
 # Graphiti MCP Server
 
-本地化知識圖譜記憶服務 — 整合 Ollama 本地 LLM 與 Neo4j 圖資料庫的 MCP 服務器。
+知識圖譜記憶服務 — 整合多 LLM 提供者（Ollama / GLM / GROQ）與 Neo4j 圖資料庫的 MCP 服務器。
 
-基於 [getzep/graphiti](https://github.com/getzep/graphiti) 擴充開發，專為本地 Ollama 環境優化。
+基於 [getzep/graphiti](https://github.com/getzep/graphiti) 擴充開發，支援本地 Ollama 和雲端 LLM 彈性切換。
 
 ## 特色功能
 
 - **智能記憶管理** — 使用知識圖譜儲存和檢索複雜的記憶關係
 - **語意搜尋** — 基於向量嵌入的混合搜尋（向量 + 關鍵字 + 圖遍歷）
 - **16 種搜尋策略** — 進階搜尋支援 RRF、MMR、Cross-Encoder 等多種重排序方式
-- **完全本地化** — 使用 Ollama 本地 LLM，無需外部 API，資料不離開本機
-- **雙模型分流** — 複雜任務使用主模型，簡單任務自動切換小模型以提升效能
+- **多 LLM 提供者** — 支援 Ollama（本地）、GLM（智谱 AI 免費）、GROQ（高速推理），透過環境變數一鍵切換
+- **雙模型分流** — Ollama 模式下複雜任務使用主模型，簡單任務自動切換小模型以提升效能
 - **智慧內容切分** — 長文本自動分段處理，降低 LLM 負載（可配置閾值）
 - **背景記憶處理** — 記憶添加可在背景執行，MCP 呼叫立即返回
 - **記憶去重** — 自動偵測高度相似的既有記憶，避免重複儲存
@@ -33,11 +33,21 @@
 |------|------|
 | Python | 3.10+（推薦 3.11+） |
 | Neo4j | 4.0+（`bolt://localhost:7687`） |
-| Ollama | 本地運行（`http://localhost:11434`） |
+| LLM 提供者 | Ollama / GLM / GROQ（三選一） |
 | Node.js | 18+（僅用於 PM2 背景執行，可選） |
 | 磁碟空間 | ~3GB（Ollama 模型 + Neo4j 資料） |
 
-### 必需的 Ollama 模型
+### LLM 提供者選擇
+
+透過 `LLM_PROVIDER` 環境變數切換（`ollama` / `glm` / `groq`）：
+
+| 提供者 | 特點 | LLM 模型 | Embedding | 適合場景 |
+|--------|------|----------|-----------|----------|
+| **Ollama**（預設） | 完全本地，資料不離機 | `qwen2.5:3b` | `nomic-embed-text:v1.5` | 有 GPU、重視隱私 |
+| **GLM** | 免費雲端，穩定無限流 | `glm-4-flash`（免費） | `embedding-3` | 無 GPU、搜尋密集場景 |
+| **GROQ** | 超高速推理 | `llama-3.3-70b-versatile` | 需搭配其他嵌入器 | 偶爾寫入、追求品質 |
+
+#### Ollama 模式（本地）
 
 ```bash
 # LLM 主模型（推薦 qwen2.5:3b，速度與穩定性最佳平衡）
@@ -51,22 +61,47 @@ ollama pull nomic-embed-text:v1.5
 > - `qwen2.5:3b` — 推薦，~2s/call、~100 t/s，graphiti-core 結構化輸出 100% 穩定
 > - `qwen2.5:7b` — 效果更好但慢 5-10 倍，適合追求品質的場景
 > - `qwen2.5:1.5b` — 速度最快但**不穩定**（結構化 JSON 成功率僅 33%），不建議使用
-> - 小模型（`OLLAMA_SMALL_MODEL`）用於去重判斷、摘要生成等簡單任務，可配置為與主模型不同
+
+#### GLM 模式（智谱 AI 雲端）
+
+```bash
+# .env 設定
+LLM_PROVIDER=glm
+GLM_API_KEY=your_api_key          # 從 https://open.bigmodel.cn 取得
+GLM_MODEL=glm-4-flash             # 免費模型
+GLM_EMBEDDING_MODEL=embedding-3
+GLM_EMBEDDING_DIMENSIONS=768      # 需與 Neo4j 向量索引維度一致
+```
+
+> **GLM 性能參考**：寫入 ~22s（短文本）、搜尋 ~0.34s、零 Rate Limit 錯誤、比本地 Ollama 慢 2-5 倍但完全免費。
+
+#### GROQ 模式（高速推理）
+
+```bash
+# .env 設定
+LLM_PROVIDER=groq
+GROQ_API_KEY=your_api_key         # 從 https://console.groq.com 取得
+GROQ_MODEL=llama-3.3-70b-versatile
+```
+
+> **注意**：GROQ 不提供 Embedding 服務，目前需搭配 Ollama 嵌入器或切換至 GLM 模式。GROQ 有嚴格的 Rate Limit，高頻使用會觸發大量重試。
 
 ## 快速啟動
 
 ### 1. 前置準備
 
-確認以下服務已在本機運行：
+確認 Neo4j 已在本機運行，並根據選擇的 LLM 提供者準備對應服務：
 
 ```bash
-# 確認 Neo4j 運行中
+# 確認 Neo4j 運行中（必須）
 neo4j status
 # 或者使用 Docker: docker run -d -p 7687:7687 -p 7474:7474 -e NEO4J_AUTH=neo4j/your_password neo4j:latest
 
-# 確認 Ollama 運行中
+# Ollama 模式：確認 Ollama 運行中
 ollama list
 # 若未啟動: ollama serve
+
+# GLM / GROQ 模式：只需要有效的 API Key，無需本地服務
 ```
 
 ### 2. 安裝依賴
@@ -89,7 +124,10 @@ cp .env.example .env
 
 ```bash
 NEO4J_PASSWORD=your_actual_password  # 必填：Neo4j 密碼
-OLLAMA_MODEL=qwen2.5:3b              # 推薦：本地 LLM 模型
+LLM_PROVIDER=ollama                  # 選擇 LLM 提供者：ollama / glm / groq
+OLLAMA_MODEL=qwen2.5:3b              # Ollama 模式：本地 LLM 模型
+# GLM_API_KEY=your_key               # GLM 模式：智谱 AI API Key
+# GROQ_API_KEY=your_key              # GROQ 模式：GROQ API Key
 ```
 
 ### 4. 啟動服務
@@ -123,6 +161,7 @@ graphiti/
 │   ├── config.py                 # 配置管理（GraphitiConfig，支援 JSON/.env 層疊）
 │   ├── web_api.py                # Web 管理介面 REST API（20+ 端點）
 │   ├── ollama_graphiti_client.py  # Ollama LLM 客戶端（雙模型分流）
+│   ├── glm_client.py             # GLM（智谱 AI）LLM 客戶端（OpenAI 相容 API）
 │   ├── ollama_embedder.py        # Ollama 嵌入模型適配器
 │   ├── content_preprocessor.py   # 智慧內容切分（長文本自動分段）
 │   ├── deduplication.py          # 記憶去重（餘弦相似度比對）
@@ -448,13 +487,26 @@ NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_password        # 必須修改
 
-# === LLM 模型 ===
+# === LLM 提供者選擇 ===
+LLM_PROVIDER=ollama                 # ollama / glm / groq
+
+# === Ollama 配置（LLM_PROVIDER=ollama 時使用） ===
 OLLAMA_MODEL=qwen2.5:3b             # 主模型（推薦 qwen2.5:3b）
 OLLAMA_SMALL_MODEL=qwen2.5:3b       # 小模型（簡單任務用，可選不同模型）
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_TEMPERATURE=0.1
 
-# === 嵌入模型 ===
+# === GLM 配置（LLM_PROVIDER=glm 時使用） ===
+GLM_API_KEY=your_api_key            # 從 https://open.bigmodel.cn 取得
+GLM_MODEL=glm-4-flash               # 免費模型
+GLM_EMBEDDING_MODEL=embedding-3
+GLM_EMBEDDING_DIMENSIONS=768
+
+# === GROQ 配置（LLM_PROVIDER=groq 時使用） ===
+GROQ_API_KEY=your_api_key           # 從 https://console.groq.com 取得
+GROQ_MODEL=llama-3.3-70b-versatile
+
+# === Ollama 嵌入模型（Ollama / GROQ 模式使用） ===
 OLLAMA_EMBEDDING_MODEL=nomic-embed-text:v1.5
 OLLAMA_EMBEDDING_DIMENSIONS=768
 
@@ -487,10 +539,21 @@ uv run python graphiti_mcp_server.py --config config.json --transport http
 
 ```json
 {
+  "llm_provider": "ollama",
   "ollama": {
     "model": "qwen2.5:3b",
     "small_model": "qwen2.5:3b",
     "base_url": "http://localhost:11434"
+  },
+  "glm": {
+    "api_key": "your_api_key",
+    "model": "glm-4-flash",
+    "embedding_model": "embedding-3",
+    "embedding_dimensions": 768
+  },
+  "groq": {
+    "api_key": "your_api_key",
+    "model": "llama-3.3-70b-versatile"
   },
   "embedder": {
     "model": "nomic-embed-text:v1.5",
@@ -573,18 +636,26 @@ curl http://localhost:7474                 # 確認 HTTP 端口
 - 密碼錯誤（`.env` 中的 `NEO4J_PASSWORD`）
 - 端口被佔用或防火牆阻擋
 
-### Ollama 連接失敗
+### LLM 連接失敗
 
+**Ollama 模式：**
 ```bash
 ollama serve                # 啟動 Ollama 服務
 ollama list                 # 檢查已安裝模型
 ollama pull qwen2.5:3b      # 安裝缺少的模型
 ```
 
-常見原因：
-- Ollama 未啟動（`ollama serve`）
-- 模型未安裝（`ollama pull <model>`）
-- GPU 記憶體不足（嘗試更小的模型）
+常見原因：Ollama 未啟動、模型未安裝、GPU 記憶體不足
+
+**GLM 模式：**
+- 確認 `GLM_API_KEY` 正確
+- 確認 `GLM_EMBEDDING_DIMENSIONS=768`（需與 Neo4j 向量索引一致）
+- GLM API 端點：`https://open.bigmodel.cn/api/paas/v4/`
+
+**GROQ 模式：**
+- 確認 `GROQ_API_KEY` 正確
+- Rate Limit 頻繁時考慮切換至 GLM 模式
+- GROQ 不提供 Embedding，需確保 Ollama 嵌入器可用
 
 ### MCP 連線錯誤
 
@@ -597,10 +668,11 @@ ollama pull qwen2.5:3b      # 安裝缺少的模型
 
 ### 記憶添加速度慢
 
-- 檢查使用的模型大小（`qwen2.5:3b` 比 `7b` 快 5-10 倍）
+- **Ollama**：檢查模型大小（`qwen2.5:3b` 比 `7b` 快 5-10 倍），確認有使用 GPU（`ollama ps`）
+- **GLM**：每個 add_episode 需 10-20+ 次 LLM 網路往返，短文本 ~22s 為正常值
+- **GROQ**：Rate Limit 會導致大量重試，如頻繁使用建議切換至 GLM 或 Ollama
 - 使用 `background=true` 避免阻塞
 - 調低 `GRAPHITI_CHUNK_THRESHOLD` 讓長文本更早切分
-- 確認 Ollama 有使用 GPU 加速（`ollama ps` 檢查）
 
 ### PM2 問題
 
