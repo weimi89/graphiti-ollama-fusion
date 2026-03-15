@@ -162,7 +162,7 @@ class OllamaEmbedderConfig:
         timeout: 請求超時時間（秒）
     """
 
-    model: str = "nomic-embed-text:v1.5"
+    model: str = "bge-m3"
     base_url: str = "http://localhost:11434"
     dimensions: int = 768
     batch_size: int = 10
@@ -335,7 +335,7 @@ class MemoryPerformanceConfig:
 
     chunk_threshold: int = 800
     max_chunk_size: int = 600
-    max_coroutines: int = 5
+    max_coroutines: int = 10
     default_background: bool = False
 
     def validate(self) -> bool:

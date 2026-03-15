@@ -60,6 +60,7 @@ uv run python tools/inspect_schema.py          # Neo4j 結構檢查
 uv run python tools/status_report.py           # 統合狀態報告
 uv run python tools/validate_config.py         # 配置驗證
 uv run python tools/batch_reprocess.py         # 批次重新處理
+uv run python tools/migrate_embeddings.py      # Embedding 模型遷移
 ```
 
 ## Architecture
@@ -71,7 +72,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 │   ├── web_api.py               # Web 管理介面 REST API 路由（20+ 端點）
 │   ├── ollama_graphiti_client.py # Ollama LLM 客戶端適配器（支援雙模型分流）
 │   ├── glm_client.py            # GLM（智谱 AI）LLM 客戶端（OpenAI 相容，簡化 schema 注入）
-│   ├── ollama_embedder.py       # Ollama 嵌入模型適配器
+│   ├── ollama_embedder.py       # Ollama 嵌入模型適配器（支援 bge-m3，並發 batch）
 │   ├── content_preprocessor.py  # 智慧內容切分（長文本自動分段處理）
 │   ├── deduplication.py         # 記憶去重（餘弦相似度比對）
 │   ├── importance.py            # 重要性追蹤與智慧遺忘
@@ -90,6 +91,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 │   ├── status_report.py         # 統合狀態報告
 │   ├── validate_config.py       # 配置驗證工具
 │   ├── batch_reprocess.py       # 批次重新處理
+│   ├── migrate_embeddings.py    # Embedding 模型遷移（切換模型後重新生成向量）
 │   ├── inspect_schema.py        # Neo4j 結構檢查
 │   └── performance_diagnose.py  # 性能診斷
 ├── tests/                       # 測試套件（143 個測試）
@@ -110,7 +112,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **配置層級**：JSON 配置檔為基礎 + 環境變數覆蓋（支援 Docker 部署場景）。主要配置類為 `GraphitiConfig`，支援 `get_errors()` 返回具體驗證錯誤。重要子配置：`OllamaConfig`（含 `small_model`）、`GroqConfig`、`GlmConfig`、`MemoryPerformanceConfig`（切分閾值、並行度）。
 
-**多 LLM 提供者架構**：透過 `LLM_PROVIDER` 環境變數切換提供者（`ollama` / `groq` / `glm`）。`_create_llm_client()` 根據設定路由到對應工廠函數。GLM 模式同時使用 GLM Embedding（`embedding-3`），其他模式使用 Ollama 嵌入器。
+**多 LLM 提供者架構**：透過 `LLM_PROVIDER` 環境變數切換提供者（`ollama` / `groq` / `glm`）。`_create_llm_client()` 根據設定路由到對應工廠函數。GLM 模式同時使用 GLM Embedding（`embedding-3`），其他模式使用 Ollama 嵌入器（預設 `bge-m3`，中文和 RAG 品質優異）。`OllamaEmbedder.create_batch()` 使用 `asyncio.gather` 並發請求，非串行。
 
 **GLM 客戶端**：`src/glm_client.py` 繼承 `LLMClient`，透過 OpenAI 相容 API 連接智谱 AI。覆寫 `generate_response` 以簡化 schema 注入（只注入字段名稱列表，避免 GLM 將完整 `$defs` JSON Schema 當資料回傳）。強制使用 `json_object` 模式（GLM 不支援 `json_schema`）。
 
@@ -118,7 +120,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **雙模型分流**：`OptimizedOllamaClient` 實作 `_get_model_for_size(model_size)`，graphiti-core pipeline 在簡單任務（去重判斷、摘要生成、時間解析）傳入 `ModelSize.small`，複雜任務（實體提取、邊提取）使用 `ModelSize.medium`。透過 `OLLAMA_SMALL_MODEL` 環境變數配置小模型。
 
-**智慧內容切分**：`src/content_preprocessor.py` 提供 `smart_chunk()` 函數，長文本（>800 字元）自動按段落分割，短段落合併，保持語意完整。`add_memory_simple` 自動整合切分邏輯。
+**智慧內容切分**：`src/content_preprocessor.py` 提供 `smart_chunk()` 函數，長文本（>800 字元）自動按段落分割，短段落合併，保持語意完整。`add_memory_simple` 自動整合切分邏輯。切分後使用 `add_episode_bulk()` 批量並發處理（非逐段串行），多段寫入加速約 33%。
 
 **背景處理模式**：`add_memory_simple(background=True)` 立即返回 `task_id`，後台 `asyncio.Task` 處理。用 `get_memory_task_status(task_id)` 查詢進度。全域 `_memory_tasks` 字典追蹤狀態。
 
@@ -217,7 +219,7 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 - **LLM 提供者**（三選一，透過 `LLM_PROVIDER` 切換）：
   - **Ollama**（`ollama`，預設）：本地 LLM，`http://localhost:11434`
     - LLM 主模型: `qwen2.5:3b`（推薦）、小模型: `qwen2.5:3b`
-    - Embedder: `nomic-embed-text:v1.5`（768 維向量）
+    - Embedder: `bge-m3`（1024 維，自動截斷為 768 以相容 Neo4j 索引；中文和 RAG 品質優於 nomic-embed-text）
   - **GLM**（`glm`）：智谱 AI 雲端，免費 `glm-4-flash` 模型
     - LLM: `glm-4-flash`（免費，穩定，~22s/短文本寫入）
     - Embedder: `embedding-3`（768 維，需設 `GLM_EMBEDDING_DIMENSIONS=768`）
@@ -237,7 +239,7 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 | `OLLAMA_MODEL` | Ollama 主 LLM 模型 | `qwen2.5:7b` |
 | `OLLAMA_SMALL_MODEL` | Ollama 小 LLM 模型（簡單任務） | 與主模型相同 |
 | `OLLAMA_TARGET_LANGUAGE` | 強制 LLM 輸出語言（如 "Traditional Chinese"） | (未設定) |
-| `OLLAMA_EMBEDDING_MODEL` | Ollama 嵌入模型 | `nomic-embed-text:v1.5` |
+| `OLLAMA_EMBEDDING_MODEL` | Ollama 嵌入模型 | `bge-m3` |
 | `GLM_API_KEY` | 智谱 AI API Key | (GLM 模式必填) |
 | `GLM_MODEL` | GLM LLM 模型 | `glm-4-flash` |
 | `GLM_EMBEDDING_MODEL` | GLM 嵌入模型 | `embedding-3` |
@@ -247,7 +249,7 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 | `GRAPHITI_DISPLAY_TIMEZONE` | API 回傳時間戳的顯示時區（IANA 名稱） | `UTC` |
 | `GRAPHITI_CHUNK_THRESHOLD` | 觸發智慧切分的字元數 | `800` |
 | `GRAPHITI_MAX_CHUNK_SIZE` | 切分後每段最大字元數 | `600` |
-| `GRAPHITI_MAX_COROUTINES` | 最大並行協程數 | `5` |
+| `GRAPHITI_MAX_COROUTINES` | 最大並行協程數 | `10` |
 | `GRAPHITI_DEFAULT_BACKGROUND` | 預設背景處理 | `false` |
 | `ENABLE_IMPORTANCE_TRACKING` | 啟用存取追蹤 | `true` |
 | `IMPORTANCE_WEIGHT` | 重要性權重 | `0.1` |

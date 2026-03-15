@@ -43,7 +43,7 @@
 
 | 提供者 | 特點 | LLM 模型 | Embedding | 適合場景 |
 |--------|------|----------|-----------|----------|
-| **Ollama**（預設） | 完全本地，資料不離機 | `qwen2.5:3b` | `nomic-embed-text:v1.5` | 有 GPU、重視隱私 |
+| **Ollama**（預設） | 完全本地，資料不離機 | `qwen2.5:3b` | `bge-m3`（中文 + RAG 優異） | 有 GPU、重視隱私 |
 | **GLM** | 免費雲端，穩定無限流 | `glm-4-flash`（免費） | `embedding-3` | 無 GPU、搜尋密集場景 |
 | **GROQ** | 超高速推理 | `llama-3.3-70b-versatile` | 需搭配其他嵌入器 | 偶爾寫入、追求品質 |
 
@@ -54,7 +54,7 @@
 ollama pull qwen2.5:3b
 
 # 嵌入模型（必須，用於向量搜尋）
-ollama pull nomic-embed-text:v1.5
+ollama pull bge-m3
 ```
 
 > **模型選擇注意事項**：
@@ -310,7 +310,7 @@ graphiti/
 
 > **效能提示**：
 > - 短文本（<800 字元）：直接處理，通常 30-40 秒完成
-> - 長文本（>800 字元）：自動切分為多段，每段獨立處理
+> - 長文本（>800 字元）：自動切分為多段，使用 `add_episode_bulk` 並發處理（比串行快 ~33%）
 > - 使用 `background=true` 可避免 MCP 呼叫阻塞，透過 `get_memory_task_status` 追蹤進度
 > - `use_safe_mode=true` 秒速完成但記憶無法被 search 工具找到
 > - 啟用去重時，高度相似的記憶會被警告（`force=true` 可跳過）
@@ -507,13 +507,13 @@ GROQ_API_KEY=your_api_key           # 從 https://console.groq.com 取得
 GROQ_MODEL=llama-3.3-70b-versatile
 
 # === Ollama 嵌入模型（Ollama / GROQ 模式使用） ===
-OLLAMA_EMBEDDING_MODEL=nomic-embed-text:v1.5
+OLLAMA_EMBEDDING_MODEL=bge-m3
 OLLAMA_EMBEDDING_DIMENSIONS=768
 
 # === 記憶效能（可選） ===
 GRAPHITI_CHUNK_THRESHOLD=800         # 觸發智慧切分的字元數閾值
 GRAPHITI_MAX_CHUNK_SIZE=600          # 每段最大字元數
-GRAPHITI_MAX_COROUTINES=5            # 最大並行協程數
+GRAPHITI_MAX_COROUTINES=10            # 最大並行協程數
 GRAPHITI_DEFAULT_BACKGROUND=false    # 是否預設背景處理
 
 # === 重要性追蹤與智慧遺忘（可選） ===
@@ -556,7 +556,7 @@ uv run python graphiti_mcp_server.py --config config.json --transport http
     "model": "llama-3.3-70b-versatile"
   },
   "embedder": {
-    "model": "nomic-embed-text:v1.5",
+    "model": "bge-m3",
     "dimensions": 768
   },
   "neo4j": {
@@ -567,7 +567,7 @@ uv run python graphiti_mcp_server.py --config config.json --transport http
   "memory_performance": {
     "chunk_threshold": 800,
     "max_chunk_size": 600,
-    "max_coroutines": 5,
+    "max_coroutines": 10,
     "default_background": false
   }
 }
@@ -690,7 +690,28 @@ uv run python tools/status_report.py           # 統合狀態報告（Neo4j + Ol
 uv run python tools/validate_config.py         # 驗證 .env 和配置完整性
 uv run python tools/performance_diagnose.py    # LLM 效能診斷
 uv run python tools/inspect_schema.py          # Neo4j 索引和約束檢查
+uv run python tools/migrate_embeddings.py      # Embedding 模型遷移（切換模型後重新生成向量）
 ```
+
+### Embedding 模型遷移
+
+切換 embedding 模型（如 `nomic-embed-text` → `bge-m3`）後，可使用遷移工具將所有現有向量重新生成，確保搜尋品質一致：
+
+```bash
+# 預覽需要遷移的數量
+uv run python tools/migrate_embeddings.py --dry-run
+
+# 全量遷移（支援斷點續跑）
+uv run python tools/migrate_embeddings.py
+
+# 只遷移指定 group
+uv run python tools/migrate_embeddings.py --group-id myproject
+
+# 從斷點繼續（中斷後重跑）
+uv run python tools/migrate_embeddings.py --resume
+```
+
+> **相容性**：`bge-m3` 原生 1024 維，系統自動截斷為 768 維以相容現有 Neo4j 向量索引。遷移前後的資料可共存，但建議執行完整遷移以獲得最佳搜尋品質。
 
 ## 文檔
 

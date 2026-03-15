@@ -99,7 +99,7 @@ class OllamaEmbedder(EmbedderClient):
 
     async def create_batch(self, input_data: List[str]) -> List[List[float]]:
         """
-        批量建立嵌入向量。
+        批量建立嵌入向量（並發請求）。
 
         Args:
             input_data: 要嵌入的文本列表
@@ -107,7 +107,14 @@ class OllamaEmbedder(EmbedderClient):
         Returns:
             List[List[float]]: 嵌入向量列表
         """
-        return await self._create_embeddings(input_data)
+        if not input_data:
+            return []
+
+        session = await self._get_session()
+        results = await asyncio.gather(
+            *[self._embed_single(session, text) for text in input_data]
+        )
+        return list(results)
 
     async def create_bulk(
         self, input_data: List[str], batch_size: int = 0
@@ -184,7 +191,14 @@ class OllamaEmbedder(EmbedderClient):
                     models = result.get("models", [])
                     model_names = [m.get("name", "") for m in models]
 
-                    if self.model in model_names:
+                    # 支援不帶 tag 的模型名比對（如 "bge-m3" 匹配 "bge-m3:latest"）
+                    model_base = self.model.split(":")[0]
+                    matched = any(
+                        self.model == name or model_base == name.split(":")[0]
+                        for name in model_names
+                    )
+
+                    if matched:
                         logger.info(f"Ollama 嵌入器連接成功，模型 {self.model} 可用")
                         return True
                     else:

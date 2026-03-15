@@ -843,43 +843,41 @@ async def _add_memory_full_mode(
             "note": "使用完整模式，包含實體提取和關係建立",
         }
 
-    # 切分後循序處理每段
+    # 切分後使用 add_episode_bulk 批量並發處理
     total_chunks = len(chunk_result.chunks)
-    chunk_times: List[float] = []
-    logger.info(f"內容已切分為 {total_chunks} 段，開始循序處理")
+    logger.info(f"內容已切分為 {total_chunks} 段，使用 bulk 模式並發處理")
 
-    for i, chunk in enumerate(chunk_result.chunks, 1):
-        chunk_start = time.time()
-        chunk_name = f"{name} (part {i}/{total_chunks})"
-
-        await graphiti.add_episode(
-            name=chunk_name,
-            episode_body=chunk,
+    now = datetime.now(timezone.utc)
+    raw_episodes = [
+        RawEpisode(
+            name=f"{name} (part {i}/{total_chunks})",
+            content=chunk,
             source_description=source_description,
             source=episode_type,
-            group_id=group_id,
-            reference_time=datetime.now(timezone.utc),
-            **add_episode_kwargs,
+            reference_time=now,
         )
+        for i, chunk in enumerate(chunk_result.chunks, 1)
+    ]
 
-        chunk_duration = time.time() - chunk_start
-        chunk_times.append(chunk_duration)
-        logger.info(f"段落 {i}/{total_chunks} 完成，耗時 {chunk_duration:.1f}s")
+    await graphiti.add_episode_bulk(
+        bulk_episodes=raw_episodes,
+        group_id=group_id,
+        **add_episode_kwargs,
+    )
 
     duration = time.time() - start_time
     log_operation_success("add_memory_full_chunked", duration, name=name, chunks=total_chunks)
 
     return {
         "success": True,
-        "message": f"記憶 '{name}' 已成功添加（完整模式，{total_chunks} 段）",
+        "message": f"記憶 '{name}' 已成功添加（完整模式，{total_chunks} 段，bulk 並發）",
         "uuid": episode_uuid or "auto-generated",
         "group_id": group_id,
         "source": source,
         "processing_time": f"{duration:.2f}s",
-        "method": "full_entity_extraction_chunked",
+        "method": "full_entity_extraction_chunked_bulk",
         "chunks": total_chunks,
-        "chunk_times": [f"{t:.1f}s" for t in chunk_times],
-        "note": f"長文本自動切分為 {total_chunks} 段處理",
+        "note": f"長文本自動切分為 {total_chunks} 段，使用 bulk 並發處理",
     }
 
 
