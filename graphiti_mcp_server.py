@@ -265,8 +265,8 @@ async def initialize_graphiti() -> Graphiti:
             # 初始化 LLM 客戶端（失敗時設為 None）
             llm_client = _create_llm_client()
 
-            # 建立嵌入器（GLM 模式使用 GLM Embedding，否則使用 Ollama）
-            if app_config.llm_provider == "glm":
+            # 建立嵌入器（根據 embedding_provider 選擇，預設跟隨 llm_provider）
+            if app_config.get_embedding_provider() == "glm":
                 embedder = _create_glm_embedder(logging.getLogger("graphiti"))
             else:
                 embedder = OllamaEmbedder(
@@ -2263,8 +2263,8 @@ async def _check_embedder_status() -> dict:
         graphiti = await initialize_graphiti()
 
         test_embedding = await graphiti.embedder.create("test")
-        # 根據 provider 取得對應 embedder 資訊
-        if app_config.llm_provider == "glm":
+        # 根據 embedding provider 取得對應 embedder 資訊
+        if app_config.get_embedding_provider() == "glm":
             emb_model = app_config.glm.embedding_model
             emb_dim = app_config.glm.embedding_dimensions
         else:
@@ -2463,10 +2463,11 @@ async def _startup_warmup() -> None:
             warmup_logger.warning(f"⚠ {provider.upper()} LLM 客戶端未初始化")
 
         # 驗證嵌入器
-        if provider == "glm":
-            warmup_logger.info(f"✓ 嵌入器就緒（模型: {app_config.glm.embedding_model}）")
+        emb_provider = app_config.get_embedding_provider()
+        if emb_provider == "glm":
+            warmup_logger.info(f"✓ 嵌入器就緒（模型: {app_config.glm.embedding_model}，提供者: GLM）")
         else:
-            warmup_logger.info(f"✓ 嵌入器就緒（模型: {app_config.embedder.model}）")
+            warmup_logger.info(f"✓ 嵌入器就緒（模型: {app_config.embedder.model}，提供者: Ollama）")
 
     except Exception as e:
         warmup_logger.warning(f"⚠ 啟動預熱失敗: {e}（將在首次工具呼叫時重試）")

@@ -414,6 +414,9 @@ class GraphitiConfig:
     # LLM 提供者選擇（"ollama", "groq", "glm", "openrouter"）
     llm_provider: str = "ollama"
 
+    # Embedding 提供者選擇（"ollama", "glm"），預設跟隨 llm_provider
+    embedding_provider: str = ""
+
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     groq: GroqConfig = field(default_factory=GroqConfig)
     glm: GlmConfig = field(default_factory=GlmConfig)
@@ -441,6 +444,12 @@ class GraphitiConfig:
     # 顯示時區（API 回傳時間戳轉換用）
     display_timezone: str = "UTC"
 
+    def get_embedding_provider(self) -> str:
+        """取得有效的 embedding 提供者。若未明確設定則跟隨 llm_provider。"""
+        if self.embedding_provider:
+            return self.embedding_provider
+        return self.llm_provider
+
     @classmethod
     def from_env(cls) -> "GraphitiConfig":
         """
@@ -460,6 +469,9 @@ class GraphitiConfig:
 
         # LLM 提供者
         config.llm_provider = os.getenv("LLM_PROVIDER", config.llm_provider).lower()
+
+        # Embedding 提供者（預設跟隨 LLM 提供者，可獨立覆蓋）
+        config.embedding_provider = os.getenv("EMBEDDING_PROVIDER", config.embedding_provider).lower()
 
         # GLM（智谱 AI）配置
         config.glm.api_key = os.getenv("GLM_API_KEY", config.glm.api_key)
@@ -579,6 +591,8 @@ class GraphitiConfig:
             config = cls()
             if "llm_provider" in config_data:
                 config.llm_provider = config_data["llm_provider"]
+            if "embedding_provider" in config_data:
+                config.embedding_provider = config_data["embedding_provider"]
             _apply_config_section(config.glm, config_data.get("glm", {}))
             _apply_config_section(config.groq, config_data.get("groq", {}))
             _apply_config_section(config.openrouter, config_data.get("openrouter", {}))
@@ -632,6 +646,14 @@ class GraphitiConfig:
             errors.extend(self.openrouter.get_errors())
         else:
             errors.extend(self.ollama.get_errors())
+        # 驗證 embedding 提供者
+        emb_provider = self.get_embedding_provider()
+        if emb_provider == "glm" and self.llm_provider != "glm":
+            # GLM embedding 獨立使用時也需驗證 API Key
+            if not self.glm.api_key:
+                errors.append("使用 GLM embedding 需設定 GLM_API_KEY")
+        if self.embedding_provider and self.embedding_provider not in ("ollama", "glm"):
+            errors.append(f"不支援的 EMBEDDING_PROVIDER: {self.embedding_provider}（支援：ollama, glm）")
         for sub in [self.embedder, self.neo4j, self.logging, self.server, self.memory_performance]:
             errors.extend(sub.get_errors())
         return errors
@@ -652,6 +674,7 @@ class GraphitiConfig:
         try:
             config_data = {
                 "llm_provider": self.llm_provider,
+                "embedding_provider": self.embedding_provider,
                 "glm": {
                     "api_key": "***",
                     "base_url": self.glm.base_url,
@@ -746,6 +769,10 @@ class GraphitiConfig:
         # LLM 提供者
         if os.getenv("LLM_PROVIDER"):
             self.llm_provider = os.getenv("LLM_PROVIDER").lower()
+
+        # Embedding 提供者
+        if os.getenv("EMBEDDING_PROVIDER"):
+            self.embedding_provider = os.getenv("EMBEDDING_PROVIDER").lower()
 
         # GLM（智谱 AI）配置
         if os.getenv("GLM_API_KEY"):
@@ -868,7 +895,8 @@ class GraphitiConfig:
             "ollama_target_language": self.ollama.target_language,
             "groq_model": self.groq.model if self.llm_provider == "groq" else "(未啟用)",
             "glm_model": self.glm.model if self.llm_provider == "glm" else "(未啟用)",
-            "glm_embedding": self.glm.embedding_model if self.llm_provider == "glm" else "(未啟用)",
+            "embedding_provider": self.get_embedding_provider(),
+            "glm_embedding": self.glm.embedding_model if self.get_embedding_provider() == "glm" else "(未啟用)",
             "openrouter_model": self.openrouter.model if self.llm_provider == "openrouter" else "(未啟用)",
             "embedder_model": self.embedder.model,
             "embedder_dimensions": self.embedder.dimensions,
