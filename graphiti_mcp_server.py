@@ -71,6 +71,13 @@ try:
 except ImportError:
     GLM_AVAILABLE = False
 
+# OpenRouter 客戶端
+try:
+    from src.openrouter_client import OpenRouterClient
+    OPENROUTER_AVAILABLE = True
+except ImportError:
+    OPENROUTER_AVAILABLE = False
+
 # 載入 Graphiti 核心模組
 from graphiti_core import Graphiti
 from graphiti_core.llm_client.config import LLMConfig
@@ -317,6 +324,8 @@ def _create_llm_client():
             return _create_glm_client(glog)
         elif provider == "groq":
             return _create_groq_client(glog)
+        elif provider == "openrouter":
+            return _create_openrouter_client(glog)
         else:
             return _create_ollama_client(glog)
     except Exception as e:
@@ -410,6 +419,30 @@ def _create_glm_embedder(glog):
         f"維度: {glm_cfg.embedding_dimensions})"
     )
     return embedder
+
+
+def _create_openrouter_client(glog):
+    """建立 OpenRouter LLM 客戶端，使用 OpenAI 相容 API。"""
+    if not OPENROUTER_AVAILABLE:
+        raise ImportError("openai 套件未安裝")
+
+    or_cfg = app_config.openrouter
+    if not or_cfg.api_key:
+        raise ValueError("OPENROUTER_API_KEY 未設定")
+
+    llm_config = LLMConfig(
+        api_key=or_cfg.api_key,
+        base_url=or_cfg.base_url,
+        model=or_cfg.model,
+        temperature=or_cfg.temperature,
+        max_tokens=or_cfg.max_tokens,
+    )
+    client = OpenRouterClient(config=llm_config)
+    glog.info(
+        f"LLM 客戶端初始化成功 [OpenRouter] (模型: {or_cfg.model}, "
+        f"base_url: {or_cfg.base_url})"
+    )
+    return client
 
 
 # ============================================================================
@@ -2210,6 +2243,8 @@ async def _check_llm_status() -> dict:
             # 根據 provider 取得對應模型名稱
             if app_config.llm_provider == "glm":
                 model_name = app_config.glm.model
+            elif app_config.llm_provider == "openrouter":
+                model_name = app_config.openrouter.model
             else:
                 model_name = app_config.ollama.model
             return {
@@ -2419,6 +2454,8 @@ async def _startup_warmup() -> None:
                 model_name = app_config.glm.model
             elif provider == "groq":
                 model_name = app_config.groq.model
+            elif provider == "openrouter":
+                model_name = app_config.openrouter.model
             else:
                 model_name = app_config.ollama.model
             warmup_logger.info(f"✓ {provider.upper()} LLM 就緒（模型: {model_name}）")

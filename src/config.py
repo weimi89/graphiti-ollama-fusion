@@ -150,6 +150,43 @@ class GroqConfig:
 
 
 @dataclass
+class OpenRouterConfig:
+    """
+    OpenRouter LLM 服務配置。
+
+    透過 OpenAI 相容 API 存取各種模型。不提供 Embedding，需搭配 Ollama 嵌入器。
+
+    Attributes:
+        api_key: OpenRouter API 金鑰
+        base_url: API 端點
+        model: 模型名稱（如 stepfun/step-3.5-flash:free）
+        temperature: 生成溫度
+        max_tokens: 最大輸出 token 數
+    """
+
+    api_key: str = ""
+    base_url: str = "https://openrouter.ai/api/v1"
+    model: str = "stepfun/step-3.5-flash:free"
+    temperature: float = 0.1
+    max_tokens: int = 4096
+
+    def validate(self) -> bool:
+        """驗證配置是否有效。"""
+        return not self.get_errors()
+
+    def get_errors(self) -> list[str]:
+        """返回配置中的具體錯誤列表。"""
+        errors = []
+        if not self.api_key:
+            errors.append("openrouter.api_key 不能為空")
+        if not self.model:
+            errors.append("openrouter.model 不能為空")
+        if not 0.0 <= self.temperature <= 2.0:
+            errors.append(f"openrouter.temperature 超出範圍 (0.0-2.0): {self.temperature}")
+        return errors
+
+
+@dataclass
 class OllamaEmbedderConfig:
     """
     Ollama 嵌入器配置。
@@ -374,12 +411,13 @@ class GraphitiConfig:
         cosine_similarity_threshold: 餘弦相似度閾值
     """
 
-    # LLM 提供者選擇（"ollama", "groq", "glm"）
+    # LLM 提供者選擇（"ollama", "groq", "glm", "openrouter"）
     llm_provider: str = "ollama"
 
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     groq: GroqConfig = field(default_factory=GroqConfig)
     glm: GlmConfig = field(default_factory=GlmConfig)
+    openrouter: OpenRouterConfig = field(default_factory=OpenRouterConfig)
     embedder: OllamaEmbedderConfig = field(default_factory=OllamaEmbedderConfig)
     neo4j: Neo4jConfig = field(default_factory=Neo4jConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -442,6 +480,15 @@ class GraphitiConfig:
             config.groq.max_tokens = int(os.getenv("GROQ_MAX_TOKENS"))
         if os.getenv("GROQ_TEMPERATURE"):
             config.groq.temperature = float(os.getenv("GROQ_TEMPERATURE"))
+
+        # OpenRouter 配置
+        config.openrouter.api_key = os.getenv("OPENROUTER_API_KEY", config.openrouter.api_key)
+        config.openrouter.base_url = os.getenv("OPENROUTER_BASE_URL", config.openrouter.base_url)
+        config.openrouter.model = os.getenv("OPENROUTER_MODEL", config.openrouter.model)
+        if os.getenv("OPENROUTER_MAX_TOKENS"):
+            config.openrouter.max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS"))
+        if os.getenv("OPENROUTER_TEMPERATURE"):
+            config.openrouter.temperature = float(os.getenv("OPENROUTER_TEMPERATURE"))
 
         # Ollama 配置
         config.ollama.model = os.getenv("OLLAMA_MODEL", config.ollama.model)
@@ -534,6 +581,7 @@ class GraphitiConfig:
                 config.llm_provider = config_data["llm_provider"]
             _apply_config_section(config.glm, config_data.get("glm", {}))
             _apply_config_section(config.groq, config_data.get("groq", {}))
+            _apply_config_section(config.openrouter, config_data.get("openrouter", {}))
             _apply_config_section(config.ollama, config_data.get("ollama", {}))
             _apply_config_section(config.embedder, config_data.get("embedder", {}))
             _apply_config_section(config.neo4j, config_data.get("neo4j", {}))
@@ -580,6 +628,8 @@ class GraphitiConfig:
             errors.extend(self.glm.get_errors())
         elif self.llm_provider == "groq":
             errors.extend(self.groq.get_errors())
+        elif self.llm_provider == "openrouter":
+            errors.extend(self.openrouter.get_errors())
         else:
             errors.extend(self.ollama.get_errors())
         for sub in [self.embedder, self.neo4j, self.logging, self.server, self.memory_performance]:
@@ -616,6 +666,13 @@ class GraphitiConfig:
                     "model": self.groq.model,
                     "max_tokens": self.groq.max_tokens,
                     "temperature": self.groq.temperature,
+                },
+                "openrouter": {
+                    "api_key": "***",
+                    "base_url": self.openrouter.base_url,
+                    "model": self.openrouter.model,
+                    "max_tokens": self.openrouter.max_tokens,
+                    "temperature": self.openrouter.temperature,
                 },
                 "ollama": {
                     "model": self.ollama.model,
@@ -716,6 +773,18 @@ class GraphitiConfig:
         if os.getenv("GROQ_TEMPERATURE"):
             self.groq.temperature = float(os.getenv("GROQ_TEMPERATURE"))
 
+        # OpenRouter 配置
+        if os.getenv("OPENROUTER_API_KEY"):
+            self.openrouter.api_key = os.getenv("OPENROUTER_API_KEY")
+        if os.getenv("OPENROUTER_BASE_URL"):
+            self.openrouter.base_url = os.getenv("OPENROUTER_BASE_URL")
+        if os.getenv("OPENROUTER_MODEL"):
+            self.openrouter.model = os.getenv("OPENROUTER_MODEL")
+        if os.getenv("OPENROUTER_MAX_TOKENS"):
+            self.openrouter.max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS"))
+        if os.getenv("OPENROUTER_TEMPERATURE"):
+            self.openrouter.temperature = float(os.getenv("OPENROUTER_TEMPERATURE"))
+
         # Ollama 配置
         if os.getenv("OLLAMA_MODEL"):
             self.ollama.model = os.getenv("OLLAMA_MODEL")
@@ -800,6 +869,7 @@ class GraphitiConfig:
             "groq_model": self.groq.model if self.llm_provider == "groq" else "(未啟用)",
             "glm_model": self.glm.model if self.llm_provider == "glm" else "(未啟用)",
             "glm_embedding": self.glm.embedding_model if self.llm_provider == "glm" else "(未啟用)",
+            "openrouter_model": self.openrouter.model if self.llm_provider == "openrouter" else "(未啟用)",
             "embedder_model": self.embedder.model,
             "embedder_dimensions": self.embedder.dimensions,
             "neo4j_uri": self.neo4j.uri,
