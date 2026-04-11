@@ -987,6 +987,75 @@ def create_web_routes(
             logger.error(f"API graph subgraph error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    async def api_graph_all(request: Request) -> JSONResponse:
+        """取得全域圖譜（所有節點和邊），支援 group_id 篩選。"""
+        try:
+            graphiti = await get_graphiti_fn()
+            group_id = request.query_params.get("group_id", "").strip()
+            limit = min(int(request.query_params.get("limit", "500")), 2000)
+
+            async with graphiti.driver.session() as session:
+
+                if group_id:
+
+                    result = await session.run("""
+                        MATCH (n:Entity {group_id: $group_id})
+                        RETURN n.uuid AS uuid, n.name AS name, n.group_id AS group_id
+                        LIMIT $limit
+                    """, {"group_id": group_id, "limit": limit})
+
+                else:
+
+                    result = await session.run("""
+                        MATCH (n:Entity)
+                        RETURN n.uuid AS uuid, n.name AS name, n.group_id AS group_id
+                        LIMIT $limit
+                    """, {"limit": limit})
+
+                nodes_map = {}
+                async for r in result:
+
+                    if r["uuid"] not in nodes_map:
+                        nodes_map[r["uuid"]] = {
+                            "uuid": r["uuid"],
+                            "name": r["name"] or "",
+                            "group_id": r["group_id"] or "",
+                        }
+
+                if not nodes_map:
+
+                    return JSONResponse({"nodes": [], "edges": [], "center": None})
+
+                node_uuids = list(nodes_map.keys())
+
+                result = await session.run("""
+                    MATCH (s:Entity)-[r:RELATES_TO]->(t:Entity)
+                    WHERE s.uuid IN $uuids AND t.uuid IN $uuids
+                    RETURN r.uuid AS uuid, r.name AS name, r.fact AS fact,
+                           s.uuid AS source, t.uuid AS target
+                """, {"uuids": node_uuids})
+
+                edges = []
+                async for r in result:
+
+                    edges.append({
+                        "uuid": r["uuid"],
+                        "name": r["name"] or "",
+                        "fact": (r["fact"] or "")[:200],
+                        "source": r["source"],
+                        "target": r["target"],
+                    })
+
+            return JSONResponse({
+                "nodes": list(nodes_map.values()),
+                "edges": edges,
+                "center": None,
+            })
+
+        except Exception as e:
+            logger.error(f"API graph all error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     async def api_ask(request: Request) -> JSONResponse:
         """AI 問答測試：並行搜尋 nodes + facts，組合為上下文。"""
         try:
@@ -1518,6 +1587,7 @@ def create_web_routes(
         Route("/api/analytics/top-nodes", api_analytics_top_nodes, methods=["GET"]),
         Route("/api/analytics/quality", api_analytics_quality, methods=["GET"]),
         Route("/api/graph/subgraph", api_graph_subgraph, methods=["GET"]),
+        Route("/api/graph/all", api_graph_all, methods=["GET"]),
         Route("/api/ask", api_ask, methods=["GET"]),
         # 新功能 API 端點
         Route("/api/memory/add-bulk", api_add_bulk, methods=["POST"]),

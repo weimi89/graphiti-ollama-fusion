@@ -107,6 +107,14 @@ const API = {
         return this._get(`/api/graph/subgraph?${params}`);
     },
 
+    /** 取得全域圖譜 */
+    async graphAll({ groupId = '', limit = 500 } = {}) {
+        const params = new URLSearchParams();
+        if (groupId) params.set('group_id', groupId);
+        if (limit !== 500) params.set('limit', limit);
+        return this._get(`/api/graph/all?${params}`);
+    },
+
     /** AI 問答測試 */
     async ask({ q, groupIds = [] } = {}) {
         const params = new URLSearchParams({ q });

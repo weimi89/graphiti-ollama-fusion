@@ -301,14 +301,20 @@ const App = {
         if (this.state.graphCenterUuid) {
             await this._loadGraph(this.state.graphCenterUuid);
         } else {
-            // Auto-load top node
-            try {
-                const topData = await API.topNodes({ groupId: this.state.groupId, limit: 1 });
-                if (topData.nodes && topData.nodes.length) {
-                    this.state.graphCenterUuid = topData.nodes[0].uuid;
-                    await this._loadGraph(topData.nodes[0].uuid);
-                }
-            } catch (e) { /* ignore */ }
+            // 預設載入全域視圖
+            await this._loadGraphAll();
+        }
+    },
+
+    async _loadGraphAll() {
+        const container = document.getElementById('graph-container');
+        if (!container) return;
+        container.innerHTML = '<div class="loading-spinner">載入全域圖譜...</div>';
+        try {
+            const data = await API.graphAll({ groupId: this.state.groupId, limit: 500 });
+            Components.renderD3Graph(container, data, null);
+        } catch (err) {
+            container.innerHTML = `<div class="empty-state"><div class="empty-state-text">載入失敗: ${Components._esc(err.message)}</div></div>`;
         }
     },
 

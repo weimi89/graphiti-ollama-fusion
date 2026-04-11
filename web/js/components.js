@@ -662,7 +662,20 @@ const Components = {
 
         container.innerHTML = '';
         const width = container.clientWidth || 800;
-        const height = 500;
+        const height = 600;
+
+        // Group 顏色映射
+        const groups = [...new Set(data.nodes.map(n => n.group_id || 'default'))];
+        const colorScale = d3.scaleOrdinal(d3.schemeTableau10).domain(groups);
+
+        // 節點統計
+        const statsHtml = `<div style="padding:6px 12px;font-size:12px;color:var(--text-muted);display:flex;gap:16px;flex-wrap:wrap;">
+            <span>${data.nodes.length} 個節點</span>
+            <span>${data.edges.length} 條關係</span>
+            <span>${groups.length} 個群組</span>
+            ${groups.map(g => `<span style="color:${colorScale(g)}">● ${g}</span>`).join('')}
+        </div>`;
+        container.insertAdjacentHTML('beforeend', statsHtml);
 
         const svg = d3.select(container)
             .append('svg')
@@ -674,18 +687,25 @@ const Components = {
 
         // Zoom
         svg.call(d3.zoom()
-            .scaleExtent([0.2, 5])
+            .scaleExtent([0.1, 8])
             .on('zoom', (event) => g.attr('transform', event.transform))
         );
 
         const nodes = data.nodes.map(n => ({ ...n, id: n.uuid }));
         const edges = data.edges.map(e => ({ ...e, source: e.source, target: e.target }));
 
+        // 根據節點數調整力學參數
+        const nodeCount = nodes.length;
+        const chargeStrength = nodeCount > 200 ? -100 : nodeCount > 50 ? -200 : -300;
+        const linkDistance = nodeCount > 200 ? 50 : nodeCount > 50 ? 80 : 100;
+
         const simulation = d3.forceSimulation(nodes)
-            .force('link', d3.forceLink(edges).id(d => d.id).distance(100))
-            .force('charge', d3.forceManyBody().strength(-300))
+            .force('link', d3.forceLink(edges).id(d => d.id).distance(linkDistance))
+            .force('charge', d3.forceManyBody().strength(chargeStrength))
             .force('center', d3.forceCenter(width / 2, height / 2))
-            .force('collision', d3.forceCollide().radius(30));
+            .force('collision', d3.forceCollide().radius(nodeCount > 100 ? 15 : 30))
+            .force('x', d3.forceX(width / 2).strength(0.05))
+            .force('y', d3.forceY(height / 2).strength(0.05));
 
         // Edges
         const link = g.append('g')
@@ -697,16 +717,21 @@ const Components = {
             .attr('stroke-width', 1.5)
             .attr('stroke-opacity', 0.6);
 
-        // Edge labels
-        const linkLabel = g.append('g')
-            .selectAll('text')
-            .data(edges)
-            .join('text')
-            .attr('class', 'graph-link-label')
-            .attr('text-anchor', 'middle')
-            .attr('font-size', '9px')
-            .attr('fill', 'var(--text-muted)')
-            .text(d => d.name ? d.name.slice(0, 15) : '');
+        // Edge labels（節點多時隱藏）
+        let linkLabel;
+        if (nodeCount <= 100) {
+
+            linkLabel = g.append('g')
+                .selectAll('text')
+                .data(edges)
+                .join('text')
+                .attr('class', 'graph-link-label')
+                .attr('text-anchor', 'middle')
+                .attr('font-size', '9px')
+                .attr('fill', 'var(--text-muted)')
+                .text(d => d.name ? d.name.slice(0, 15) : '');
+
+        }
 
         // Nodes
         const node = g.append('g')
@@ -726,39 +751,50 @@ const Components = {
                 })
             );
 
+        const nodeRadius = nodeCount > 200 ? 5 : nodeCount > 50 ? 8 : 10;
+
         node.append('circle')
-            .attr('r', d => d.uuid === centerUuid ? 14 : 10)
-            .attr('fill', d => d.uuid === centerUuid ? 'var(--accent)' : 'var(--tag-entity)')
-            .attr('stroke', d => d.uuid === centerUuid ? 'var(--accent-hover)' : 'var(--border-color)')
-            .attr('stroke-width', d => d.uuid === centerUuid ? 3 : 1.5)
+            .attr('r', d => d.uuid === centerUuid ? 14 : nodeRadius)
+            .attr('fill', d => d.uuid === centerUuid ? 'var(--accent)' : colorScale(d.group_id || 'default'))
+            .attr('stroke', d => d.uuid === centerUuid ? 'var(--accent-hover)' : 'rgba(255,255,255,0.3)')
+            .attr('stroke-width', d => d.uuid === centerUuid ? 3 : 1)
             .style('cursor', 'pointer');
+
+        // 標籤（節點多時只顯示較短文字）
+        const maxLabelLen = nodeCount > 200 ? 8 : nodeCount > 50 ? 12 : 20;
 
         node.append('text')
             .attr('dy', '0.35em')
-            .attr('x', 16)
-            .attr('font-size', '12px')
+            .attr('x', nodeRadius + 4)
+            .attr('font-size', nodeCount > 200 ? '9px' : '12px')
             .attr('fill', 'var(--text-primary)')
-            .text(d => d.name ? d.name.slice(0, 20) : '');
+            .text(d => d.name ? d.name.slice(0, maxLabelLen) : '');
 
         // Tooltip
         node.append('title')
-            .text(d => `${d.name}\n${d.group_id}\n${d.uuid}`);
+            .text(d => `${d.name}\n群組: ${d.group_id}\n${d.uuid}`);
 
         // Click to expand
         node.on('click', (event, d) => {
-            if (d.uuid !== centerUuid) {
-                App.expandGraphNode(d.uuid);
-            }
+            App.expandGraphNode(d.uuid);
         });
 
         simulation.on('tick', () => {
+
             link
                 .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
                 .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
-            linkLabel
-                .attr('x', d => (d.source.x + d.target.x) / 2)
-                .attr('y', d => (d.source.y + d.target.y) / 2);
+
+            if (linkLabel) {
+
+                linkLabel
+                    .attr('x', d => (d.source.x + d.target.x) / 2)
+                    .attr('y', d => (d.source.y + d.target.y) / 2);
+
+            }
+
             node.attr('transform', d => `translate(${d.x},${d.y})`);
+
         });
     },
 
