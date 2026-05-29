@@ -120,10 +120,19 @@ tmp/
 # ===========================
 # 專案特定：敏感資訊
 # ===========================
-configs/
-*password*
-*secret*
-*key*
+# 注意：避免使用 *key* / *secret* / *password* 這類萬用子字串規則，
+# 會無聲誤傷 apikey_helper.py、keyboard.py 等正常程式碼檔名。
+# 改用精確的副檔名/檔名規則。
+configs/                # 本機配置目錄（非 config.py 模組）
+secrets.*
+*_secret.*
+*_secrets.*
+credentials.json
+*.key
+*.pem
+*.p12
+*.pfx
+*.keystore
 
 # ===========================
 # 專案特定：備份檔案

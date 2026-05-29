@@ -78,6 +78,13 @@ try:
 except ImportError:
     OPENROUTER_AVAILABLE = False
 
+# DeepSeek 客戶端
+try:
+    from src.deepseek_client import DeepSeekClient
+    DEEPSEEK_AVAILABLE = True
+except ImportError:
+    DEEPSEEK_AVAILABLE = False
+
 # 載入 Graphiti 核心模組
 from graphiti_core import Graphiti
 from graphiti_core.llm_client.config import LLMConfig
@@ -311,6 +318,9 @@ def _create_llm_client():
     支援的提供者：
         - "ollama"（預設）：使用 OptimizedOllamaClient，支援雙模型分流和 target_language
         - "groq"：使用 graphiti-core 內建的 GroqClient，適合高速推理
+        - "glm"：智谱 AI（OpenAI 相容）
+        - "openrouter"：OpenRouter 聚合各家模型（OpenAI 相容）
+        - "deepseek"：DeepSeek 深度求索（OpenAI 相容，無 Embedding，需搭配 Ollama/GLM 嵌入器）
 
     Returns:
         LLMClient: 成功時返回客戶端實例
@@ -326,6 +336,8 @@ def _create_llm_client():
             return _create_groq_client(glog)
         elif provider == "openrouter":
             return _create_openrouter_client(glog)
+        elif provider == "deepseek":
+            return _create_deepseek_client(glog)
         else:
             return _create_ollama_client(glog)
     except Exception as e:
@@ -441,6 +453,30 @@ def _create_openrouter_client(glog):
     glog.info(
         f"LLM 客戶端初始化成功 [OpenRouter] (模型: {or_cfg.model}, "
         f"base_url: {or_cfg.base_url})"
+    )
+    return client
+
+
+def _create_deepseek_client(glog):
+    """建立 DeepSeek LLM 客戶端，使用 OpenAI 相容 API。"""
+    if not DEEPSEEK_AVAILABLE:
+        raise ImportError("openai 套件未安裝")
+
+    ds_cfg = app_config.deepseek
+    if not ds_cfg.api_key:
+        raise ValueError("DEEPSEEK_API_KEY 未設定")
+
+    llm_config = LLMConfig(
+        api_key=ds_cfg.api_key,
+        base_url=ds_cfg.base_url,
+        model=ds_cfg.model,
+        temperature=ds_cfg.temperature,
+        max_tokens=ds_cfg.max_tokens,
+    )
+    client = DeepSeekClient(config=llm_config)
+    glog.info(
+        f"LLM 客戶端初始化成功 [DeepSeek] (模型: {ds_cfg.model}, "
+        f"base_url: {ds_cfg.base_url})"
     )
     return client
 
@@ -2241,12 +2277,7 @@ async def _check_llm_status() -> dict:
                 [Message(role="user", content="回答: 1")]
             )
             # 根據 provider 取得對應模型名稱
-            if app_config.llm_provider == "glm":
-                model_name = app_config.glm.model
-            elif app_config.llm_provider == "openrouter":
-                model_name = app_config.openrouter.model
-            else:
-                model_name = app_config.ollama.model
+            model_name = app_config.get_active_model()
             return {
                 "status": "connected" if test_response else "no_response",
                 "provider": app_config.llm_provider,
@@ -2450,14 +2481,7 @@ async def _startup_warmup() -> None:
         # 驗證 LLM
         provider = app_config.llm_provider
         if graphiti.llm_client:
-            if provider == "glm":
-                model_name = app_config.glm.model
-            elif provider == "groq":
-                model_name = app_config.groq.model
-            elif provider == "openrouter":
-                model_name = app_config.openrouter.model
-            else:
-                model_name = app_config.ollama.model
+            model_name = app_config.get_active_model()
             warmup_logger.info(f"✓ {provider.upper()} LLM 就緒（模型: {model_name}）")
         else:
             warmup_logger.warning(f"⚠ {provider.upper()} LLM 客戶端未初始化")

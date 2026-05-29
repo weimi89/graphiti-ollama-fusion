@@ -187,6 +187,44 @@ class OpenRouterConfig:
 
 
 @dataclass
+class DeepSeekConfig:
+    """
+    DeepSeek（深度求索）LLM 服務配置。
+
+    透過 OpenAI 相容 API 存取 deepseek-chat / deepseek-v4 等模型。
+    不提供 Embedding，需搭配 Ollama 嵌入器或 GLM Embedding。
+
+    Attributes:
+        api_key: DeepSeek API 金鑰
+        base_url: API 端點
+        model: 模型名稱（如 deepseek-chat、deepseek-v4-flash）
+        temperature: 生成溫度
+        max_tokens: 最大輸出 token 數
+    """
+
+    api_key: str = ""
+    base_url: str = "https://api.deepseek.com"
+    model: str = "deepseek-chat"
+    temperature: float = 0.1
+    max_tokens: int = 4096
+
+    def validate(self) -> bool:
+        """驗證配置是否有效。"""
+        return not self.get_errors()
+
+    def get_errors(self) -> list[str]:
+        """返回配置中的具體錯誤列表。"""
+        errors = []
+        if not self.api_key:
+            errors.append("deepseek.api_key 不能為空")
+        if not self.model:
+            errors.append("deepseek.model 不能為空")
+        if not 0.0 <= self.temperature <= 2.0:
+            errors.append(f"deepseek.temperature 超出範圍 (0.0-2.0): {self.temperature}")
+        return errors
+
+
+@dataclass
 class OllamaEmbedderConfig:
     """
     Ollama 嵌入器配置。
@@ -411,7 +449,7 @@ class GraphitiConfig:
         cosine_similarity_threshold: 餘弦相似度閾值
     """
 
-    # LLM 提供者選擇（"ollama", "groq", "glm", "openrouter"）
+    # LLM 提供者選擇（"ollama", "groq", "glm", "openrouter", "deepseek"）
     llm_provider: str = "ollama"
 
     # Embedding 提供者選擇（"ollama", "glm"），預設跟隨 llm_provider
@@ -421,6 +459,7 @@ class GraphitiConfig:
     groq: GroqConfig = field(default_factory=GroqConfig)
     glm: GlmConfig = field(default_factory=GlmConfig)
     openrouter: OpenRouterConfig = field(default_factory=OpenRouterConfig)
+    deepseek: DeepSeekConfig = field(default_factory=DeepSeekConfig)
     embedder: OllamaEmbedderConfig = field(default_factory=OllamaEmbedderConfig)
     neo4j: Neo4jConfig = field(default_factory=Neo4jConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -449,6 +488,21 @@ class GraphitiConfig:
         if self.embedding_provider:
             return self.embedding_provider
         return self.llm_provider
+
+    def get_active_model(self) -> str:
+        """取得當前 llm_provider 實際使用的模型名稱。
+
+        集中各提供者的模型對應，供啟動日誌、狀態回報、test_connection 共用，
+        避免在多處 if/elif 鏈各自維護而遺漏新增的提供者。
+        """
+        provider_models = {
+            "glm": self.glm.model,
+            "groq": self.groq.model,
+            "openrouter": self.openrouter.model,
+            "deepseek": self.deepseek.model,
+            "ollama": self.ollama.model,
+        }
+        return provider_models.get(self.llm_provider, self.ollama.model)
 
     @classmethod
     def from_env(cls) -> "GraphitiConfig":
@@ -501,6 +555,15 @@ class GraphitiConfig:
             config.openrouter.max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS"))
         if os.getenv("OPENROUTER_TEMPERATURE"):
             config.openrouter.temperature = float(os.getenv("OPENROUTER_TEMPERATURE"))
+
+        # DeepSeek 配置
+        config.deepseek.api_key = os.getenv("DEEPSEEK_API_KEY", config.deepseek.api_key)
+        config.deepseek.base_url = os.getenv("DEEPSEEK_BASE_URL", config.deepseek.base_url)
+        config.deepseek.model = os.getenv("DEEPSEEK_MODEL", config.deepseek.model)
+        if os.getenv("DEEPSEEK_MAX_TOKENS"):
+            config.deepseek.max_tokens = int(os.getenv("DEEPSEEK_MAX_TOKENS"))
+        if os.getenv("DEEPSEEK_TEMPERATURE"):
+            config.deepseek.temperature = float(os.getenv("DEEPSEEK_TEMPERATURE"))
 
         # Ollama 配置
         config.ollama.model = os.getenv("OLLAMA_MODEL", config.ollama.model)
@@ -596,6 +659,7 @@ class GraphitiConfig:
             _apply_config_section(config.glm, config_data.get("glm", {}))
             _apply_config_section(config.groq, config_data.get("groq", {}))
             _apply_config_section(config.openrouter, config_data.get("openrouter", {}))
+            _apply_config_section(config.deepseek, config_data.get("deepseek", {}))
             _apply_config_section(config.ollama, config_data.get("ollama", {}))
             _apply_config_section(config.embedder, config_data.get("embedder", {}))
             _apply_config_section(config.neo4j, config_data.get("neo4j", {}))
@@ -644,6 +708,8 @@ class GraphitiConfig:
             errors.extend(self.groq.get_errors())
         elif self.llm_provider == "openrouter":
             errors.extend(self.openrouter.get_errors())
+        elif self.llm_provider == "deepseek":
+            errors.extend(self.deepseek.get_errors())
         else:
             errors.extend(self.ollama.get_errors())
         # 驗證 embedding 提供者
@@ -696,6 +762,13 @@ class GraphitiConfig:
                     "model": self.openrouter.model,
                     "max_tokens": self.openrouter.max_tokens,
                     "temperature": self.openrouter.temperature,
+                },
+                "deepseek": {
+                    "api_key": "***",
+                    "base_url": self.deepseek.base_url,
+                    "model": self.deepseek.model,
+                    "max_tokens": self.deepseek.max_tokens,
+                    "temperature": self.deepseek.temperature,
                 },
                 "ollama": {
                     "model": self.ollama.model,
@@ -812,6 +885,18 @@ class GraphitiConfig:
         if os.getenv("OPENROUTER_TEMPERATURE"):
             self.openrouter.temperature = float(os.getenv("OPENROUTER_TEMPERATURE"))
 
+        # DeepSeek 配置
+        if os.getenv("DEEPSEEK_API_KEY"):
+            self.deepseek.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if os.getenv("DEEPSEEK_BASE_URL"):
+            self.deepseek.base_url = os.getenv("DEEPSEEK_BASE_URL")
+        if os.getenv("DEEPSEEK_MODEL"):
+            self.deepseek.model = os.getenv("DEEPSEEK_MODEL")
+        if os.getenv("DEEPSEEK_MAX_TOKENS"):
+            self.deepseek.max_tokens = int(os.getenv("DEEPSEEK_MAX_TOKENS"))
+        if os.getenv("DEEPSEEK_TEMPERATURE"):
+            self.deepseek.temperature = float(os.getenv("DEEPSEEK_TEMPERATURE"))
+
         # Ollama 配置
         if os.getenv("OLLAMA_MODEL"):
             self.ollama.model = os.getenv("OLLAMA_MODEL")
@@ -898,6 +983,7 @@ class GraphitiConfig:
             "embedding_provider": self.get_embedding_provider(),
             "glm_embedding": self.glm.embedding_model if self.get_embedding_provider() == "glm" else "(未啟用)",
             "openrouter_model": self.openrouter.model if self.llm_provider == "openrouter" else "(未啟用)",
+            "deepseek_model": self.deepseek.model if self.llm_provider == "deepseek" else "(未啟用)",
             "embedder_model": self.embedder.model,
             "embedder_dimensions": self.embedder.dimensions,
             "neo4j_uri": self.neo4j.uri,

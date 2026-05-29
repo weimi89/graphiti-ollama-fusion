@@ -1,15 +1,16 @@
 # Graphiti MCP Server
 
-知識圖譜記憶服務 — 整合多 LLM 提供者（Ollama / GLM / GROQ）與 Neo4j 圖資料庫的 MCP 服務器。
+知識圖譜記憶服務 — 整合多 LLM 提供者（Ollama / GLM / GROQ / OpenRouter / DeepSeek）與 Neo4j 圖資料庫的 MCP 服務器。
 
-基於 [getzep/graphiti](https://github.com/getzep/graphiti) 擴充開發，支援本地 Ollama 和雲端 LLM 彈性切換。
+基於 [getzep/graphiti](https://github.com/getzep/graphiti) 擴充開發，支援本地 Ollama 和雲端 LLM 彈性切換，並可獨立指定 Embedding 提供者（與 LLM 解耦）。
 
 ## 特色功能
 
 - **智能記憶管理** — 使用知識圖譜儲存和檢索複雜的記憶關係
 - **語意搜尋** — 基於向量嵌入的混合搜尋（向量 + 關鍵字 + 圖遍歷）
 - **16 種搜尋策略** — 進階搜尋支援 RRF、MMR、Cross-Encoder 等多種重排序方式
-- **多 LLM 提供者** — 支援 Ollama（本地）、GLM（智谱 AI 免費）、GROQ（高速推理），透過環境變數一鍵切換
+- **多 LLM 提供者** — 支援 Ollama（本地）、GLM（智谱 AI 免費）、GROQ（高速推理）、OpenRouter（聚合各家模型）、DeepSeek（深度求索），透過環境變數一鍵切換
+- **Embedding 與 LLM 解耦** — 可用 `EMBEDDING_PROVIDER` 獨立指定嵌入器，雲端 LLM 自動回退本地 `bge-m3`
 - **雙模型分流** — Ollama 模式下複雜任務使用主模型，簡單任務自動切換小模型以提升效能
 - **智慧內容切分** — 長文本自動分段處理，降低 LLM 負載（可配置閾值）
 - **背景記憶處理** — 記憶添加可在背景執行，MCP 呼叫立即返回
@@ -33,19 +34,23 @@
 |------|------|
 | Python | 3.10+（推薦 3.11+） |
 | Neo4j | 4.0+（`bolt://localhost:7687`） |
-| LLM 提供者 | Ollama / GLM / GROQ（三選一） |
+| LLM 提供者 | Ollama / GLM / GROQ / OpenRouter / DeepSeek（五選一） |
 | Node.js | 18+（僅用於 PM2 背景執行，可選） |
 | 磁碟空間 | ~3GB（Ollama 模型 + Neo4j 資料） |
 
 ### LLM 提供者選擇
 
-透過 `LLM_PROVIDER` 環境變數切換（`ollama` / `glm` / `groq`）：
+透過 `LLM_PROVIDER` 環境變數切換（`ollama` / `glm` / `groq` / `openrouter` / `deepseek`）：
 
 | 提供者 | 特點 | LLM 模型 | Embedding | 適合場景 |
 |--------|------|----------|-----------|----------|
 | **Ollama**（預設） | 完全本地，資料不離機 | `qwen2.5:3b` | `bge-m3`（中文 + RAG 優異） | 有 GPU、重視隱私 |
 | **GLM** | 免費雲端，穩定無限流 | `glm-4-flash`（免費） | `embedding-3` | 無 GPU、搜尋密集場景 |
-| **GROQ** | 超高速推理 | `llama-3.3-70b-versatile` | 需搭配其他嵌入器 | 偶爾寫入、追求品質 |
+| **GROQ** | 超高速推理 | `llama-3.3-70b-versatile` | 回退 Ollama `bge-m3` | 偶爾寫入、追求品質 |
+| **OpenRouter** | 聚合各家模型，含免費額度 | `stepfun/step-3.5-flash:free` 等 | 回退 Ollama `bge-m3` | 想用特定雲端模型 |
+| **DeepSeek** | 深度求索雲端，性價比高 | `deepseek-v4-flash` / `deepseek-v4-pro` | 回退 Ollama `bge-m3` | 中文理解、低成本雲端 |
+
+> **Embedding 與 LLM 解耦**：嵌入器透過 `EMBEDDING_PROVIDER`（`ollama` / `glm`）獨立指定，未設定時跟隨 `LLM_PROVIDER`。實際上只有 `glm` 使用 GLM `embedding-3`，其餘（含 GROQ / OpenRouter / DeepSeek 等不提供 Embedding 的雲端 LLM）一律自動使用 Ollama `bge-m3`。**因此使用任何雲端 LLM 時，仍需本地 Ollama 提供嵌入服務（除非 embedding 也設為 glm）。**
 
 #### Ollama 模式（本地）
 
@@ -84,7 +89,29 @@ GROQ_API_KEY=your_api_key         # 從 https://console.groq.com 取得
 GROQ_MODEL=llama-3.3-70b-versatile
 ```
 
-> **注意**：GROQ 不提供 Embedding 服務，目前需搭配 Ollama 嵌入器或切換至 GLM 模式。GROQ 有嚴格的 Rate Limit，高頻使用會觸發大量重試。
+> **注意**：GROQ 不提供 Embedding 服務，需搭配 Ollama 嵌入器（自動回退）或將 `EMBEDDING_PROVIDER` 設為 glm。GROQ 有嚴格的 Rate Limit，高頻使用會觸發大量重試。
+
+#### OpenRouter 模式（聚合各家模型）
+
+```bash
+# .env 設定
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_api_key       # 從 https://openrouter.ai/keys 取得
+OPENROUTER_MODEL=stepfun/step-3.5-flash:free   # 可改為任意 OpenRouter 模型
+```
+
+> **注意**：OpenRouter 不提供 Embedding，自動回退 Ollama `bge-m3`。模型清單見 https://openrouter.ai/models（含多個 `:free` 免費模型）。
+
+#### DeepSeek 模式（深度求索）
+
+```bash
+# .env 設定
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_api_key         # 從 https://platform.deepseek.com 取得
+DEEPSEEK_MODEL=deepseek-v4-flash      # 推薦；或 deepseek-v4-pro（效果更佳）
+```
+
+> **注意**：DeepSeek 不提供 Embedding，自動回退 Ollama `bge-m3`。`deepseek-chat` / `deepseek-reasoner` 將於 2026-07-24 下線，建議改用 `deepseek-v4-flash` / `deepseek-v4-pro`。DeepSeek 嚴格要求 `json_object` 模式的 prompt 含 "json" 字串，客戶端已內建保底防護，無需額外設定。
 
 ## 快速啟動
 
@@ -124,10 +151,12 @@ cp .env.example .env
 
 ```bash
 NEO4J_PASSWORD=your_actual_password  # 必填：Neo4j 密碼
-LLM_PROVIDER=ollama                  # 選擇 LLM 提供者：ollama / glm / groq
+LLM_PROVIDER=ollama                  # ollama / glm / groq / openrouter / deepseek
 OLLAMA_MODEL=qwen2.5:3b              # Ollama 模式：本地 LLM 模型
 # GLM_API_KEY=your_key               # GLM 模式：智谱 AI API Key
 # GROQ_API_KEY=your_key              # GROQ 模式：GROQ API Key
+# OPENROUTER_API_KEY=your_key        # OpenRouter 模式：API Key
+# DEEPSEEK_API_KEY=your_key          # DeepSeek 模式：API Key
 ```
 
 ### 4. 啟動服務
@@ -162,11 +191,14 @@ graphiti/
 │   ├── web_api.py                # Web 管理介面 REST API（20+ 端點）
 │   ├── ollama_graphiti_client.py  # Ollama LLM 客戶端（雙模型分流）
 │   ├── glm_client.py             # GLM（智谱 AI）LLM 客戶端（OpenAI 相容 API）
+│   ├── openrouter_client.py      # OpenRouter LLM 客戶端（聚合各家模型）
+│   ├── deepseek_client.py        # DeepSeek LLM 客戶端（json_object + 保底 json 防護）
 │   ├── ollama_embedder.py        # Ollama 嵌入模型適配器
 │   ├── content_preprocessor.py   # 智慧內容切分（長文本自動分段）
 │   ├── deduplication.py          # 記憶去重（餘弦相似度比對）
 │   ├── importance.py             # 重要性追蹤與智慧遺忘
 │   ├── safe_memory_add.py        # 安全記憶添加（跳過實體提取）
+│   ├── timezone_utils.py         # 時區轉換（UTC→本地時區顯示）
 │   ├── exceptions.py             # 結構化異常處理（12 種異常類別）
 │   └── logging_setup.py          # 日誌系統（時間輪轉 + 性能監控）
 ├── web/                          # Web 管理介面前端（SPA，無 build）
@@ -176,13 +208,14 @@ graphiti/
 │       ├── api.js                # REST API 封裝
 │       ├── components.js         # UI 組件渲染（含社群頁面）
 │       └── app.js                # SPA 路由、狀態管理
-├── tests/                        # 測試套件（143 個測試）
+├── tests/                        # 測試套件（146 個測試）
 │   ├── test_content_preprocessor.py  # 切分邏輯測試（17 個）
 │   ├── test_new_features.py      # 新功能測試（32 個）
 │   ├── test_unit.py              # 單元測試
 │   ├── test_web_api.py           # Web API 測試
 │   ├── test_web_ui_features.py   # Web UI 功能測試
-│   └── test_integration_manual.py # 手動整合測試
+│   ├── test_integration_manual.py # 手動整合測試
+│   └── bench_deepseek_flash_vs_pro.py # DeepSeek flash/pro 效能基準腳本
 ├── tools/                        # 開發診斷工具
 │   ├── status_report.py          # 統合狀態報告
 │   ├── validate_config.py        # 配置驗證
@@ -488,7 +521,11 @@ NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_password        # 必須修改
 
 # === LLM 提供者選擇 ===
-LLM_PROVIDER=ollama                 # ollama / glm / groq
+LLM_PROVIDER=ollama                 # ollama / glm / groq / openrouter / deepseek
+
+# === Embedding 提供者（可選，預設跟隨 LLM_PROVIDER） ===
+# 僅 glm 使用 GLM Embedding，其餘一律使用 Ollama bge-m3
+# EMBEDDING_PROVIDER=ollama         # ollama / glm
 
 # === Ollama 配置（LLM_PROVIDER=ollama 時使用） ===
 OLLAMA_MODEL=qwen2.5:3b             # 主模型（推薦 qwen2.5:3b）
@@ -506,7 +543,15 @@ GLM_EMBEDDING_DIMENSIONS=768
 GROQ_API_KEY=your_api_key           # 從 https://console.groq.com 取得
 GROQ_MODEL=llama-3.3-70b-versatile
 
-# === Ollama 嵌入模型（Ollama / GROQ 模式使用） ===
+# === OpenRouter 配置（LLM_PROVIDER=openrouter 時使用） ===
+OPENROUTER_API_KEY=your_api_key     # 從 https://openrouter.ai/keys 取得
+OPENROUTER_MODEL=stepfun/step-3.5-flash:free
+
+# === DeepSeek 配置（LLM_PROVIDER=deepseek 時使用） ===
+DEEPSEEK_API_KEY=your_api_key       # 從 https://platform.deepseek.com 取得
+DEEPSEEK_MODEL=deepseek-v4-flash    # 或 deepseek-v4-pro
+
+# === Ollama 嵌入模型（非 glm 嵌入時皆使用） ===
 OLLAMA_EMBEDDING_MODEL=bge-m3
 OLLAMA_EMBEDDING_DIMENSIONS=768
 
@@ -540,6 +585,7 @@ uv run python graphiti_mcp_server.py --config config.json --transport http
 ```json
 {
   "llm_provider": "ollama",
+  "embedding_provider": "",
   "ollama": {
     "model": "qwen2.5:3b",
     "small_model": "qwen2.5:3b",
@@ -554,6 +600,14 @@ uv run python graphiti_mcp_server.py --config config.json --transport http
   "groq": {
     "api_key": "your_api_key",
     "model": "llama-3.3-70b-versatile"
+  },
+  "openrouter": {
+    "api_key": "your_api_key",
+    "model": "stepfun/step-3.5-flash:free"
+  },
+  "deepseek": {
+    "api_key": "your_api_key",
+    "model": "deepseek-v4-flash"
   },
   "embedder": {
     "model": "bge-m3",
@@ -607,7 +661,7 @@ docker run -p 8000:8000 \
 ## 測試
 
 ```bash
-# 執行所有測試（143 個，約 1 秒）
+# 執行所有測試（146 個，約 1 秒）
 uv run python -m pytest tests/
 
 # 詳細輸出
@@ -619,7 +673,7 @@ uv run python -m pytest tests/test_new_features.py -v
 uv run python -m pytest tests/test_unit.py -v
 ```
 
-> **注意**：`test_integration_manual.py` 中的 3 個 async 測試需要安裝 `pytest-asyncio`，缺少時會顯示 Failed 但不影響其他 143 個測試。
+> **注意**：`test_integration_manual.py` 中的 3 個 async 測試需要安裝 `pytest-asyncio`，缺少時會顯示 Failed 但不影響其他測試。`bench_deepseek_flash_vs_pro.py` 為效能基準腳本，非單元測試。
 
 ## 故障排除
 
@@ -656,6 +710,15 @@ ollama pull qwen2.5:3b      # 安裝缺少的模型
 - 確認 `GROQ_API_KEY` 正確
 - Rate Limit 頻繁時考慮切換至 GLM 模式
 - GROQ 不提供 Embedding，需確保 Ollama 嵌入器可用
+
+**OpenRouter 模式：**
+- 確認 `OPENROUTER_API_KEY` 正確、`OPENROUTER_MODEL` 為有效模型 ID（見 https://openrouter.ai/models）
+- 不提供 Embedding，需確保 Ollama 嵌入器可用
+
+**DeepSeek 模式：**
+- 確認 `DEEPSEEK_API_KEY` 正確
+- 若出現 `Prompt must contain the word 'json'`：這是 DeepSeek `json_object` 模式的硬性要求，客戶端已內建保底防護；若仍出現，確認使用的是最新版 `src/deepseek_client.py` 並重啟服務
+- 不提供 Embedding，需確保 Ollama 嵌入器可用
 
 ### MCP 連線錯誤
 

@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-GLM（智谱 AI）LLM 客戶端
-========================
+DeepSeek LLM 客戶端
+===================
 
-使用 OpenAI 相容 API 連接智谱 AI 的 GLM 模型。
-強制使用 json_object 模式（GLM 不支援 OpenAI 的 json_schema 格式）。
+透過 OpenAI 相容 API 連接 DeepSeek（深度求索），存取 deepseek-chat / deepseek-v4 等模型。
+使用 json_object 模式確保結構化輸出相容性。
+基於 OpenRouterClient 模式，簡化 schema 注入以提高相容性。
 
-覆寫 generate_response 以簡化 schema 注入：
-graphiti-core 基類會將完整 Pydantic JSON Schema（含 $defs）注入 prompt，
-GLM-4-Flash 會將其當作數據原樣回傳。本客戶端改為只注入字段名稱列表。
+DeepSeek 不提供 Embedding API，需搭配 Ollama 嵌入器（預設 bge-m3）或 GLM Embedding。
 """
 
 import json
@@ -26,18 +25,19 @@ from graphiti_core.prompts.models import Message
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "glm-4-flash"
+DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_MAX_TOKENS = 4096
 
 
 def _build_simple_schema_hint(response_model: type[BaseModel]) -> str:
-    """從 Pydantic model 產生簡化的 JSON 範例結構，避免注入完整 JSON Schema。
-
-    直接產生符合字段名稱的 JSON 範例，讓 GLM 知道預期的 key 名稱。
-    """
+    """從 Pydantic model 產生簡化的 JSON 範例結構。"""
     try:
         schema = response_model.model_json_schema()
-        return json.dumps(_simplify_schema(schema, schema.get("$defs", {})), ensure_ascii=False, indent=2)
+        return json.dumps(
+            _simplify_schema(schema, schema.get("$defs", {})),
+            ensure_ascii=False,
+            indent=2,
+        )
     except Exception:
         return ""
 
@@ -91,20 +91,18 @@ def _simplify_value(schema: dict, defs: dict) -> typing.Any:
     if schema_type == "boolean":
         return True
 
-    # string 或其他
     desc = schema.get("description", "")
     if desc:
         return f"<{desc[:60]}>"
     return "..."
 
 
-class GlmClient(LLMClient):
+class DeepSeekClient(LLMClient):
     """
-    智谱 AI GLM 客戶端。
+    DeepSeek LLM 客戶端。
 
-    使用 OpenAI SDK 透過相容 API 連接 GLM 模型。
-    強制 json_object 模式以確保相容性（GLM 不支援 json_schema）。
-    覆寫 generate_response 以避免完整 schema 注入導致 GLM 回傳 schema 結構。
+    使用 OpenAI SDK 透過 DeepSeek API 存取模型。
+    使用 json_object 模式和簡化 schema 提示確保結構化輸出。
     """
 
     def __init__(self, config: LLMConfig | None = None, cache: bool = False):
@@ -132,7 +130,6 @@ class GlmClient(LLMClient):
         if max_tokens is None:
             max_tokens = self.max_tokens
 
-        # 只注入簡化的字段提示，不注入完整 $defs schema
         if response_model is not None:
             hint = _build_simple_schema_hint(response_model)
             if hint:
@@ -140,13 +137,11 @@ class GlmClient(LLMClient):
                     f"\n\nRespond with a JSON object with these fields:\n{hint}"
                 )
 
-        # 多語言提取指令（與基類一致）
         messages[0].content += get_extraction_language_instruction(group_id)
 
         for message in messages:
             message.content = self._clean_input(message.content)
 
-        # 使用 tracer（與基類一致）
         with self.tracer.start_span("llm.generate") as span:
             attributes = {
                 "llm.provider": self._get_provider_type(),
@@ -196,8 +191,11 @@ class GlmClient(LLMClient):
             elif m.role == "system":
                 msgs.append({"role": "system", "content": m.content})
 
-        # 保底防護：OpenAI 相容的 json_object 模式要求 prompt 含 "json" 字串。
-        # GLM 目前未強制檢查，但同結構預防（換 endpoint 或上游收緊時不會復發）。
+        # DeepSeek 的 json_object 模式硬性要求：送出的 messages 內容中必須出現
+        # "json" 字串，否則 API 直接回 "Prompt must contain the word 'json'"。
+        # generate_response 覆寫層只在 response_model 非 None 且 hint 非空時才注入，
+        # 走到 response_model=None 或 hint 建構失敗的路徑時 prompt 不含 json 必爆。
+        # 此處在真正設定 response_format 之前做保底防護，涵蓋所有呼叫路徑。
         if msgs and not any("json" in (m.get("content") or "").lower() for m in msgs):
             msgs[-1]["content"] = (msgs[-1].get("content") or "") + "\n\nRespond in valid JSON format."
 
@@ -211,11 +209,11 @@ class GlmClient(LLMClient):
             )
             result = response.choices[0].message.content or ""
             if not result.strip():
-                logger.warning("GLM 回傳空內容")
+                logger.warning("DeepSeek 回傳空內容")
                 return {}
             return json.loads(result)
         except Exception as e:
             if "rate" in str(e).lower() or "429" in str(e):
                 raise RateLimitError from e
-            logger.error(f"GLM LLM 回應錯誤: {e}")
+            logger.error(f"DeepSeek LLM 回應錯誤: {e}")
             raise

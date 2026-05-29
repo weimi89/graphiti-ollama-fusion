@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Graphiti MCP Server — 知識圖譜記憶服務，整合多 LLM 提供者（Ollama / GLM / GROQ）與 Neo4j 圖資料庫的 MCP (Model Context Protocol) 服務器。基於 [getzep/graphiti](https://github.com/getzep/graphiti) 擴充開發，支援本地 Ollama 和雲端 LLM 彈性切換。
+Graphiti MCP Server — 知識圖譜記憶服務，整合多 LLM 提供者（Ollama / GLM / GROQ / OpenRouter / DeepSeek）與 Neo4j 圖資料庫的 MCP (Model Context Protocol) 服務器。基於 [getzep/graphiti](https://github.com/getzep/graphiti) 擴充開發，支援本地 Ollama 和雲端 LLM 彈性切換，並可獨立指定 Embedding 提供者（與 LLM 解耦）。
 
 ## Build and Run Commands
 
@@ -34,7 +34,7 @@ docker run -p 8000:8000 --env-file .env graphiti-mcp
 ## Testing
 
 ```bash
-# 運行所有測試（143 個單元測試）
+# 運行所有測試（146 個測試）
 uv run python -m pytest tests/
 
 # 僅執行內容切分測試
@@ -45,6 +45,8 @@ uv run python -c "import src.config; print('OK')"
 uv run python -c "import src.ollama_embedder; print('OK')"
 uv run python -c "from src.ollama_graphiti_client import OptimizedOllamaClient; print('OK')"
 uv run python -c "from src.glm_client import GlmClient; print('OK')"
+uv run python -c "from src.openrouter_client import OpenRouterClient; print('OK')"
+uv run python -c "from src.deepseek_client import DeepSeekClient; print('OK')"
 
 # MCP Inspector 互動測試
 npx @modelcontextprotocol/inspector uv run python graphiti_mcp_server.py --transport stdio
@@ -72,6 +74,8 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 │   ├── web_api.py               # Web 管理介面 REST API 路由（20+ 端點）
 │   ├── ollama_graphiti_client.py # Ollama LLM 客戶端適配器（支援雙模型分流）
 │   ├── glm_client.py            # GLM（智谱 AI）LLM 客戶端（OpenAI 相容，簡化 schema 注入）
+│   ├── openrouter_client.py     # OpenRouter LLM 客戶端（OpenAI 相容，聚合多家模型）
+│   ├── deepseek_client.py       # DeepSeek LLM 客戶端（OpenAI 相容，json_object 模式 + 保底 json 防護）
 │   ├── ollama_embedder.py       # Ollama 嵌入模型適配器（支援 bge-m3，並發 batch）
 │   ├── content_preprocessor.py  # 智慧內容切分（長文本自動分段處理）
 │   ├── deduplication.py         # 記憶去重（餘弦相似度比對）
@@ -94,13 +98,14 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 │   ├── migrate_embeddings.py    # Embedding 模型遷移（切換模型後重新生成向量）
 │   ├── inspect_schema.py        # Neo4j 結構檢查
 │   └── performance_diagnose.py  # 性能診斷
-├── tests/                       # 測試套件（143 個測試）
+├── tests/                       # 測試套件（146 個測試）
 │   ├── test_content_preprocessor.py # 智慧切分邏輯測試（17 個）
 │   ├── test_new_features.py     # 新功能測試（32 個）
 │   ├── test_unit.py             # 單元測試
 │   ├── test_web_api.py          # Web API 測試
 │   ├── test_web_ui_features.py  # Web UI 功能測試
-│   └── test_integration_manual.py # 手動整合測試（需 pytest-asyncio）
+│   ├── test_integration_manual.py # 手動整合測試（需 pytest-asyncio）
+│   └── bench_deepseek_flash_vs_pro.py # DeepSeek flash/pro 寫入效能基準腳本（非單元測試）
 ├── docs/                        # 文檔
 ├── Dockerfile                   # Docker 容器化部署
 └── ecosystem.config.cjs         # PM2 部署配置
@@ -110,11 +115,17 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **MCP 工具定義**：在 `graphiti_mcp_server.py` 中使用 `@mcp.tool()` 裝飾器定義，所有工具都有標準化的錯誤處理模式。
 
-**配置層級**：JSON 配置檔為基礎 + 環境變數覆蓋（支援 Docker 部署場景）。主要配置類為 `GraphitiConfig`，支援 `get_errors()` 返回具體驗證錯誤。重要子配置：`OllamaConfig`（含 `small_model`）、`GroqConfig`、`GlmConfig`、`MemoryPerformanceConfig`（切分閾值、並行度）。
+**配置層級**：JSON 配置檔為基礎 + 環境變數覆蓋（支援 Docker 部署場景）。主要配置類為 `GraphitiConfig`，支援 `get_errors()` 返回具體驗證錯誤。重要子配置：`OllamaConfig`（含 `small_model`）、`GroqConfig`、`GlmConfig`、`OpenRouterConfig`、`DeepSeekConfig`、`OllamaEmbedderConfig`、`MemoryPerformanceConfig`（切分閾值、並行度）。`GraphitiConfig.get_active_model()` 集中各提供者的模型對應，供啟動日誌、狀態回報、`test_connection` 共用，避免多處 if/elif 鏈遺漏新提供者。
 
-**多 LLM 提供者架構**：透過 `LLM_PROVIDER` 環境變數切換提供者（`ollama` / `groq` / `glm`）。`_create_llm_client()` 根據設定路由到對應工廠函數。GLM 模式同時使用 GLM Embedding（`embedding-3`），其他模式使用 Ollama 嵌入器（預設 `bge-m3`，中文和 RAG 品質優異）。`OllamaEmbedder.create_batch()` 使用 `asyncio.gather` 並發請求，非串行。
+**多 LLM 提供者架構**：透過 `LLM_PROVIDER` 環境變數切換提供者（`ollama` / `groq` / `glm` / `openrouter` / `deepseek`）。`_create_llm_client()` 根據設定路由到對應工廠函數（`_create_ollama_client` / `_create_glm_client` / `_create_groq_client` / `_create_openrouter_client` / `_create_deepseek_client`）。`openrouter`、`deepseek` 與 `glm` 皆透過 OpenAI 相容 SDK 連接，差別在 base_url 與 schema 注入策略。
+
+**Embedding 與 LLM 解耦**：`EMBEDDING_PROVIDER` 環境變數獨立指定嵌入器（`ollama` / `glm`），未設定時 `GraphitiConfig.get_embedding_provider()` 回退為 `llm_provider`。實際選擇邏輯：只有 embedding provider 為 `glm` 時使用 GLM Embedding（`embedding-3`），其餘一律使用 Ollama 嵌入器（預設 `bge-m3`，中文和 RAG 品質優異）。因此 `groq` / `openrouter` / `deepseek` 等不提供 Embedding 的雲端 LLM，會自動落到 Ollama `bge-m3`。`OllamaEmbedder.create_batch()` 使用 `asyncio.gather` 並發請求，非串行。
 
 **GLM 客戶端**：`src/glm_client.py` 繼承 `LLMClient`，透過 OpenAI 相容 API 連接智谱 AI。覆寫 `generate_response` 以簡化 schema 注入（只注入字段名稱列表，避免 GLM 將完整 `$defs` JSON Schema 當資料回傳）。強制使用 `json_object` 模式（GLM 不支援 `json_schema`）。
+
+**OpenRouter 客戶端**：`src/openrouter_client.py` 繼承 `LLMClient`，透過 OpenAI 相容 API（`https://openrouter.ai/api/v1`）聚合各家模型（如 `stepfun/step-3.5-flash:free`）。schema 注入策略與 GLM 一致。不提供 Embedding。
+
+**DeepSeek 客戶端**：`src/deepseek_client.py` 繼承 `LLMClient`，透過 OpenAI 相容 API（`https://api.deepseek.com`）連接深度求索模型（`deepseek-chat` / `deepseek-v4-flash` / `deepseek-v4-pro`）。與 GLM 共用簡化 schema 注入。關鍵差異：DeepSeek 嚴格遵循 OpenAI 規範，使用 `json_object` 模式時**強制要求送出的 messages 內容必須包含 "json" 字串**，否則 API 直接回 `Prompt must contain the word 'json'`。因此 `_generate_response` 在設定 `response_format` 前有保底防護：若所有訊息皆不含 "json"（不分大小寫），自動在最後一則補上 JSON 指示，涵蓋 `response_model=None` 等所有呼叫路徑。`glm_client.py` 同結構亦加上此防護以預防換 endpoint 復發。不提供 Embedding。
 
 **並發安全**：使用 `asyncio.Lock` 保護 Graphiti 初始化，防止並發競態。`clear_graph` 後自動重建 Neo4j 索引。
 
@@ -216,24 +227,35 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 ## Required Services
 
 - **Neo4j**: `bolt://localhost:7687`（4.0+）
-- **LLM 提供者**（三選一，透過 `LLM_PROVIDER` 切換）：
+- **LLM 提供者**（五選一，透過 `LLM_PROVIDER` 切換）：
   - **Ollama**（`ollama`，預設）：本地 LLM，`http://localhost:11434`
     - LLM 主模型: `qwen2.5:3b`（推薦）、小模型: `qwen2.5:3b`
     - Embedder: `bge-m3`（1024 維，自動截斷為 768 以相容 Neo4j 索引；中文和 RAG 品質優於 nomic-embed-text）
   - **GLM**（`glm`）：智谱 AI 雲端，免費 `glm-4-flash` 模型
     - LLM: `glm-4-flash`（免費，穩定，~22s/短文本寫入）
     - Embedder: `embedding-3`（768 維，需設 `GLM_EMBEDDING_DIMENSIONS=768`）
-  - **GROQ**（`groq`）：高速雲端推理，需搭配獨立嵌入器
+  - **GROQ**（`groq`）：高速雲端推理
     - LLM: `llama-3.3-70b-versatile`（速度快但有 Rate Limit）
-    - 不提供 Embedding，需搭配 Ollama 或其他嵌入器
+    - 不提供 Embedding，自動回退 Ollama `bge-m3`
+  - **OpenRouter**（`openrouter`）：聚合各家模型的雲端閘道
+    - LLM: 任意 OpenRouter 模型（如 `stepfun/step-3.5-flash:free`）
+    - 不提供 Embedding，自動回退 Ollama `bge-m3`
+  - **DeepSeek**（`deepseek`）：深度求索雲端
+    - LLM: `deepseek-v4-flash`（推薦，速度快）/ `deepseek-v4-pro`（效果更佳）/ `deepseek-chat`（將於 2026-07-24 下線）
+    - 不提供 Embedding，自動回退 Ollama `bge-m3`
+- **Embedding 提供者**（透過 `EMBEDDING_PROVIDER` 獨立指定，預設跟隨 `LLM_PROVIDER`）：僅 `glm` 使用 GLM `embedding-3`，其餘一律 Ollama `bge-m3`。
 
-> **模型選擇注意**：Ollama 的 `qwen2.5:1.5b` 在 graphiti-core 結構化 JSON 輸出上不穩定（成功率僅 33%）。`qwen2.5:3b` 是能穩定運行的最小可行模型（成功率 100%）。GLM `glm-4-flash` 免費且穩定（零 Rate Limit 錯誤），但寫入速度比本地 Ollama 慢 2-5 倍。
+> **模型選擇注意**：
+> - Ollama 的 `qwen2.5:1.5b` 在 graphiti-core 結構化 JSON 輸出上不穩定（成功率僅 33%）。`qwen2.5:3b` 是能穩定運行的最小可行模型（成功率 100%）。
+> - GLM `glm-4-flash` 免費且穩定（零 Rate Limit 錯誤），但寫入速度比本地 Ollama 慢 2-5 倍。
+> - DeepSeek / OpenRouter / GLM 皆走 OpenAI `json_object` 模式。DeepSeek 嚴格要求 prompt 含 "json" 字串，client 已內建保底防護（見上方 DeepSeek 客戶端說明）。
 
 ## Key Environment Variables
 
 | 變數 | 說明 | 預設值 |
 |------|------|--------|
-| `LLM_PROVIDER` | LLM 提供者（`ollama` / `groq` / `glm`） | `ollama` |
+| `LLM_PROVIDER` | LLM 提供者（`ollama` / `groq` / `glm` / `openrouter` / `deepseek`） | `ollama` |
+| `EMBEDDING_PROVIDER` | Embedding 提供者（`ollama` / `glm`），獨立於 LLM | (跟隨 `LLM_PROVIDER`) |
 | `NEO4J_URI` | Neo4j 連接 URI | `bolt://localhost:7687` |
 | `NEO4J_PASSWORD` | Neo4j 密碼 | (必填) |
 | `OLLAMA_MODEL` | Ollama 主 LLM 模型 | `qwen2.5:7b` |
@@ -246,6 +268,10 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 | `GLM_EMBEDDING_DIMENSIONS` | GLM 嵌入維度（需與 Neo4j 索引一致） | `768` |
 | `GROQ_API_KEY` | GROQ API Key | (GROQ 模式必填) |
 | `GROQ_MODEL` | GROQ LLM 模型 | `llama-3.3-70b-versatile` |
+| `OPENROUTER_API_KEY` | OpenRouter API Key | (OpenRouter 模式必填) |
+| `OPENROUTER_MODEL` | OpenRouter 模型 | `stepfun/step-3.5-flash:free` |
+| `DEEPSEEK_API_KEY` | DeepSeek API Key | (DeepSeek 模式必填) |
+| `DEEPSEEK_MODEL` | DeepSeek LLM 模型 | `deepseek-chat` |
 | `GRAPHITI_DISPLAY_TIMEZONE` | API 回傳時間戳的顯示時區（IANA 名稱） | `UTC` |
 | `GRAPHITI_CHUNK_THRESHOLD` | 觸發智慧切分的字元數 | `800` |
 | `GRAPHITI_MAX_CHUNK_SIZE` | 切分後每段最大字元數 | `600` |
@@ -266,4 +292,4 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 
 ## Upstream Reference
 
-本專案基於 [getzep/graphiti/mcp_server](https://github.com/getzep/graphiti/tree/main/mcp_server) 擴充開發。本地新增功能包括：多 LLM 提供者架構（Ollama / GLM / GROQ 動態切換）、Ollama 深度適配（含雙模型分流）、GLM 客戶端（簡化 schema 注入）、Web 管理介面（含社群瀏覽、三元組表單）、19 個 MCP 工具（含進階搜尋、衝突偵測、去重、重要性追蹤、智慧遺忘）、安全模式（Safe Mode）、智慧內容切分、背景記憶處理、完整異常/日誌系統。上游使用 graphiti-core 最新版，本地依賴 >=0.24.3。
+本專案基於 [getzep/graphiti/mcp_server](https://github.com/getzep/graphiti/tree/main/mcp_server) 擴充開發。本地新增功能包括：多 LLM 提供者架構（Ollama / GLM / GROQ / OpenRouter / DeepSeek 動態切換）、Embedding 與 LLM 解耦（`EMBEDDING_PROVIDER`）、Ollama 深度適配（含雙模型分流）、GLM / OpenRouter / DeepSeek 客戶端（簡化 schema 注入、DeepSeek json_object 保底防護）、Web 管理介面（含社群瀏覽、三元組表單）、19 個 MCP 工具（含進階搜尋、衝突偵測、去重、重要性追蹤、智慧遺忘）、安全模式（Safe Mode）、智慧內容切分、背景記憶處理、完整異常/日誌系統。上游使用 graphiti-core 最新版，本地依賴 >=0.24.3。
