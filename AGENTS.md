@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -15,7 +15,7 @@ uv sync
 # 啟動服務 - HTTP 模式（推薦，支援 Web 管理介面）
 uv run python graphiti_mcp_server.py --transport http --port 8000
 
-# 啟動服務 - STDIO 模式（Claude Desktop CLI）
+# 啟動服務 - STDIO 模式（Codex Desktop CLI）
 uv run python graphiti_mcp_server.py --transport stdio
 
 # 使用自定義配置（JSON 為基礎，環境變數覆蓋）
@@ -139,7 +139,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **傳輸模式**：
 - `http` — HTTP Streamable（推薦），支援 MCP 端點（`/mcp`）、Web 管理介面（`/`）、REST API（`/api/*`）、健康檢查（`/health`、`/health/ready`）
-- `stdio` — Claude Desktop CLI 整合
+- `stdio` — Codex Desktop CLI 整合
 - `sse` — Server-Sent Events（已不建議使用，MCP 1.x 有 session 初始化相容性問題）
 
 **完整模式（預設）**：`add_memory_simple` 預設使用 `use_safe_mode=False`，透過完整的實體提取流程建立 Entity 節點和關係，使記憶可被 `search_memory_nodes` 和 `search_memory_facts` 搜尋。安全模式（`use_safe_mode=True`）僅建立 EpisodicNode，速度快但無法被搜尋。

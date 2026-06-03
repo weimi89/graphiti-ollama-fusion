@@ -22,6 +22,7 @@
 - **批量匯入** — 一次提交多筆記憶，適合大量資料遷移
 - **結構化三元組** — 直接添加「主體-關係-客體」，跳過 LLM 提取，秒速完成
 - **Web 管理介面** — 內建儀表板、瀏覽、搜尋、知識圖譜視覺化、AI 問答、社群瀏覽
+- **多國語系（i18n）** — 回應訊息支援 zh-TW / en / zh-CN / ja 四語言；MCP 工具依 `SERVER_LANG`、REST API 依 HTTP `Accept-Language` 自動協商
 - **深色/淺色主題** — Web 介面支援主題切換
 - **安全模式** — 可選擇跳過實體提取的快速記憶添加
 - **Docker 支援** — 內建 Dockerfile，支援容器化部署
@@ -199,6 +200,7 @@ graphiti/
 │   ├── importance.py             # 重要性追蹤與智慧遺忘
 │   ├── safe_memory_add.py        # 安全記憶添加（跳過實體提取）
 │   ├── timezone_utils.py         # 時區轉換（UTC→本地時區顯示）
+│   ├── i18n.py                   # 後端多國語系（REST 依 Accept-Language、MCP 依 SERVER_LANG；四語言）
 │   ├── exceptions.py             # 結構化異常處理（12 種異常類別）
 │   └── logging_setup.py          # 日誌系統（時間輪轉 + 性能監控）
 ├── web/                          # Web 管理介面前端（SPA，無 build）
@@ -208,9 +210,10 @@ graphiti/
 │       ├── api.js                # REST API 封裝
 │       ├── components.js         # UI 組件渲染（含社群頁面）
 │       └── app.js                # SPA 路由、狀態管理
-├── tests/                        # 測試套件（146 個測試）
+├── tests/                        # 測試套件（183 個測試）
 │   ├── test_content_preprocessor.py  # 切分邏輯測試（17 個）
 │   ├── test_new_features.py      # 新功能測試（32 個）
+│   ├── test_i18n.py             # 多國語系測試（37 個）
 │   ├── test_unit.py              # 單元測試
 │   ├── test_web_api.py           # Web API 測試
 │   ├── test_web_ui_features.py   # Web UI 功能測試
@@ -555,6 +558,10 @@ DEEPSEEK_MODEL=deepseek-v4-flash    # 或 deepseek-v4-pro
 OLLAMA_EMBEDDING_MODEL=bge-m3
 OLLAMA_EMBEDDING_DIMENSIONS=768
 
+# === 顯示與語系（可選） ===
+GRAPHITI_DISPLAY_TIMEZONE=Asia/Taipei # API 回傳時間戳顯示時區（IANA 名稱；存儲維持 UTC）
+SERVER_LANG=zh-TW                     # MCP 工具回應語言（zh-TW/en/zh-CN/ja）；REST API 改依 Accept-Language
+
 # === 記憶效能（可選） ===
 GRAPHITI_CHUNK_THRESHOLD=800         # 觸發智慧切分的字元數閾值
 GRAPHITI_MAX_CHUNK_SIZE=600          # 每段最大字元數
@@ -661,7 +668,7 @@ docker run -p 8000:8000 \
 ## 測試
 
 ```bash
-# 執行所有測試（146 個，約 1 秒）
+# 執行所有測試（183 個，約 1 秒）
 uv run python -m pytest tests/
 
 # 詳細輸出

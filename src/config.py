@@ -483,6 +483,9 @@ class GraphitiConfig:
     # 顯示時區（API 回傳時間戳轉換用）
     display_timezone: str = "UTC"
 
+    # 伺服器語言（MCP 工具回應語言；REST API 另依 Accept-Language 協商）
+    server_lang: str = "zh-TW"
+
     def get_embedding_provider(self) -> str:
         """取得有效的 embedding 提供者。若未明確設定則跟隨 llm_provider。"""
         if self.embedding_provider:
@@ -623,6 +626,9 @@ class GraphitiConfig:
             "GRAPHITI_DISPLAY_TIMEZONE", config.display_timezone
         )
 
+        # 伺服器語言（語言碼大小寫敏感，不做 .lower()）
+        config.server_lang = os.getenv("SERVER_LANG", config.server_lang)
+
         # 記憶效能配置
         _load_memory_performance_settings(config)
 
@@ -678,6 +684,7 @@ class GraphitiConfig:
                 "stale_days_threshold",
                 "stale_min_access_count",
                 "display_timezone",
+                "server_lang",
             ]:
                 if key in config_data:
                     setattr(config, key, config_data[key])
@@ -818,6 +825,7 @@ class GraphitiConfig:
                 "stale_days_threshold": self.stale_days_threshold,
                 "stale_min_access_count": self.stale_min_access_count,
                 "display_timezone": self.display_timezone,
+                "server_lang": self.server_lang,
             }
 
             config_file = Path(config_path)
@@ -960,6 +968,10 @@ class GraphitiConfig:
         if os.getenv("GRAPHITI_DISPLAY_TIMEZONE"):
             self.display_timezone = os.getenv("GRAPHITI_DISPLAY_TIMEZONE")
 
+        # 伺服器語言
+        if os.getenv("SERVER_LANG"):
+            self.server_lang = os.getenv("SERVER_LANG")
+
         # 記憶效能配置
         _load_memory_performance_settings(self)
 
@@ -997,6 +1009,7 @@ class GraphitiConfig:
             "chunk_threshold": self.memory_performance.chunk_threshold,
             "importance_tracking": self.enable_importance_tracking,
             "display_timezone": self.display_timezone,
+            "server_lang": self.server_lang,
         }
 
 

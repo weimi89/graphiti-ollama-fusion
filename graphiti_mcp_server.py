@@ -38,6 +38,7 @@ from mcp.server.fastmcp import FastMCP
 
 # 載入本地模組
 from src.config import GraphitiConfig, load_config
+from src.i18n import t
 from src.exceptions import (
     GraphitiMCPError,
     handle_exception,
@@ -192,6 +193,13 @@ class MemoryTask:
 
 app_config: GraphitiConfig = None  # 應用程式配置
 logger = None  # 日誌記錄器
+
+
+def _srv_lang() -> str:
+    """MCP 工具回應語言（依 SERVER_LANG 設定；未初始化時回退 zh-TW）。"""
+    return app_config.server_lang if app_config else "zh-TW"
+
+
 graphiti_instance = None  # Graphiti 實例快取
 _init_lock = asyncio.Lock()  # 初始化鎖，防止並發競態
 default_group_id: str = os.getenv("GROUP_ID", "default")  # 預設記憶分組 ID
@@ -639,12 +647,12 @@ async def add_memory_simple(
             if dup_result.is_duplicate:
                 return {
                     "success": False,
-                    "message": f"偵測到重複記憶: {dup_result.message}",
+                    "message": t("memory.duplicate_detected", _srv_lang(), detail=dup_result.message),
                     "duplicate": True,
                     "max_similarity": dup_result.max_similarity,
                     "similar_episode_uuid": dup_result.similar_episode_uuid,
                     "similar_episode_name": dup_result.similar_episode_name,
-                    "note": "使用 force=True 跳過去重檢查強制添加",
+                    "note": t("memory.note_force", _srv_lang()),
                 }
         except Exception as e:
             logger.warning(f"去重檢查失敗，繼續添加: {e}")
@@ -670,10 +678,10 @@ async def add_memory_simple(
 
         return {
             "success": True,
-            "message": f"記憶 '{name}' 已加入背景處理佇列",
+            "message": t("memory.queued_background", _srv_lang(), name=name),
             "task_id": task_id,
             "method": "background",
-            "note": "使用 get_memory_task_status(task_id) 查詢進度",
+            "note": t("task.note_query_status", _srv_lang()),
         }
 
     # 同步模式
@@ -822,19 +830,19 @@ async def _add_memory_safe_mode(
         log_operation_success("add_memory_safe", duration, name=name)
         return {
             "success": True,
-            "message": result["message"],
+            "message": t("memory.added", _srv_lang(), name=name),
             "uuid": result["uuid"],
             "group_id": group_id,
             "source": source,
             "processing_time": f"{duration:.2f}s",
             "method": "safe_direct_node_creation",
-            "note": "使用安全模式，跳過實體提取",
+            "note": t("memory.note_safe_mode", _srv_lang()),
         }
     else:
         log_operation_error("add_memory_safe", Exception(result["error"]), duration=duration)
         return create_error_response(
             CommonErrors.operation_failed("add_memory_safe", result["error"]),
-            f"安全記憶添加失敗: {result['error']}",
+            t("memory.add_safe_failed", _srv_lang(), reason=result['error']),
         )
 
 
@@ -903,13 +911,13 @@ async def _add_memory_full_mode(
 
         return {
             "success": True,
-            "message": f"記憶 '{name}' 已成功添加（完整模式）",
+            "message": t("memory.added_full", _srv_lang(), name=name),
             "uuid": episode_uuid or "auto-generated",
             "group_id": group_id,
             "source": source,
             "processing_time": f"{duration:.2f}s",
             "method": "full_entity_extraction",
-            "note": "使用完整模式，包含實體提取和關係建立",
+            "note": t("memory.note_full_mode", _srv_lang()),
         }
 
     # 切分後使用 add_episode_bulk 批量並發處理
@@ -939,14 +947,14 @@ async def _add_memory_full_mode(
 
     return {
         "success": True,
-        "message": f"記憶 '{name}' 已成功添加（完整模式，{total_chunks} 段，bulk 並發）",
+        "message": t("memory.added_full_chunked", _srv_lang(), name=name, count=total_chunks),
         "uuid": episode_uuid or "auto-generated",
         "group_id": group_id,
         "source": source,
         "processing_time": f"{duration:.2f}s",
         "method": "full_entity_extraction_chunked_bulk",
         "chunks": total_chunks,
-        "note": f"長文本自動切分為 {total_chunks} 段，使用 bulk 並發處理",
+        "note": t("memory.note_chunked", _srv_lang(), count=total_chunks),
     }
 
 
@@ -972,7 +980,7 @@ async def get_memory_task_status(task_id: str) -> dict:
     if not task:
         return {
             "success": False,
-            "error": f"找不到任務 {task_id}",
+            "error": t("task.not_found", _srv_lang(), task_id=task_id),
             "available_tasks": list(_memory_tasks.keys())[-10:],
         }
     return {"success": True, **task.to_dict()}
@@ -1054,7 +1062,7 @@ async def search_memory_nodes(
                 asyncio.create_task(update_access_metadata(graphiti.driver, node_uuids))
 
         return {
-            "message": f"找到 {len(nodes)} 個相關節點",
+            "message": t("search.nodes_found", _srv_lang(), count=len(nodes)),
             "nodes": simplified_nodes,
             "query": query,
             "filters": {"group_ids": group_ids, "entity_types": entity_types},
@@ -1172,7 +1180,7 @@ async def search_memory_facts(
                 asyncio.create_task(update_access_metadata(graphiti.driver, edge_uuids))
 
         return {
-            "message": f"找到 {len(edges)} 個相關事實",
+            "message": t("search.facts_found", _srv_lang(), count=len(edges)),
             "facts": simplified_edges,
             "query": query,
             "filters": {
@@ -1245,14 +1253,14 @@ async def add_episode_bulk(
         group_id = default_group_id
 
     if not episodes:
-        return {"success": False, "error": "episodes 列表不能為空"}
+        return {"success": False, "error": t("bulk.empty_list", _srv_lang())}
 
     # 驗證每個 episode 的格式
     for i, ep in enumerate(episodes):
         if not isinstance(ep, dict) or "name" not in ep or "content" not in ep:
             return {
                 "success": False,
-                "error": f"第 {i+1} 個 episode 格式錯誤，需包含 name 和 content 欄位",
+                "error": t("bulk.invalid_format", _srv_lang(), index=i + 1),
             }
 
     # 轉換為 RawEpisode
@@ -1295,7 +1303,7 @@ async def add_episode_bulk(
                 task_obj.chunks_done = len(episodes)
                 task_obj.result = {
                     "success": True,
-                    "message": f"成功批量添加 {len(episodes)} 條記憶",
+                    "message": t("bulk.added", _srv_lang(), count=len(episodes)),
                     "count": len(episodes),
                 }
             except Exception as e:
@@ -1309,11 +1317,11 @@ async def add_episode_bulk(
 
         return {
             "success": True,
-            "message": f"批量添加 {len(episodes)} 條記憶已加入背景處理",
+            "message": t("bulk.queued_background", _srv_lang(), count=len(episodes)),
             "task_id": task_id,
             "count": len(episodes),
             "method": "background",
-            "note": "使用 get_memory_task_status(task_id) 查詢進度",
+            "note": t("task.note_query_status", _srv_lang()),
         }
 
     # 同步模式
@@ -1331,14 +1339,14 @@ async def add_episode_bulk(
         duration = time.time() - start_time
         return {
             "success": True,
-            "message": f"成功批量添加 {len(episodes)} 條記憶",
+            "message": t("bulk.added", _srv_lang(), count=len(episodes)),
             "count": len(episodes),
             "processing_time": f"{duration:.2f}s",
             "method": "sync_bulk",
         }
     except Exception as e:
         duration = time.time() - start_time
-        return create_error_response(e, f"批量添加失敗: {str(e)[:200]}")
+        return create_error_response(e, t("bulk.failed", _srv_lang(), reason=str(e)[:200]))
 
 
 @mcp.tool()
@@ -1417,7 +1425,7 @@ async def add_triplet(
 
         return {
             "success": True,
-            "message": f"三元組已添加: {source_name} --[{relation_name}]--> {target_name}",
+            "message": t("triplet.added", _srv_lang(), source=source_name, relation=relation_name, target=target_name),
             "source_node_uuid": source_node.uuid,
             "target_node_uuid": target_node.uuid,
             "edge_uuid": edge.uuid,
@@ -1472,7 +1480,7 @@ async def build_communities(
                 task_obj.status = "completed"
                 task_obj.result = {
                     "success": True,
-                    "message": f"社群建構完成",
+                    "message": t("community.built", _srv_lang()),
                     "community_nodes": len(community_nodes),
                     "community_edges": len(community_edges),
                 }
@@ -1487,10 +1495,10 @@ async def build_communities(
 
         return {
             "success": True,
-            "message": "社群建構已加入背景處理",
+            "message": t("community.queued_background", _srv_lang()),
             "task_id": task_id,
             "method": "background",
-            "note": "使用 get_memory_task_status(task_id) 查詢進度",
+            "note": t("task.note_query_status", _srv_lang()),
         }
 
     # 同步模式
@@ -1506,14 +1514,14 @@ async def build_communities(
 
         return {
             "success": True,
-            "message": f"社群建構完成: {len(community_nodes)} 個社群, {len(community_edges)} 個連接",
+            "message": t("community.built_detail", _srv_lang(), node_count=len(community_nodes), edge_count=len(community_edges)),
             "community_nodes": simplified_communities,
             "community_edges_count": len(community_edges),
             "processing_time": f"{duration:.2f}s",
         }
     except Exception as e:
         duration = time.time() - start_time
-        return create_error_response(e, "社群建構失敗")
+        return create_error_response(e, t("community.build_failed", _srv_lang()))
 
 
 @mcp.tool()
@@ -1554,7 +1562,7 @@ async def advanced_search(
         if search_recipe not in SEARCH_RECIPES:
             return {
                 "success": False,
-                "error": f"未知的搜尋策略: {search_recipe}",
+                "error": t("search.unknown_recipe", _srv_lang(), recipe=search_recipe),
                 "available_recipes": list(SEARCH_RECIPES.keys()),
             }
 
@@ -1582,7 +1590,7 @@ async def advanced_search(
 
         return {
             "success": True,
-            "message": f"進階搜尋完成（策略: {search_recipe}）",
+            "message": t("search.advanced_done", _srv_lang(), recipe=search_recipe),
             "query": query,
             "recipe": search_recipe,
             "results": simplified,
@@ -1644,7 +1652,7 @@ async def get_episodes(last_n: int = 10, group_id: str = "") -> dict:
         ]
 
         return {
-            "message": f"找到 {len(episodes)} 個記憶片段",
+            "message": t("episodes.found", _srv_lang(), count=len(episodes)),
             "episodes": simplified_episodes,
             "duration": round(duration, 2),
         }
@@ -1705,9 +1713,9 @@ async def check_conflicts(
         target_nodes = target_results.nodes or []
 
         if not source_nodes:
-            return {"success": False, "error": f"找不到實體: {source_name}"}
+            return {"success": False, "error": t("entity.not_found", _srv_lang(), name=source_name)}
         if not target_nodes:
-            return {"success": False, "error": f"找不到實體: {target_name}"}
+            return {"success": False, "error": t("entity.not_found", _srv_lang(), name=target_name)}
 
         source_uuid = str(source_nodes[0].uuid)
         target_uuid = str(target_nodes[0].uuid)
@@ -1742,9 +1750,11 @@ async def check_conflicts(
             "invalidated_facts": invalidated_facts,
             "has_conflicts": has_conflicts,
             "total_edges": len(edges),
-            "message": (
-                f"發現 {len(active_facts)} 個有效事實和 {len(invalidated_facts)} 個已失效事實"
-                + ("，存在衝突！" if has_conflicts else "")
+            "message": t(
+                "conflict.summary_conflict" if has_conflicts else "conflict.summary",
+                _srv_lang(),
+                active=len(active_facts),
+                invalidated=len(invalidated_facts),
             ),
             "duration": round(duration, 2),
         }
@@ -1849,7 +1859,7 @@ async def get_node_edges(
             "outbound_edges": outbound_edges,
             "total_inbound": len(inbound_edges),
             "total_outbound": len(outbound_edges),
-            "message": f"找到 {len(inbound_edges)} 個入邊和 {len(outbound_edges)} 個出邊",
+            "message": t("node_edges.found", _srv_lang(), inbound=len(inbound_edges), outbound=len(outbound_edges)),
             "duration": round(duration, 2),
         }
 
@@ -1886,7 +1896,7 @@ async def test_connection() -> dict:
         duration = time.time() - start_time
 
         return {
-            "message": "連接測試完成",
+            "message": t("connection.test_done", _srv_lang()),
             "neo4j": "OK",
             "ollama_llm": llm_status,
             "embedder": embedder_status,
@@ -1970,7 +1980,7 @@ async def get_stale_memories(
 
         return {
             "success": True,
-            "message": f"找到 {result['total']} 個過時記憶",
+            "message": t("stale.found", _srv_lang(), total=result['total']),
             "stale_nodes": result["stale_nodes"],
             "stale_edges": result["stale_edges"],
             "total": result["total"],
@@ -1980,7 +1990,7 @@ async def get_stale_memories(
                 "group_id": group_id,
             },
             "duration": round(duration, 2),
-            "note": "使用 cleanup_stale_memories() 清理過時記憶",
+            "note": t("stale.note_cleanup", _srv_lang()),
         }
 
     except Exception as e:
@@ -2071,10 +2081,10 @@ async def clear_graph(group_ids: Optional[List[str]] = None) -> dict:
 
         if group_ids:
             await clear_data(graphiti.driver, group_ids=group_ids)
-            message = f"已清除分組: {', '.join(group_ids)}"
+            message = t("graph.cleared_groups", _srv_lang(), groups=', '.join(group_ids))
         else:
             await graphiti.clear()
-            message = "圖資料庫已完全清除"
+            message = t("graph.cleared_all", _srv_lang())
 
         # 重置快取的實例
         global graphiti_instance
@@ -2085,7 +2095,7 @@ async def clear_graph(group_ids: Optional[List[str]] = None) -> dict:
         return {"message": message, "duration": round(duration, 2)}
 
     except Exception as e:
-        return create_error_response(e, "清除圖資料庫失敗")
+        return create_error_response(e, t("graph.clear_failed", _srv_lang()))
 
 
 @mcp.tool()
@@ -2113,14 +2123,14 @@ async def delete_entity_edge(uuid: str) -> dict:
 
         return {
             "success": True,
-            "message": f"實體邊 {uuid} 已成功刪除",
+            "message": t("edge.deleted", _srv_lang(), uuid=uuid),
             "duration": round(duration, 2),
         }
 
     except Exception as e:
         duration = time.time() - start_time
         log_operation_error("delete_entity_edge", e, uuid=uuid, duration=duration)
-        return create_error_response(e, f"刪除實體邊失敗: {uuid}")
+        return create_error_response(e, t("edge.delete_failed", _srv_lang(), uuid=uuid))
 
 
 @mcp.tool()
@@ -2148,7 +2158,7 @@ async def delete_episode(uuid: str) -> dict:
 
         return {
             "success": True,
-            "message": f"記憶片段 {uuid} 已成功刪除",
+            "message": t("episode.deleted_simple", _srv_lang(), uuid=uuid),
             "duration": round(duration, 2),
         }
 
@@ -2247,7 +2257,7 @@ async def get_status() -> dict:
             "service": _service_name,
             "status": "error",
             "error": str(e),
-            "message": "服務狀態檢查失敗",
+            "message": t("status.check_failed", _srv_lang()),
         }
 
 

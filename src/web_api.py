@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Callable, Coroutine, Any, List
 
 from src.timezone_utils import format_timestamp
+from src.i18n import t, parse_accept_language
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -103,6 +104,7 @@ def create_web_routes(
 
     async def api_stats(request: Request) -> JSONResponse:
         """取得儀表板統計資訊。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             graphiti = await get_graphiti_fn()
             group_id = request.query_params.get("group_id", "")
@@ -139,7 +141,7 @@ def create_web_routes(
                 "nodes": node_count,
                 "facts": fact_count,
                 "episodes": episode_count,
-                "group_id": group_id or "(全部)",
+                "group_id": group_id or t("common.all", lang),
             })
         except Exception as e:
             logger.error(f"API stats error: {e}")
@@ -383,6 +385,7 @@ def create_web_routes(
 
     async def api_delete_episode(request: Request) -> JSONResponse:
         """刪除記憶片段（事務性：連帶清理關聯邊）。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             uuid = request.path_params["uuid"]
             graphiti = await get_graphiti_fn()
@@ -399,14 +402,15 @@ def create_web_routes(
                 record = await result.single()
                 deleted = record["deleted"] if record else 0
             if deleted == 0:
-                return JSONResponse({"error": f"記憶片段 {uuid} 不存在"}, status_code=404)
-            return JSONResponse({"success": True, "message": f"記憶片段 {uuid} 已刪除（含關聯邊）"})
+                return JSONResponse({"error": t("episode.not_found", lang, uuid=uuid)}, status_code=404)
+            return JSONResponse({"success": True, "message": t("episode.deleted", lang, uuid=uuid)})
         except Exception as e:
             logger.error(f"API delete episode error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_delete_fact(request: Request) -> JSONResponse:
         """刪除事實（事務性）。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             uuid = request.path_params["uuid"]
             graphiti = await get_graphiti_fn()
@@ -422,14 +426,15 @@ def create_web_routes(
                 record = await result.single()
                 deleted = record["deleted"] if record else 0
             if deleted == 0:
-                return JSONResponse({"error": f"事實 {uuid} 不存在"}, status_code=404)
-            return JSONResponse({"success": True, "message": f"事實 {uuid} 已刪除"})
+                return JSONResponse({"error": t("fact.not_found", lang, uuid=uuid)}, status_code=404)
+            return JSONResponse({"success": True, "message": t("fact.deleted", lang, uuid=uuid)})
         except Exception as e:
             logger.error(f"API delete fact error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_delete_node(request: Request) -> JSONResponse:
         """刪除實體節點（事務性：連帶清理關聯邊）。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             uuid = request.path_params["uuid"]
             graphiti = await get_graphiti_fn()
@@ -446,32 +451,34 @@ def create_web_routes(
                 record = await result.single()
                 deleted = record["deleted"] if record else 0
             if deleted == 0:
-                return JSONResponse({"error": f"實體節點 {uuid} 不存在"}, status_code=404)
-            return JSONResponse({"success": True, "message": f"實體節點 {uuid} 已刪除（含關聯邊）"})
+                return JSONResponse({"error": t("node.not_found", lang, uuid=uuid)}, status_code=404)
+            return JSONResponse({"success": True, "message": t("node.deleted", lang, uuid=uuid)})
         except Exception as e:
             logger.error(f"API delete node error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_delete_group(request: Request) -> JSONResponse:
         """清除特定 group 的所有資料。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             from graphiti_core.utils.maintenance.graph_data_operations import clear_data
 
             group_id = request.path_params["group_id"]
             graphiti = await get_graphiti_fn()
             await clear_data(graphiti.driver, group_ids=[group_id])
-            return JSONResponse({"success": True, "message": f"群組 {group_id} 已清除"})
+            return JSONResponse({"success": True, "message": t("group.cleared", lang, group_id=group_id)})
         except Exception as e:
             logger.error(f"API delete group error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_search_nodes(request: Request) -> JSONResponse:
         """向量搜尋節點（含速率限制和超時）。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             client_ip = request.client.host if request.client else "unknown"
             if not _search_limiter.is_allowed(client_ip):
                 return JSONResponse(
-                    {"error": "搜尋請求過於頻繁，請稍後再試"}, status_code=429
+                    {"error": t("search.rate_limited", lang)}, status_code=429
                 )
 
             from graphiti_core.search.search_config_recipes import NODE_HYBRID_SEARCH_RRF
@@ -479,7 +486,7 @@ def create_web_routes(
 
             q = request.query_params.get("q", "").strip()
             if not q:
-                return JSONResponse({"error": "缺少搜尋參數 q"}, status_code=400)
+                return JSONResponse({"error": t("search.missing_query", lang)}, status_code=400)
 
             group_ids_str = request.query_params.get("group_ids", "")
             group_ids = [g.strip() for g in group_ids_str.split(",") if g.strip()] if group_ids_str else []
@@ -515,23 +522,24 @@ def create_web_routes(
             return JSONResponse({"nodes": nodes, "query": q, "total": len(nodes), "duration": duration})
         except asyncio.TimeoutError:
             logger.warning(f"搜尋節點超時 ({SEARCH_TIMEOUT}s): {q}")
-            return JSONResponse({"error": "搜尋超時，請縮小查詢範圍"}, status_code=504)
+            return JSONResponse({"error": t("search.timeout", lang)}, status_code=504)
         except Exception as e:
             logger.error(f"API search nodes error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_search_facts(request: Request) -> JSONResponse:
         """向量搜尋事實（含速率限制和超時）。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             client_ip = request.client.host if request.client else "unknown"
             if not _search_limiter.is_allowed(client_ip):
                 return JSONResponse(
-                    {"error": "搜尋請求過於頻繁，請稍後再試"}, status_code=429
+                    {"error": t("search.rate_limited", lang)}, status_code=429
                 )
 
             q = request.query_params.get("q", "").strip()
             if not q:
-                return JSONResponse({"error": "缺少搜尋參數 q"}, status_code=400)
+                return JSONResponse({"error": t("search.missing_query", lang)}, status_code=400)
 
             group_ids_str = request.query_params.get("group_ids", "")
             group_ids = [g.strip() for g in group_ids_str.split(",") if g.strip()] if group_ids_str else []
@@ -564,18 +572,19 @@ def create_web_routes(
             return JSONResponse({"facts": facts, "query": q, "total": len(facts), "duration": duration})
         except asyncio.TimeoutError:
             logger.warning(f"搜尋事實超時 ({SEARCH_TIMEOUT}s): {q}")
-            return JSONResponse({"error": "搜尋超時，請縮小查詢範圍"}, status_code=504)
+            return JSONResponse({"error": t("search.timeout", lang)}, status_code=504)
         except Exception as e:
             logger.error(f"API search facts error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_search_episodes(request: Request) -> JSONResponse:
         """全文搜尋記憶片段（BM25）。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             client_ip = request.client.host if request.client else "unknown"
             if not _search_limiter.is_allowed(client_ip):
                 return JSONResponse(
-                    {"error": "搜尋請求過於頻繁，請稍後再試"}, status_code=429
+                    {"error": t("search.rate_limited", lang)}, status_code=429
                 )
 
             from graphiti_core.search.search_config import (
@@ -586,7 +595,7 @@ def create_web_routes(
 
             q = request.query_params.get("q", "").strip()
             if not q:
-                return JSONResponse({"error": "缺少搜尋參數 q"}, status_code=400)
+                return JSONResponse({"error": t("search.missing_query", lang)}, status_code=400)
 
             group_ids_str = request.query_params.get("group_ids", "")
             group_ids = (
@@ -627,7 +636,7 @@ def create_web_routes(
             )
         except asyncio.TimeoutError:
             logger.warning(f"搜尋記憶片段超時 ({SEARCH_TIMEOUT}s): {q}")
-            return JSONResponse({"error": "搜尋超時，請縮小查詢範圍"}, status_code=504)
+            return JSONResponse({"error": t("search.timeout", lang)}, status_code=504)
         except Exception as e:
             logger.error(f"API search episodes error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
@@ -923,11 +932,12 @@ def create_web_routes(
 
     async def api_graph_subgraph(request: Request) -> JSONResponse:
         """取得以某節點為中心的子圖（用於 D3 視覺化）。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             graphiti = await get_graphiti_fn()
             uuid = request.query_params.get("uuid", "").strip()
             if not uuid:
-                return JSONResponse({"error": "缺少參數 uuid"}, status_code=400)
+                return JSONResponse({"error": t("graph.missing_uuid", lang)}, status_code=400)
 
             depth = min(int(request.query_params.get("depth", "2")), 3)
             limit = min(int(request.query_params.get("limit", "50")), 100)
@@ -1058,16 +1068,17 @@ def create_web_routes(
 
     async def api_ask(request: Request) -> JSONResponse:
         """AI 問答測試：並行搜尋 nodes + facts，組合為上下文。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             client_ip = request.client.host if request.client else "unknown"
             if not _search_limiter.is_allowed(client_ip):
                 return JSONResponse(
-                    {"error": "搜尋請求過於頻繁，請稍後再試"}, status_code=429
+                    {"error": t("search.rate_limited", lang)}, status_code=429
                 )
 
             q = request.query_params.get("q", "").strip()
             if not q:
-                return JSONResponse({"error": "缺少搜尋參數 q"}, status_code=400)
+                return JSONResponse({"error": t("search.missing_query", lang)}, status_code=400)
 
             group_ids_str = request.query_params.get("group_ids", "")
             group_ids = [g.strip() for g in group_ids_str.split(",") if g.strip()] if group_ids_str else []
@@ -1127,15 +1138,15 @@ def create_web_routes(
             # 組合 AI 上下文
             context_parts = []
             if nodes:
-                context_parts.append("## 相關實體\n")
+                context_parts.append(t("ask.context_entities", lang) + "\n")
                 for n in nodes:
                     context_parts.append(f"- **{n['name']}**: {n['summary']}")
             if facts:
-                context_parts.append("\n## 相關事實\n")
+                context_parts.append("\n" + t("ask.context_facts", lang) + "\n")
                 for f in facts:
                     context_parts.append(f"- {f['source_name']} → {f['target_name']}: {f['fact']}")
 
-            context = "\n".join(context_parts) if context_parts else "（未找到相關知識）"
+            context = "\n".join(context_parts) if context_parts else t("ask.no_knowledge", lang)
 
             return JSONResponse({
                 "query": q,
@@ -1154,6 +1165,7 @@ def create_web_routes(
 
     async def api_add_memory(request: Request) -> JSONResponse:
         """透過 Web UI 新增記憶。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             body = await request.json()
             name = body.get("name", "").strip()
@@ -1163,7 +1175,7 @@ def create_web_routes(
 
             if not name or not content:
                 return JSONResponse(
-                    {"error": "名稱和內容為必填"}, status_code=400
+                    {"error": t("memory.name_content_required", lang)}, status_code=400
                 )
 
             from graphiti_core.nodes import EpisodeType
@@ -1183,7 +1195,7 @@ def create_web_routes(
                 reference_time=datetime.now(timezone.utc),
             )
             return JSONResponse(
-                {"success": True, "message": f"記憶 '{name}' 已成功添加"}
+                {"success": True, "message": t("memory.added", lang, name=name)}
             )
         except Exception as e:
             logger.error(f"API add memory error: {e}")
@@ -1195,18 +1207,19 @@ def create_web_routes(
 
     async def api_add_bulk(request: Request) -> JSONResponse:
         """透過 Web API 批量添加記憶。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             body = await request.json()
             episodes = body.get("episodes", [])
             group_id = body.get("group_id", "default")
 
             if not episodes:
-                return JSONResponse({"error": "episodes 列表不能為空"}, status_code=400)
+                return JSONResponse({"error": t("bulk.empty_list", lang)}, status_code=400)
 
             for i, ep in enumerate(episodes):
                 if not isinstance(ep, dict) or "name" not in ep or "content" not in ep:
                     return JSONResponse(
-                        {"error": f"第 {i+1} 個 episode 格式錯誤"},
+                        {"error": t("bulk.invalid_format", lang, index=i + 1)},
                         status_code=400,
                     )
 
@@ -1234,7 +1247,7 @@ def create_web_routes(
 
             return JSONResponse({
                 "success": True,
-                "message": f"成功批量添加 {len(episodes)} 條記憶",
+                "message": t("bulk.added", lang, count=len(episodes)),
                 "count": len(episodes),
             })
         except Exception as e:
@@ -1247,6 +1260,7 @@ def create_web_routes(
 
     async def api_add_triplet(request: Request) -> JSONResponse:
         """透過 Web API 添加三元組。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             body = await request.json()
             source_name = body.get("source_name", "").strip()
@@ -1257,7 +1271,7 @@ def create_web_routes(
 
             if not all([source_name, relation_name, target_name, fact]):
                 return JSONResponse(
-                    {"error": "source_name, relation_name, target_name, fact 為必填"},
+                    {"error": t("triplet.fields_required", lang)},
                     status_code=400,
                 )
 
@@ -1288,7 +1302,7 @@ def create_web_routes(
 
             return JSONResponse({
                 "success": True,
-                "message": f"三元組已添加: {source_name} --[{relation_name}]--> {target_name}",
+                "message": t("triplet.added", lang, source=source_name, relation=relation_name, target=target_name),
                 "source_uuid": source_node.uuid,
                 "target_uuid": target_node.uuid,
                 "edge_uuid": edge.uuid,
@@ -1354,6 +1368,7 @@ def create_web_routes(
 
     async def api_build_communities(request: Request) -> JSONResponse:
         """觸發社群建構。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             body = await request.json()
             group_ids = body.get("group_ids")
@@ -1365,7 +1380,7 @@ def create_web_routes(
 
             return JSONResponse({
                 "success": True,
-                "message": f"社群建構完成",
+                "message": t("community.built", lang),
                 "community_nodes": len(community_nodes),
                 "community_edges": len(community_edges),
             })
@@ -1379,10 +1394,11 @@ def create_web_routes(
 
     async def api_advanced_search(request: Request) -> JSONResponse:
         """進階搜尋（支援搜尋策略選擇）。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             q = request.query_params.get("q", "").strip()
             if not q:
-                return JSONResponse({"error": "缺少查詢參數 q"}, status_code=400)
+                return JSONResponse({"error": t("search.missing_query", lang)}, status_code=400)
 
             recipe = request.query_params.get("recipe", "combined_cross_encoder")
             limit_val = min(int(request.query_params.get("limit", 10)), 50)
@@ -1398,7 +1414,7 @@ def create_web_routes(
             recipes = getattr(server, "SEARCH_RECIPES", {})
             if recipe not in recipes:
                 return JSONResponse({
-                    "error": f"未知的搜尋策略: {recipe}",
+                    "error": t("search.unknown_recipe", lang, recipe=recipe),
                     "available": list(recipes.keys()),
                 }, status_code=400)
 
@@ -1448,7 +1464,7 @@ def create_web_routes(
                 "results": simplified,
             })
         except asyncio.TimeoutError:
-            return JSONResponse({"error": "搜尋超時"}, status_code=504)
+            return JSONResponse({"error": t("search.timeout", lang)}, status_code=504)
         except Exception as e:
             logger.error(f"API advanced search error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
@@ -1509,10 +1525,11 @@ def create_web_routes(
 
     async def index_page(request: Request) -> Response:
         """回傳 SPA 首頁。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         index_path = WEB_DIR / "index.html"
         if index_path.exists():
             return HTMLResponse(index_path.read_text(encoding="utf-8"))
-        return HTMLResponse("<h1>Graphiti Web UI</h1><p>web/index.html 不存在</p>", status_code=404)
+        return HTMLResponse(f"<h1>Graphiti Web UI</h1><p>{t('system.index_missing', lang)}</p>", status_code=404)
 
     # ------------------------------------------------------------------
     # 背景任務 API
@@ -1548,13 +1565,14 @@ def create_web_routes(
 
     async def api_memory_task_detail(request: Request) -> JSONResponse:
         """查詢單一背景任務狀態。"""
+        lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             from graphiti_mcp_server import _memory_tasks
 
             task_id = request.path_params["task_id"]
             task = _memory_tasks.get(task_id)
             if not task:
-                return JSONResponse({"error": f"找不到任務 {task_id}"}, status_code=404)
+                return JSONResponse({"error": t("task.not_found", lang, task_id=task_id)}, status_code=404)
             return JSONResponse(task.to_dict())
         except Exception as e:
             logger.error(f"API memory task detail error: {e}")
