@@ -4,40 +4,136 @@
 共用的訊息字典與翻譯函數。
 
 設計要點：
-- 支援語言：zh-TW（基準/fallback）、en、zh-CN、ja。
+- 支援語言：zh-TW（基準/fallback）、en、zh-CN、ja，以及多個新增目標語系。
 - ``t(key, lang, **params)``：取對應語言模板並以 ``str.format`` 插值；
   缺 key 或缺語言時回退 zh-TW，再缺則回 key 本身；格式化失敗絕不冒泡成例外。
 - ``parse_accept_language(header)``：解析 HTTP Accept-Language（含 q 值排序），
   對應到支援語言集，裸 ``zh`` 視為 ``zh-TW``。
 
-新增語言時只需在 ``MESSAGES`` 增加一組字典；新增訊息時四語言同步補上
-（``tests/test_i18n.py`` 會驗證四語言 key 完全對齊，避免漏譯）。
+新增語言時只需在 ``SUPPORTED_LANGUAGES`` / ``_ALIASES_BY_LANGUAGE`` 增加語言碼；
+若尚未完成逐句翻譯，會先使用英文訊息作為該語言的 fallback。新增訊息時所有
+語言會透過合成後的 ``MESSAGES`` 保持 key 對齊（``tests/test_i18n.py`` 會驗證）。
 """
 
 from __future__ import annotations
 
+from src.i18n_generated import GENERATED_MESSAGE_OVERRIDES
+
 # 支援的語言碼（正規化形式）
-SUPPORTED_LANGUAGES = ("zh-TW", "en", "zh-CN", "ja")
+SUPPORTED_LANGUAGES = (
+    "zh-TW",
+    "en",
+    "zh-CN",
+    "ja",
+    "pt-PT",
+    "pt-BR",
+    "ko",
+    "es",
+    "de",
+    "fr",
+    "he",
+    "ar",
+    "ru",
+    "pl",
+    "cs",
+    "nl",
+    "tr",
+    "uk",
+    "vi",
+    "tl",
+    "id",
+    "th",
+    "hi",
+    "bn",
+    "ur",
+    "ro",
+    "sv",
+    "it",
+    "el",
+    "hu",
+    "fi",
+    "da",
+    "no",
+)
 DEFAULT_LANGUAGE = "zh-TW"
+FALLBACK_LANGUAGE = "en"
+
+LANGUAGE_DISPLAY_NAMES = {
+    "zh-TW": "🇹🇼 繁體中文",
+    "en": "English",
+    "zh-CN": "🇨🇳 中文",
+    "ja": "🇯🇵 日本語",
+    "pt-PT": "🇵🇹 Português",
+    "pt-BR": "🇧🇷 Português",
+    "ko": "🇰🇷 한국어",
+    "es": "🇪🇸 Español",
+    "de": "🇩🇪 Deutsch",
+    "fr": "🇫🇷 Français",
+    "he": "🇮🇱 עברית",
+    "ar": "🇸🇦 العربية",
+    "ru": "🇷🇺 Русский",
+    "pl": "🇵🇱 Polski",
+    "cs": "🇨🇿 Čeština",
+    "nl": "🇳🇱 Nederlands",
+    "tr": "🇹🇷 Türkçe",
+    "uk": "🇺🇦 Українська",
+    "vi": "🇻🇳 Tiếng Việt",
+    "tl": "🇵🇭 Tagalog",
+    "id": "🇮🇩 Indonesia",
+    "th": "🇹🇭 ไทย",
+    "hi": "🇮🇳 हिन्दी",
+    "bn": "🇧🇩 বাংলা",
+    "ur": "🇵🇰 اردو",
+    "ro": "🇷🇴 Română",
+    "sv": "🇸🇪 Svenska",
+    "it": "🇮🇹 Italiano",
+    "el": "🇬🇷 Ελληνικά",
+    "hu": "🇭🇺 Magyar",
+    "fi": "🇫🇮 Suomi",
+    "da": "🇩🇰 Dansk",
+    "no": "🇳🇴 Norsk",
+}
 
 # Accept-Language / SERVER_LANG 別名 → 正規化語言碼（比對時一律轉小寫）
+_ALIASES_BY_LANGUAGE = {
+    "zh-TW": ("zh", "zh-tw", "zh-hant", "zh-hant-tw", "zh-hk", "zh-mo"),
+    "en": ("en", "en-us", "en-gb", "en-au", "en-ca", "en-nz"),
+    "zh-CN": ("zh-cn", "zh-hans", "zh-hans-cn", "zh-sg"),
+    "ja": ("ja", "ja-jp"),
+    "pt-PT": ("pt-pt", "pt"),
+    "pt-BR": ("pt-br",),
+    "ko": ("ko", "ko-kr"),
+    "es": ("es", "es-es", "es-mx", "es-419"),
+    "de": ("de", "de-de", "de-at", "de-ch"),
+    "fr": ("fr", "fr-fr", "fr-ca", "fr-ch"),
+    "he": ("he", "he-il", "iw", "iw-il"),
+    "ar": ("ar", "ar-sa", "ar-ae", "ar-eg"),
+    "ru": ("ru", "ru-ru"),
+    "pl": ("pl", "pl-pl"),
+    "cs": ("cs", "cs-cz"),
+    "nl": ("nl", "nl-nl", "nl-be"),
+    "tr": ("tr", "tr-tr"),
+    "uk": ("uk", "uk-ua"),
+    "vi": ("vi", "vi-vn"),
+    "tl": ("tl", "tl-ph", "fil", "fil-ph"),
+    "id": ("id", "id-id", "in", "in-id"),
+    "th": ("th", "th-th"),
+    "hi": ("hi", "hi-in"),
+    "bn": ("bn", "bn-bd", "bn-in"),
+    "ur": ("ur", "ur-pk", "ur-in"),
+    "ro": ("ro", "ro-ro"),
+    "sv": ("sv", "sv-se"),
+    "it": ("it", "it-it"),
+    "el": ("el", "el-gr"),
+    "hu": ("hu", "hu-hu"),
+    "fi": ("fi", "fi-fi"),
+    "da": ("da", "da-dk"),
+    "no": ("no", "nb", "nb-no", "nn", "nn-no", "no-no"),
+}
 _ALIAS = {
-    "zh": "zh-TW",
-    "zh-tw": "zh-TW",
-    "zh-hant": "zh-TW",
-    "zh-hant-tw": "zh-TW",
-    "zh-hk": "zh-TW",
-    "zh-mo": "zh-TW",
-    "zh-cn": "zh-CN",
-    "zh-hans": "zh-CN",
-    "zh-hans-cn": "zh-CN",
-    "zh-sg": "zh-CN",
-    "en": "en",
-    "en-us": "en",
-    "en-gb": "en",
-    "en-au": "en",
-    "ja": "ja",
-    "ja-jp": "ja",
+    alias: language
+    for language, aliases in _ALIASES_BY_LANGUAGE.items()
+    for alias in aliases
 }
 
 # ============================================================
@@ -334,6 +430,121 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ask.no_knowledge": "（関連する知識は見つかりませんでした）",
     },
 }
+
+# 人工微調覆蓋層（優先級高於 generated）。多數語言已由 src/i18n_generated.py 完全本地化，
+# 此處僅保留 generated 層仍有殘留或需特定人工措辭的少數語言。
+MANUAL_MESSAGE_OVERRIDES: dict[str, dict[str, str]] = {
+    "he": {
+        "ask.context_entities": "## ישויות קשורות",
+        "ask.no_knowledge": "(לא נמצא ידע קשור)",
+        "community.built_detail": "בניית הקהילות הושלמה: {node_count} קהילות, {edge_count} חיבורים",
+        "episode.deleted": "הפרק {uuid} נמחק (כולל קשתות קשורות)",
+        "memory.name_content_required": "שם ותוכן הם שדות חובה",
+        "memory.note_safe_mode": "נעשה שימוש במצב בטוח; חילוץ ישויות דולג",
+        "node.deleted": "צומת הישות {uuid} נמחק (כולל קשתות קשורות)",
+        "node_edges.found": "נמצאו {inbound} קשתות נכנסות ו-{outbound} קשתות יוצאות",
+        "search.advanced_done": "החיפוש המתקדם הושלם (מתכון: {recipe})",
+        "search.rate_limited": "יותר מדי בקשות חיפוש; נסה שוב מאוחר יותר",
+        "search.timeout": "החיפוש חרג מזמן ההמתנה; צמצם את השאילתה",
+    },
+    "uk": {
+        "ask.context_entities": "## Пов'язані сутності",
+        "ask.context_facts": "## Пов'язані факти",
+        "ask.no_knowledge": "(Пов'язаних знань не знайдено)",
+        "bulk.added": "Успішно пакетно додано {count} спогадів",
+        "bulk.failed": "Пакетне додавання не вдалося: {reason}",
+        "bulk.queued_background": "Пакетне додавання {count} спогадів поставлено в чергу фонового оброблення",
+        "community.build_failed": "Побудова спільнот не вдалася",
+        "community.built": "Побудову спільнот завершено",
+        "community.built_detail": "Побудову спільнот завершено: {node_count} спільнот, {edge_count} зв'язків",
+        "community.queued_background": "Побудову спільнот поставлено в чергу фонового оброблення",
+        "conflict.summary": "Знайдено {active} чинних фактів і {invalidated} скасованих фактів",
+        "conflict.summary_conflict": "Знайдено {active} чинних фактів і {invalidated} скасованих фактів — існує конфлікт!",
+        "connection.test_done": "Тест підключення завершено",
+        "edge.delete_failed": "Не вдалося видалити ребро сутності: {uuid}",
+        "edge.deleted": "Ребро сутності {uuid} успішно видалено",
+        "entity.not_found": "Сутність не знайдено: {name}",
+        "episode.deleted": "Епізод {uuid} видалено (разом із пов'язаними ребрами)",
+        "episode.deleted_simple": "Епізод {uuid} успішно видалено",
+        "episode.not_found": "Епізод {uuid} не знайдено",
+        "episodes.found": "Знайдено епізодів: {count}",
+        "fact.deleted": "Факт {uuid} видалено",
+        "fact.not_found": "Факт {uuid} не знайдено",
+        "graph.clear_failed": "Не вдалося очистити графову базу даних",
+        "graph.cleared_all": "Графову базу даних повністю очищено",
+        "graph.missing_uuid": "Відсутній параметр 'uuid'",
+        "memory.add_safe_failed": "Безпечне додавання пам'яті не вдалося: {reason}",
+        "memory.added": "Пам'ять '{name}' успішно додано",
+        "memory.added_full": "Пам'ять '{name}' успішно додано (повний режим)",
+        "memory.added_full_chunked": "Пам'ять '{name}' успішно додано (повний режим, {count} фрагментів, паралельна bulk-обробка)",
+        "memory.duplicate_detected": "Виявлено дубль пам'яті: {detail}",
+        "memory.name_content_required": "Назва і вміст є обов'язковими",
+        "memory.note_chunked": "Довгий текст розділено на {count} фрагментів і паралельно оброблено в bulk-режимі",
+        "memory.note_force": "Перевірку на дублікати пропущено (force=True)",
+        "memory.note_full_mode": "Використано повний режим; включено вилучення сутностей і побудову зв'язків",
+        "memory.note_safe_mode": "Використано безпечний режим; вилучення сутностей пропущено",
+        "memory.queued_background": "Пам'ять '{name}' поставлено в чергу фонового оброблення",
+        "node.deleted": "Вузол сутності {uuid} видалено (разом із пов'язаними ребрами)",
+        "node.not_found": "Вузол сутності {uuid} не знайдено",
+        "node_edges.found": "Знайдено {inbound} вхідних ребер і {outbound} вихідних ребер",
+        "search.advanced_done": "Розширений пошук завершено (стратегія: {recipe})",
+        "search.facts_found": "Знайдено пов'язаних фактів: {count}",
+        "search.missing_query": "Відсутній параметр пошуку 'q'",
+        "search.nodes_found": "Знайдено пов'язаних вузлів: {count}",
+        "search.rate_limited": "Забагато пошукових запитів; повторіть пізніше",
+        "search.timeout": "Пошук перевищив час очікування; звузьте запит",
+        "search.unknown_recipe": "Невідома стратегія пошуку: {recipe}",
+        "stale.found": "Знайдено застарілих записів пам'яті: {total}",
+        "stale.note_cleanup": "Використайте cleanup_stale_memories(), щоб очистити застарілу пам'ять",
+        "status.check_failed": "Перевірка стану сервісу не вдалася",
+        "triplet.added": "Трійку додано: {source} --[{relation}]--> {target}",
+        "triplet.fields_required": "source_name, relation_name, target_name і fact є обов'язковими",
+    },
+    "sv": {
+        "bulk.added": "{count} minnen lades till i bulk",
+        "bulk.failed": "Bulk-inläggning misslyckades: {reason}",
+        "bulk.queued_background": "Bulk-inläggning av {count} minnen har lagts i kö för bakgrundsbehandling",
+        "common.all": "(Alla)",
+        "connection.test_done": "Anslutningstestet är klart",
+        "graph.missing_uuid": "Parametern 'uuid' saknas",
+        "memory.add_safe_failed": "Säker minnesinläggning misslyckades: {reason}",
+        "memory.added": "Minnet '{name}' har lagts till",
+        "memory.added_full": "Minnet '{name}' har lagts till (fullständigt läge)",
+        "memory.added_full_chunked": "Minnet '{name}' har lagts till (fullständigt läge, {count} delar, parallell bulkbehandling)",
+        "memory.duplicate_detected": "Dubblettminne upptäckt: {detail}",
+        "memory.note_chunked": "Lång text delades upp i {count} delar och behandlades parallellt i bulk",
+        "memory.note_full_mode": "Fullständigt läge användes; inkluderar entitetsextrahering och relationsbygge",
+        "memory.note_safe_mode": "Säkert läge användes; entitetsextrahering hoppades över",
+        "memory.queued_background": "Minnet '{name}' har lagts i kö för bakgrundsbehandling",
+        "search.advanced_done": "Avancerad sökning klar (strategi: {recipe})",
+        "search.unknown_recipe": "Okänd sökstrategi: {recipe}",
+        "stale.found": "Hittade {total} inaktuella minnen",
+        "stale.note_cleanup": "Använd cleanup_stale_memories() för att rensa inaktuella minnen",
+        "task.not_found": "Uppgiften {task_id} hittades inte",
+    },
+    "fi": {
+        "ask.context_entities": "## Liittyvät entiteetit",
+        "ask.context_facts": "## Liittyvät faktat",
+        "ask.no_knowledge": "(Liittyvää tietoa ei löytynyt)",
+        "bulk.added": "{count} muistia lisättiin bulk-toiminnolla",
+        "bulk.failed": "Bulk-lisäys epäonnistui: {reason}",
+        "bulk.queued_background": "{count} muistin bulk-lisäys asetettiin taustakäsittelyjonoon",
+        "connection.test_done": "Yhteystesti valmis",
+        "search.advanced_done": "Tarkennettu haku valmis (strategia: {recipe})",
+        "search.unknown_recipe": "Tuntematon hakustrategia: {recipe}",
+        "task.not_found": "Tehtävää {task_id} ei löytynyt",
+    },
+}
+
+for language in SUPPORTED_LANGUAGES:
+    if language == FALLBACK_LANGUAGE:
+        continue
+    MESSAGES[language] = {
+        **MESSAGES[FALLBACK_LANGUAGE],
+        **MESSAGES.get(language, {}),
+        **GENERATED_MESSAGE_OVERRIDES.get(language, {}),
+        **MANUAL_MESSAGE_OVERRIDES.get(language, {}),
+    }
 
 
 def normalize_language(lang: str | None) -> str:

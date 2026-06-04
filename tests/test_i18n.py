@@ -1,7 +1,7 @@
 """後端多國語系（i18n）模組測試。
 
 涵蓋：
-- 四語言訊息字典 key 完全對齊（避免漏譯）。
+- 所有支援語言訊息字典 key 完全對齊（避免漏譯）。
 - ``t()`` 翻譯與 fallback 行為（缺 key / 缺語言 / 格式化失敗皆不冒泡）。
 - ``normalize_language()`` 別名與主標籤回退。
 - ``parse_accept_language()`` 的 q 值排序、裸 zh、萬用字元與空字串處理。
@@ -13,6 +13,7 @@ from src.i18n import (
     MESSAGES,
     SUPPORTED_LANGUAGES,
     DEFAULT_LANGUAGE,
+    LANGUAGE_DISPLAY_NAMES,
     normalize_language,
     parse_accept_language,
     t,
@@ -32,6 +33,12 @@ def test_supported_languages_all_present_in_messages():
 def test_default_language_is_supported():
     assert DEFAULT_LANGUAGE in SUPPORTED_LANGUAGES
     assert DEFAULT_LANGUAGE in MESSAGES
+
+
+def test_supported_languages_all_have_display_names():
+    assert set(LANGUAGE_DISPLAY_NAMES) == set(SUPPORTED_LANGUAGES)
+    for lang, name in LANGUAGE_DISPLAY_NAMES.items():
+        assert name.strip(), f"{lang} display name is empty"
 
 
 def test_all_languages_have_identical_keys():
@@ -70,6 +77,58 @@ def test_no_empty_message_values():
             assert val.strip(), f"{lang}/{key} 為空字串"
 
 
+def test_no_internal_placeholder_tokens_leak_to_messages():
+    for lang in SUPPORTED_LANGUAGES:
+        for key, val in MESSAGES[lang].items():
+            assert "__PH" not in val, f"{lang}/{key} 殘留內部 placeholder token: {val}"
+
+
+def test_non_cjk_languages_do_not_contain_cjk_glyphs():
+    import re
+
+    cjk = re.compile(r"[\u4e00-\u9fff]")
+    cjk_languages = {"zh-TW", "zh-CN", "ja", "ko"}
+    for lang in SUPPORTED_LANGUAGES:
+        if lang in cjk_languages:
+            continue
+        for key, val in MESSAGES[lang].items():
+            assert not cjk.search(val), f"{lang}/{key} 含非預期漢字: {val}"
+
+
+def test_generated_messages_do_not_contain_known_bad_fragments():
+    import re
+
+    bad_fragments = re.compile(
+        r"Заметка|едгер|статіль|Эпізод|чанг|मेमोरी|एनडेटम|गँज़ाइल|"
+        r"मूल चीर|ماریہ|کبیر|ملکی|معلوم نہ ہو گی|"
+        r"μνημόνιο|ενσωμβ|μεταγωγ|Sukkerlag|oldelem|"
+        r"Dubbeltoning|Tidskriv|মেঘাল্য|বৈংক|বৈংলা|ব্লাক্সে|ডিগ্রিউলেশন"
+    )
+    for lang in SUPPORTED_LANGUAGES:
+        for key, val in MESSAGES[lang].items():
+            assert not bad_fragments.search(val), f"{lang}/{key} 含已知壞片段: {val}"
+
+
+def test_recipe_placeholder_is_not_repeated_or_standalone():
+    for lang in SUPPORTED_LANGUAGES:
+        for key, val in MESSAGES[lang].items():
+            assert val.count("{recipe}") <= 1, f"{lang}/{key} 重複 recipe placeholder: {val}"
+            if key == "search.unknown_recipe":
+                assert val.strip() != "{recipe}", f"{lang}/{key} 只有 placeholder"
+
+
+def test_non_english_generated_languages_do_not_fall_back_to_english():
+    for lang in SUPPORTED_LANGUAGES:
+        if lang in {"zh-TW", "en", "zh-CN", "ja"}:
+            continue
+        untranslated = [
+            key
+            for key, value in MESSAGES[lang].items()
+            if value == MESSAGES["en"][key]
+        ]
+        assert not untranslated, f"{lang} 仍有英文 fallback: {untranslated}"
+
+
 # ============================================================
 # t() 翻譯與 fallback
 # ============================================================
@@ -91,9 +150,14 @@ def test_t_missing_key_returns_key_itself():
 
 def test_t_missing_language_falls_back_to_default():
     """不支援的語言碼會被正規化為預設語言。"""
-    assert t("connection.test_done", "fr") == MESSAGES[DEFAULT_LANGUAGE][
+    assert t("connection.test_done", "xx") == MESSAGES[DEFAULT_LANGUAGE][
         "connection.test_done"
     ]
+
+
+def test_t_new_language_uses_supported_fallback_message():
+    assert t("connection.test_done", "fr") == MESSAGES["fr"]["connection.test_done"]
+    assert t("connection.test_done", "pt-BR") == MESSAGES["pt-BR"]["connection.test_done"]
 
 
 def test_t_missing_params_does_not_raise():
@@ -135,7 +199,19 @@ def test_t_conflict_keys_distinct():
     ("EN-GB", "en"),
     ("ja", "ja"),
     ("ja-JP", "ja"),
-    ("fr", "zh-TW"),       # 不支援 → 預設
+    ("pt-BR", "pt-BR"),
+    ("pt", "pt-PT"),
+    ("ko-KR", "ko"),
+    ("es-MX", "es"),
+    ("fr", "fr"),
+    ("he-IL", "he"),
+    ("iw", "he"),
+    ("ar-SA", "ar"),
+    ("uk-UA", "uk"),
+    ("fil-PH", "tl"),
+    ("id-ID", "id"),
+    ("nb-NO", "no"),
+    ("xx", "zh-TW"),       # 不支援 → 預設
     ("", "zh-TW"),
     (None, "zh-TW"),
 ])
@@ -185,13 +261,20 @@ def test_parse_accept_language_empty_returns_default():
 
 
 def test_parse_accept_language_all_unmatched_returns_default():
-    assert parse_accept_language("fr,de,it") == DEFAULT_LANGUAGE
+    assert parse_accept_language("xx,yy,zz") == DEFAULT_LANGUAGE
 
 
 def test_parse_accept_language_custom_default():
-    assert parse_accept_language("fr", default="en") == "en"
+    assert parse_accept_language("xx", default="en") == "en"
 
 
 def test_parse_accept_language_malformed_q_tolerated():
     """q 值格式錯誤時退回 q=1.0，不報錯。"""
     assert parse_accept_language("ja;q=abc") == "ja"
+
+
+def test_parse_accept_language_new_languages():
+    assert parse_accept_language("pt-BR,pt;q=0.8") == "pt-BR"
+    assert parse_accept_language("pt;q=0.8") == "pt-PT"
+    assert parse_accept_language("fil-PH") == "tl"
+    assert parse_accept_language("he-IL") == "he"

@@ -34,7 +34,7 @@ docker run -p 8000:8000 --env-file .env graphiti-mcp
 ## Testing
 
 ```bash
-# 運行所有測試（183 個測試）
+# 運行所有測試（203 個測試）
 uv run python -m pytest tests/
 
 # 僅執行內容切分測試
@@ -82,7 +82,8 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 │   ├── importance.py            # 重要性追蹤與智慧遺忘
 │   ├── safe_memory_add.py       # 安全記憶添加（跳過實體提取）
 │   ├── timezone_utils.py        # 時區轉換工具（UTC→本地時區顯示轉換）
-│   ├── i18n.py                  # 後端多國語系（REST 依 Accept-Language、MCP 依 SERVER_LANG；四語言 zh-TW/en/zh-CN/ja）
+│   ├── i18n.py                  # 後端多國語系（REST 依 Accept-Language、MCP 依 SERVER_LANG；33 語言，zh-TW/en/zh-CN/ja 手寫基準 + 其餘 generated）
+│   ├── i18n_generated.py        # 自動生成的 29 種語言訊息覆蓋（GENERATED_MESSAGE_OVERRIDES，以 en 為底套用）
 │   ├── exceptions.py            # 結構化異常處理（12 種異常類別）
 │   └── logging_setup.py         # 日誌配置（時間輪轉 + 性能監控）
 ├── web/                         # Web 管理介面前端（SPA，純 HTML/CSS/JS，無 build）
@@ -99,10 +100,10 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 │   ├── migrate_embeddings.py    # Embedding 模型遷移（切換模型後重新生成向量）
 │   ├── inspect_schema.py        # Neo4j 結構檢查
 │   └── performance_diagnose.py  # 性能診斷
-├── tests/                       # 測試套件（183 個測試）
+├── tests/                       # 測試套件（203 個測試）
 │   ├── test_content_preprocessor.py # 智慧切分邏輯測試（17 個）
 │   ├── test_new_features.py     # 新功能測試（32 個）
-│   ├── test_i18n.py             # 多國語系測試（37 個，驗證四語言 key 與佔位符對齊）
+│   ├── test_i18n.py             # 多國語系測試（57 個，驗證 33 語言 key/佔位符對齊、無英文殘留、非 CJK 語言不含 CJK 字）
 │   ├── test_unit.py             # 單元測試
 │   ├── test_web_api.py          # Web API 測試
 │   ├── test_web_ui_features.py  # Web UI 功能測試
@@ -152,7 +153,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **社群檢測**：`build_communities` 工具包裝 graphiti-core 的 Label Propagation 演算法，預設背景執行。Web UI 新增社群瀏覽頁面。
 
-**多國語系（i18n）**：`src/i18n.py` 集中四語言（`zh-TW` 基準 / `en` / `zh-CN` / `ja`）訊息字典 `MESSAGES`，key 採 `group.action` 扁平命名。`t(key, lang, **params)` 取模板並以 `str.format` 插值，fallback 順序為 `lang → zh-TW → key`，格式化失敗絕不冒泡成例外。兩條輸出路徑共用此字典但語言來源不同：**MCP 工具** 依 `app_config.server_lang`（`SERVER_LANG` 環境變數，透過模組級 `_srv_lang()` 取得）；**REST API** 依每個請求的 HTTP `Accept-Language` header，由 `parse_accept_language()`（含 q 值排序、裸 `zh`→`zh-TW`、萬用字元忽略）解析。新增訊息時四語言須同步補上，`tests/test_i18n.py` 會驗證 key 與佔位符完全對齊。注意：`create_error_response()` 餵入的技術性例外 context（如「搜索節點失敗」）由 `src/exceptions.py` 產生，未納入此 i18n 範圍。
+**多國語系（i18n）**：`src/i18n.py` 維護 **33 種語言** 的訊息字典 `MESSAGES`，key 採 `group.action` 扁平命名。其中 `zh-TW`（基準/fallback）、`en`、`zh-CN`、`ja` 為手寫，其餘 29 種語言由 `src/i18n_generated.py` 的 `GENERATED_MESSAGE_OVERRIDES` 提供。合成邏輯（i18n.py 末段迴圈）每個語言以 `MESSAGES['en']` 為底，依序套用手寫覆蓋 → `GENERATED_MESSAGE_OVERRIDES` → `MANUAL_MESSAGE_OVERRIDES`，確保所有語言 key 與 `zh-TW` 完全對齊（缺翻譯自動回退英文）。`t(key, lang, **params)` 取模板並以 `str.format` 插值，fallback 順序為 `lang → zh-TW → key`，格式化失敗絕不冒泡成例外。兩條輸出路徑共用此字典但語言來源不同：**MCP 工具** 依 `app_config.server_lang`（`SERVER_LANG` 環境變數，透過模組級 `_srv_lang()` 取得）；**REST API** 依每個請求的 HTTP `Accept-Language` header，由 `parse_accept_language()`（含 q 值排序、裸 `zh`→`zh-TW`、萬用字元忽略）解析。新增訊息時只需補上 `zh-TW`，未翻譯語言會先回退英文；`tests/test_i18n.py` 會驗證所有語言 key 與佔位符對齊。注意：`create_error_response()` 餵入的技術性例外 context（如「搜索節點失敗」）由 `src/exceptions.py` 產生，未納入此 i18n 範圍。
 
 ## MCP Tools (19 tools)
 
@@ -277,7 +278,7 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 | `DEEPSEEK_API_KEY` | DeepSeek API Key | (DeepSeek 模式必填) |
 | `DEEPSEEK_MODEL` | DeepSeek LLM 模型 | `deepseek-chat` |
 | `GRAPHITI_DISPLAY_TIMEZONE` | API 回傳時間戳的顯示時區（IANA 名稱） | `UTC` |
-| `SERVER_LANG` | MCP 工具回應語言（`zh-TW`/`en`/`zh-CN`/`ja`）；REST API 改依 Accept-Language 協商 | `zh-TW` |
+| `SERVER_LANG` | MCP 工具回應語言（33 語言，完整清單見 `src/i18n.py` 的 `SUPPORTED_LANGUAGES`）；REST API 改依 Accept-Language 協商 | `zh-TW` |
 | `GRAPHITI_CHUNK_THRESHOLD` | 觸發智慧切分的字元數 | `800` |
 | `GRAPHITI_MAX_CHUNK_SIZE` | 切分後每段最大字元數 | `600` |
 | `GRAPHITI_MAX_COROUTINES` | 最大並行協程數 | `10` |
