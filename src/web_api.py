@@ -23,14 +23,35 @@ from typing import Callable, Coroutine, Any, List
 
 from src.timezone_utils import format_timestamp
 from src.i18n import t, parse_accept_language
+from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, HTMLResponse, Response
 from starlette.routing import Route, Mount
 from starlette.staticfiles import StaticFiles
+from graphiti_core.search.search_config_recipes import EDGE_HYBRID_SEARCH_RRF
+from graphiti_core.search.search_filters import SearchFilters
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Admin token 保護（DELETE 等破壞性操作）
+# ---------------------------------------------------------------------------
+
+def _check_admin_token(request: Request) -> bool:
+    """檢查 Admin token。未設定 GRAPHITI_ADMIN_TOKEN 時允許所有請求（開發模式）。"""
+    admin_token = os.getenv("GRAPHITI_ADMIN_TOKEN", "").strip()
+    if not admin_token:
+        return True  # 未設定 token → 開發模式，允許
+    auth = request.headers.get("Authorization", "")
+    return auth == f"Bearer {admin_token}"
+
+def _admin_forbidden() -> JSONResponse:
+    return JSONResponse(
+        {"error": "需要 Admin token（Authorization: Bearer <GRAPHITI_ADMIN_TOKEN>）"},
+        status_code=403,
+    )
 
 # ---------------------------------------------------------------------------
 # 簡易速率限制器（記憶體內，按 IP）
@@ -86,6 +107,7 @@ def get_cors_middleware(cors_origins: List[str] | None = None) -> Middleware:
 def create_web_routes(
     get_graphiti_fn: Callable[[], Coroutine[Any, Any, Any]],
     cors_origins: List[str] | None = None,
+    add_memory_fn: Callable | None = None,
 ) -> list:
     """
     建立 Web 管理介面所需的所有路由。
@@ -93,9 +115,11 @@ def create_web_routes(
     Args:
         get_graphiti_fn: 取得 Graphiti 實例的非同步函數
         cors_origins: CORS 允許的來源列表
+        add_memory_fn: 共用記憶寫入函數（與 MCP add_memory_simple 相同邏輯）；
+                       未提供時退回直接呼叫 graphiti.add_episode()（舊行為）
 
     Returns:
-        list: Starlette Route/Mount 列表
+        list: Starlette Route/Mount 列表（包含 CORS sub-app）
     """
 
     # ------------------------------------------------------------------
@@ -385,6 +409,8 @@ def create_web_routes(
 
     async def api_delete_episode(request: Request) -> JSONResponse:
         """刪除記憶片段（事務性：連帶清理關聯邊）。"""
+        if not _check_admin_token(request):
+            return _admin_forbidden()
         lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             uuid = request.path_params["uuid"]
@@ -410,6 +436,8 @@ def create_web_routes(
 
     async def api_delete_fact(request: Request) -> JSONResponse:
         """刪除事實（事務性）。"""
+        if not _check_admin_token(request):
+            return _admin_forbidden()
         lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             uuid = request.path_params["uuid"]
@@ -434,6 +462,8 @@ def create_web_routes(
 
     async def api_delete_node(request: Request) -> JSONResponse:
         """刪除實體節點（事務性：連帶清理關聯邊）。"""
+        if not _check_admin_token(request):
+            return _admin_forbidden()
         lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             uuid = request.path_params["uuid"]
@@ -459,6 +489,8 @@ def create_web_routes(
 
     async def api_delete_group(request: Request) -> JSONResponse:
         """清除特定 group 的所有資料。"""
+        if not _check_admin_token(request):
+            return _admin_forbidden()
         lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             from graphiti_core.utils.maintenance.graph_data_operations import clear_data
@@ -547,15 +579,19 @@ def create_web_routes(
 
             graphiti = await get_graphiti_fn()
             t0 = time.monotonic()
-            edges = await asyncio.wait_for(
-                graphiti.search(
+            search_config = EDGE_HYBRID_SEARCH_RRF.model_copy(deep=True)
+            search_config.limit = limit
+            search_results = await asyncio.wait_for(
+                graphiti.search_(
                     query=q,
+                    config=search_config,
                     group_ids=group_ids,
-                    num_results=limit,
+                    search_filter=SearchFilters(),
                 ),
                 timeout=SEARCH_TIMEOUT,
             )
             duration = round(time.monotonic() - t0, 2)
+            edges = search_results.edges if search_results.edges else []
 
             facts = []
             for e in edges:
@@ -1103,8 +1139,13 @@ def create_web_routes(
                 )
 
             async def search_facts():
+                edge_config = EDGE_HYBRID_SEARCH_RRF.model_copy(deep=True)
+                edge_config.limit = 10
                 return await asyncio.wait_for(
-                    graphiti.search(query=q, group_ids=group_ids, num_results=10),
+                    graphiti.search_(
+                        query=q, config=edge_config,
+                        group_ids=group_ids, search_filter=SearchFilters(),
+                    ),
                     timeout=SEARCH_TIMEOUT,
                 )
 
@@ -1126,7 +1167,7 @@ def create_web_routes(
 
             facts = []
             if not isinstance(fact_results, Exception):
-                for e in fact_results:
+                for e in (fact_results.edges or []):
                     facts.append({
                         "uuid": str(getattr(e, "uuid", "")),
                         "name": getattr(e, "name", ""),
@@ -1164,39 +1205,55 @@ def create_web_routes(
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_add_memory(request: Request) -> JSONResponse:
-        """透過 Web UI 新增記憶。"""
+        """透過 Web UI 新增記憶（共用 MCP add_memory_simple 完整流程）。"""
         lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
             body = await request.json()
             name = body.get("name", "").strip()
             content = body.get("content", "").strip()
-            group_id = body.get("group_id", "").strip()
+            group_id = body.get("group_id", "").strip() or "default"
             source = body.get("source", "text")
+            background = bool(body.get("background", False))
+            use_safe_mode = bool(body.get("use_safe_mode", False))
+            force = bool(body.get("force", False))
+            excluded_entity_types = body.get("excluded_entity_types") or None
 
             if not name or not content:
                 return JSONResponse(
                     {"error": t("memory.name_content_required", lang)}, status_code=400
                 )
 
-            from graphiti_core.nodes import EpisodeType
+            # 若有共用寫入函數（由 graphiti_mcp_server 傳入），走完整流程
+            if add_memory_fn is not None:
+                result = await add_memory_fn(
+                    name=name,
+                    episode_body=content,
+                    group_id=group_id,
+                    source_description="Web UI",
+                    source=source,
+                    use_safe_mode=use_safe_mode,
+                    background=background,
+                    excluded_entity_types=excluded_entity_types,
+                    force=force,
+                )
+                return JSONResponse(result)
 
+            # 降級：直接呼叫 graphiti.add_episode()（無 add_memory_fn 時）
+            from graphiti_core.nodes import EpisodeType
             graphiti = await get_graphiti_fn()
             try:
                 episode_type = EpisodeType[source.lower()]
             except (KeyError, AttributeError):
                 episode_type = EpisodeType.text
-
             await graphiti.add_episode(
                 name=name,
                 episode_body=content,
                 source_description="Web UI",
                 source=episode_type,
-                group_id=group_id or "default",
+                group_id=group_id,
                 reference_time=datetime.now(timezone.utc),
             )
-            return JSONResponse(
-                {"success": True, "message": t("memory.added", lang, name=name)}
-            )
+            return JSONResponse({"success": True, "message": t("memory.added", lang, name=name)})
         except Exception as e:
             logger.error(f"API add memory error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
@@ -1499,6 +1556,8 @@ def create_web_routes(
 
     async def api_analytics_cleanup(request: Request) -> JSONResponse:
         """清理過時記憶。"""
+        if not _check_admin_token(request):
+            return _admin_forbidden()
         try:
             from src.importance import cleanup_stale_entities
 
@@ -1624,4 +1683,8 @@ def create_web_routes(
     # SPA 首頁（放最後，作為 fallback）
     routes.append(Route("/", index_page, methods=["GET"]))
 
-    return routes
+    # 將所有路由包裝成帶 CORS middleware 的 Starlette sub-app，
+    # 再以 Mount("/") 掛回 FastMCP，讓 CORS headers 實際生效。
+    middlewares = [get_cors_middleware(cors_origins)]
+    sub_app = Starlette(routes=routes, middleware=middlewares)
+    return [Mount("/", app=sub_app)]

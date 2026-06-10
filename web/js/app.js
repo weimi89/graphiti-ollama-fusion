@@ -89,6 +89,11 @@ const App = {
             const content = document.getElementById('memory-content').value.trim();
             const groupId = document.getElementById('memory-group').value.trim();
             const source = document.getElementById('memory-source').value;
+            const background = document.getElementById('memory-background')?.checked || false;
+            const useSafeMode = document.getElementById('memory-safe-mode')?.checked || false;
+            const force = document.getElementById('memory-force')?.checked || false;
+            const excludedRaw = document.getElementById('memory-excluded-types')?.value.trim() || '';
+            const excludedEntityTypes = excludedRaw ? excludedRaw.split(',').map(s => s.trim()).filter(Boolean) : null;
             if (!name || !content) return;
 
             const submitBtn = e.target.querySelector('button[type="submit"]');
@@ -96,8 +101,12 @@ const App = {
             submitBtn.textContent = '添加中...';
 
             try {
-                await API.addMemory({ name, content, groupId, source });
-                this._toast(`記憶 "${name}" 已成功添加`, 'success');
+                const result = await API.addMemory({ name, content, groupId, source, background, useSafeMode, force, excludedEntityTypes });
+                if (background && result.task_id) {
+                    this._toast(`記憶 "${name}" 已送入背景處理，task_id: ${result.task_id}`, 'info');
+                } else {
+                    this._toast(`記憶 "${name}" 已成功添加`, 'success');
+                }
                 this.closeAddMemory();
                 this._renderCurrentPage();
                 this._loadGroups();
@@ -176,6 +185,9 @@ const App = {
                     break;
                 case 'communities':
                     await this._renderCommunities(app);
+                    break;
+                case 'tasks':
+                    await this._renderTasks(app);
                     break;
                 default:
                     app.innerHTML = '<div class="empty-state"><div class="empty-state-text">頁面不存在</div></div>';
@@ -871,6 +883,36 @@ const App = {
             await this._renderCommunities(document.getElementById('app'));
         } catch (err) {
             this._toast('社群建構失敗: ' + err.message, 'error');
+        }
+    },
+
+    // ============================================================
+    // 背景任務頁面
+    // ============================================================
+
+    _tasksStatusFilter: '',
+
+    async _renderTasks(app) {
+        const data = await API.tasks({ status: this._tasksStatusFilter });
+        app.innerHTML = Components.renderTasks({ ...data, status_filter: this._tasksStatusFilter });
+    },
+
+    async loadTasks(statusFilter = '') {
+        this._tasksStatusFilter = statusFilter;
+        const app = document.getElementById('app');
+        if (app) await this._renderTasks(app);
+    },
+
+    async pollTask(taskId) {
+        try {
+            const task = await API.taskDetail(taskId);
+            const msg = `任務 #${taskId}：${task.status}` +
+                (task.chunks_total > 0 ? ` (${task.chunks_done}/${task.chunks_total})` : '') +
+                (task.error ? ` — ${task.error}` : '');
+            this._toast(msg, task.status === 'failed' ? 'error' : 'info');
+            if (task.status !== 'processing') await this.loadTasks(this._tasksStatusFilter);
+        } catch (err) {
+            this._toast('查詢失敗: ' + err.message, 'error');
         }
     },
 

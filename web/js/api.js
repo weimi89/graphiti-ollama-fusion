@@ -122,11 +122,32 @@ const API = {
         return this._get(`/api/ask?${params}`);
     },
 
-    /** 新增記憶 */
-    async addMemory({ name, content, groupId, source }) {
+    /** 新增記憶（完整流程：去重、切分、background、safe mode） */
+    async addMemory({ name, content, groupId, source, background, useSafeMode, force, excludedEntityTypes }) {
         return this._post('/api/memory/add', {
-            name, content, group_id: groupId, source,
+            name,
+            content,
+            group_id: groupId,
+            source,
+            background: background || false,
+            use_safe_mode: useSafeMode || false,
+            force: force || false,
+            excluded_entity_types: excludedEntityTypes || null,
         });
+    },
+
+    /** 列出背景任務 */
+    async tasks({ status = '', limit = 50, offset = 0 } = {}) {
+        const params = new URLSearchParams();
+        if (status) params.set('status', status);
+        if (limit !== 50) params.set('limit', limit);
+        if (offset) params.set('offset', offset);
+        return this._get(`/api/memory/tasks?${params}`);
+    },
+
+    /** 查詢單一背景任務 */
+    async taskDetail(taskId) {
+        return this._get(`/api/memory/tasks/${encodeURIComponent(taskId)}`);
     },
 
     /** 批量新增記憶 */

@@ -17,6 +17,7 @@ const Components = {
         graph: '知識圖譜視覺化以互動式力導向圖呈現實體和關係，直觀探索知識結構。',
         ask: '知識問答讓你測試 AI 對特定問題能取得哪些上下文，驗證知識庫的覆蓋度。',
         communities: '社群頁面顯示知識圖譜中自動檢測到的社群聚類，了解實體之間的緊密關聯群組。',
+        tasks: '背景任務頁面列出所有 add_memory / add_episode_bulk / build_communities 的非同步處理進度，重啟後仍可查詢歷史狀態。',
     },
 
     renderPageDescription(page) {
@@ -1121,6 +1122,66 @@ const Components = {
             html += this.renderPagination(page, pages, 'App.goToCommunities');
         }
 
+        return html;
+    },
+
+    /** 渲染背景任務頁面 */
+    renderTasks(data) {
+        const { tasks = [], total = 0, status_filter = '' } = data;
+        const STATUS_LABELS = { pending: '待處理', processing: '進行中', completed: '完成', failed: '失敗' };
+        const STATUS_COLORS = { pending: 'tag-yellow', processing: 'tag-blue', completed: 'tag-green', failed: 'tag-red' };
+
+        let html = `<div class="page-header">
+            <div class="page-header-top">
+                <h2 class="page-title">背景任務</h2>
+                <button class="btn btn-secondary btn-sm" onclick="App.loadTasks()">&#x21bb; 重新整理</button>
+            </div>
+            <div class="filter-bar">
+                <label>狀態篩選：</label>
+                ${['', 'pending', 'processing', 'completed', 'failed'].map(s =>
+                    `<button class="btn btn-sm ${status_filter === s ? 'btn-primary' : 'btn-secondary'}"
+                        onclick="App.loadTasks('${s}')">${s ? STATUS_LABELS[s] : '全部'}</button>`
+                ).join('')}
+            </div>
+            <p class="page-description">${this.PAGE_DESCRIPTIONS.tasks}</p>
+        </div>`;
+
+        if (tasks.length === 0) {
+            return html + '<div class="empty-state"><p>目前沒有背景任務記錄。</p></div>';
+        }
+
+        html += `<div class="result-count">共 ${total} 筆</div><div class="task-list">`;
+
+        for (const task of tasks) {
+            const statusLabel = STATUS_LABELS[task.status] || task.status;
+            const statusClass = STATUS_COLORS[task.status] || 'tag';
+            const createdAt = task.created_at ? new Date(task.created_at).toLocaleString() : '';
+            const completedAt = task.completed_at ? new Date(task.completed_at).toLocaleString() : '';
+            const progress = task.chunks_total > 0
+                ? `<div class="task-progress"><progress max="${task.chunks_total}" value="${task.chunks_done}"></progress> ${task.chunks_done}/${task.chunks_total}</div>`
+                : '';
+            const errorHtml = task.error
+                ? `<div class="task-error">錯誤：${this._esc(task.error)}</div>` : '';
+
+            html += `<div class="task-card task-${task.status}">
+                <div class="task-header">
+                    <span class="task-id">#${this._esc(task.task_id)}</span>
+                    <span class="tag ${statusClass}">${statusLabel}</span>
+                    <span class="task-name">${this._esc(task.name)}</span>
+                    <span class="task-group tag">${this._esc(task.group_id)}</span>
+                </div>
+                ${progress}
+                ${errorHtml}
+                <div class="task-footer">
+                    <span>建立：${createdAt}</span>
+                    ${completedAt ? `<span>完成：${completedAt}</span>` : ''}
+                    ${task.status === 'processing'
+                        ? `<button class="btn btn-sm btn-secondary" onclick="App.pollTask('${task.task_id}')">查詢進度</button>` : ''}
+                </div>
+            </div>`;
+        }
+
+        html += '</div>';
         return html;
     },
 

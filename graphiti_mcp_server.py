@@ -56,6 +56,7 @@ from src.logging_setup import (
 from src.ollama_graphiti_client import OptimizedOllamaClient
 from src.ollama_embedder import OllamaEmbedder
 from src.timezone_utils import configure_timezone, format_timestamp
+from src.task_store import get_task_store, initialize_task_store
 
 # Groq 客戶端（按需載入）
 try:
@@ -203,7 +204,7 @@ def _srv_lang() -> str:
 graphiti_instance = None  # Graphiti 實例快取
 _init_lock = asyncio.Lock()  # 初始化鎖，防止並發競態
 default_group_id: str = os.getenv("GROUP_ID", "default")  # 預設記憶分組 ID
-_memory_tasks: Dict[str, MemoryTask] = {}  # 背景記憶任務儲存
+_memory_tasks = get_task_store()  # 背景記憶任務儲存（SQLite 持久化）
 
 # ============================================================================
 # MCP 伺服器配置
@@ -771,6 +772,7 @@ async def _background_add_memory(
         logger.error(f"背景任務 {task.task_id} 失敗: {e}")
     finally:
         task.completed_at = datetime.now(timezone.utc).isoformat()
+        await _memory_tasks.put(task)
 
 
 def _parse_episode_type(source: str) -> EpisodeType:
@@ -1312,6 +1314,7 @@ async def add_episode_bulk(
                 logger.error(f"批量添加背景任務 {task_obj.task_id} 失敗: {e}")
             finally:
                 task_obj.completed_at = datetime.now(timezone.utc).isoformat()
+                await _memory_tasks.put(task_obj)
 
         asyncio.create_task(_bg_bulk(task))
 
@@ -1490,6 +1493,7 @@ async def build_communities(
                 logger.error(f"社群建構背景任務 {task_obj.task_id} 失敗: {e}")
             finally:
                 task_obj.completed_at = datetime.now(timezone.utc).isoformat()
+                await _memory_tasks.put(task_obj)
 
         asyncio.create_task(_bg_communities(task))
 
@@ -2373,6 +2377,7 @@ try:
     _web_routes = create_web_routes(
         get_graphiti_fn=initialize_graphiti,
         cors_origins=app_config.server.cors_origins if app_config else ["*"],
+        add_memory_fn=add_memory_simple,   # 共用完整寫入流程（去重、切分、background、fallback）
     )
     mcp._custom_starlette_routes.extend(_web_routes)
 
@@ -2474,6 +2479,13 @@ async def _startup_warmup() -> None:
     """
     warmup_logger = logging.getLogger("startup")
     warmup_logger.info("開始啟動連線預熱...")
+
+    # 初始化任務持久化儲存
+    try:
+        await initialize_task_store()
+        warmup_logger.info("✓ 任務持久化儲存初始化成功")
+    except Exception as e:
+        warmup_logger.warning(f"⚠ 任務儲存初始化失敗（將使用純記憶體模式）: {e}")
 
     try:
         graphiti = await initialize_graphiti()

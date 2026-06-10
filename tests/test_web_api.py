@@ -17,9 +17,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from starlette.testclient import TestClient
 from starlette.applications import Starlette
-from starlette.routing import Route
+from starlette.routing import Route, Mount
 
 from src.web_api import create_web_routes, _RateLimiter
+
+
+def _unwrap_routes(routes):
+    """解包 CORS sub-app（create_web_routes 現在回傳 [Mount("/", sub_app)]）。"""
+    if routes and isinstance(routes[0], Mount):
+        return routes[0].app.routes
+    return routes
 
 
 # ============================================================
@@ -104,8 +111,9 @@ def create_test_app(session_results: list[list[dict]] = None):
         return mock_graphiti
 
     routes = create_web_routes(get_graphiti_fn=get_graphiti)
-    # 只取 API 路由（不含 static files mount，因為測試環境可能沒有 web/ 目錄）
-    api_routes = [r for r in routes if isinstance(r, Route)]
+    # 解包 CORS sub-app，只取 API 路由（不含 static files mount）
+    inner = _unwrap_routes(routes)
+    api_routes = [r for r in inner if isinstance(r, Route)]
     return Starlette(routes=api_routes)
 
 
@@ -302,8 +310,9 @@ class TestStaticRoutes:
         routes = create_web_routes(get_graphiti_fn=mock_fn)
         assert len(routes) > 0
 
-        # 確認 API 路由存在
-        route_paths = [r.path for r in routes if isinstance(r, Route)]
+        # 確認 API 路由存在（解包 CORS sub-app）
+        inner = _unwrap_routes(routes)
+        route_paths = [r.path for r in inner if isinstance(r, Route)]
         assert "/api/stats" in route_paths
         assert "/api/groups" in route_paths
         assert "/api/nodes" in route_paths

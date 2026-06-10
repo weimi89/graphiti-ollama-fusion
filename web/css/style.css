@@ -1079,6 +1079,30 @@ body {
     gap: 12px;
 }
 
+.form-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    grid-column: 1 / -1;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
 /* -- 節點關係 -- */
 .relations-section {
     margin-top: 10px;
@@ -1813,4 +1837,112 @@ body {
     .fact-relation {
         flex-wrap: wrap;
     }
+}
+
+/* ================================================================
+   背景任務頁面
+   ================================================================ */
+
+.task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.task-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-light);
+    border-left: 4px solid var(--border-light);
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.task-card.task-pending  { border-left-color: #d29922; }
+.task-card.task-processing { border-left-color: #58a6ff; }
+.task-card.task-completed  { border-left-color: #3fb950; }
+.task-card.task-failed     { border-left-color: #f85149; }
+
+.task-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.task-id {
+    font-family: monospace;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.task-name {
+    font-weight: 600;
+    flex: 1;
+}
+
+.task-footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    flex-wrap: wrap;
+}
+
+.task-error {
+    font-size: 0.8rem;
+    color: #f85149;
+    background: rgba(248, 81, 73, 0.1);
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.task-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.task-progress progress {
+    flex: 1;
+    max-width: 200px;
+    height: 6px;
+    border-radius: 3px;
+    accent-color: #58a6ff;
+}
+
+/* tag 色彩（通用徽章） */
+.tag {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    white-space: nowrap;
+    background: var(--tag-group-bg);
+    color: var(--tag-group);
+}
+
+.tag-green  { background: rgba(63,185,80,.15);  color: #3fb950; }
+.tag-blue   { background: rgba(88,166,255,.15); color: #58a6ff; }
+.tag-yellow { background: rgba(210,153,34,.15); color: #d29922; }
+.tag-red    { background: rgba(248,81,73,.15);  color: #f85149; }
+
+/* filter-bar（篩選按鈕列） */
+.filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.btn-sm {
+    font-size: 0.8rem;
+    padding: 4px 10px;
 }

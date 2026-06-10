@@ -25,6 +25,7 @@
             <a href="#/communities" class="nav-link" data-page="communities">社群</a>
             <a href="#/graph" class="nav-link" data-page="graph">圖譜</a>
             <a href="#/ask" class="nav-link" data-page="ask">知識問答</a>
+            <a href="#/tasks" class="nav-link" data-page="tasks">背景任務</a>
         </div>
         <div class="navbar-actions">
             <div id="group-filter-container" aria-label="篩選群組"></div>
@@ -91,6 +92,24 @@
                             <option value="message">訊息</option>
                         </select>
                     </div>
+                </div>
+                <div class="form-group">
+                    <label for="memory-excluded-types">排除實體類型</label>
+                    <input type="text" id="memory-excluded-types" placeholder="逗號分隔，如：Person,Organization">
+                </div>
+                <div class="form-row form-checkboxes">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="memory-background">
+                        背景處理
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="memory-safe-mode">
+                        安全模式（跳過實體提取）
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="memory-force">
+                        強制添加（跳過去重）
+                    </label>
                 </div>
                 <div class="dialog-actions">
                     <button type="button" class="btn btn-secondary" onclick="App.closeAddMemory()">取消</button>

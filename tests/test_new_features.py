@@ -364,12 +364,15 @@ class TestWebApiRouteExists:
         import importlib
         from unittest.mock import AsyncMock
 
+        from starlette.routing import Mount
         from src.web_api import create_web_routes
         routes = create_web_routes(
             get_graphiti_fn=AsyncMock(),
             cors_origins=["*"],
         )
-        route_paths = [getattr(r, "path", "") for r in routes]
+        # 解包 CORS sub-app（[Mount("/", sub_app)] → sub_app.routes）
+        inner = routes[0].app.routes if routes and isinstance(routes[0], Mount) else routes
+        route_paths = [getattr(r, "path", "") for r in inner]
 
         expected_paths = [
             "/api/memory/add-bulk",
