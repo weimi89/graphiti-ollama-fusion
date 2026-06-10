@@ -1135,9 +1135,8 @@ const Components = {
         const STATUS_COLORS = { pending: 'tag-yellow', processing: 'tag-blue', completed: 'tag-green', failed: 'tag-red' };
 
         let html = `<div class="page-header">
-            <div class="page-header-top">
                 <h2 class="page-title">背景任務</h2>
-                <button class="btn btn-secondary btn-sm" onclick="App.loadTasks()">&#x21bb; 重新整理</button>
+                <p class="page-description">${this.PAGE_DESCRIPTIONS.tasks}</p>
             </div>
             <div class="filter-bar">
                 <label>狀態篩選：</label>
@@ -1145,9 +1144,8 @@ const Components = {
                     `<button class="btn btn-sm ${status_filter === s ? 'btn-primary' : 'btn-secondary'}"
                         onclick="App.loadTasks('${s}')">${s ? STATUS_LABELS[s] : '全部'}</button>`
                 ).join('')}
-            </div>
-            <p class="page-description">${this.PAGE_DESCRIPTIONS.tasks}</p>
-        </div>`;
+                <button class="btn btn-secondary btn-sm" onclick="App.loadTasks()">&#x21bb; 重新整理</button>
+            </div>`;
 
         if (tasks.length === 0) {
             return html + '<div class="empty-state"><p>目前沒有背景任務記錄。</p></div>';
@@ -1203,11 +1201,14 @@ const Components = {
         </div>`;
 
         if (quality && !quality.error) {
+            const orphanCnt = quality.orphan_nodes?.count ?? 0;
+            const emptyCnt = quality.empty_summaries?.count ?? 0;
+            const dupCnt = quality.duplicate_names?.count ?? 0;
             html += `<div class="quality-grid">
                 <div class="quality-card"><div class="quality-label">節點總數</div><div class="quality-value">${quality.total_nodes ?? '-'}</div></div>
-                <div class="quality-card"><div class="quality-label">事實總數</div><div class="quality-value">${quality.total_edges ?? '-'}</div></div>
-                <div class="quality-card"><div class="quality-label">孤立節點</div><div class="quality-value ${(quality.orphan_nodes || 0) > 0 ? 'quality-warn' : ''}">${quality.orphan_nodes ?? 0}</div></div>
-                <div class="quality-card"><div class="quality-label">平均關係數</div><div class="quality-value">${(quality.avg_edges_per_node || 0).toFixed(1)}</div></div>
+                <div class="quality-card"><div class="quality-label">孤立節點</div><div class="quality-value ${orphanCnt > 0 ? 'quality-warn' : ''}">${orphanCnt}</div></div>
+                <div class="quality-card"><div class="quality-label">空摘要</div><div class="quality-value ${emptyCnt > 0 ? 'quality-warn' : ''}">${emptyCnt}</div></div>
+                <div class="quality-card"><div class="quality-label">重複名稱</div><div class="quality-value ${dupCnt > 0 ? 'quality-warn' : ''}">${dupCnt}</div></div>
             </div>`;
         }
 
