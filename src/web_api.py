@@ -1597,7 +1597,9 @@ def create_web_routes(
     async def api_memory_tasks(request: Request) -> JSONResponse:
         """列出所有背景記憶處理任務。"""
         try:
-            from graphiti_mcp_server import _memory_tasks
+            import sys as _sys
+            _server_mod = _sys.modules.get('__main__') or _sys.modules.get('graphiti_mcp_server')
+            _memory_tasks = getattr(_server_mod, '_memory_tasks', {})
 
             status_filter = request.query_params.get("status", "")
             tasks = list(_memory_tasks.values())
@@ -1626,7 +1628,9 @@ def create_web_routes(
         """查詢單一背景任務狀態。"""
         lang = parse_accept_language(request.headers.get("accept-language", ""))
         try:
-            from graphiti_mcp_server import _memory_tasks
+            import sys as _sys
+            _server_mod = _sys.modules.get('__main__') or _sys.modules.get('graphiti_mcp_server')
+            _memory_tasks = getattr(_server_mod, '_memory_tasks', {})
 
             task_id = request.path_params["task_id"]
             task = _memory_tasks.get(task_id)
@@ -1655,7 +1659,9 @@ def create_web_routes(
     async def api_get_config(request: Request) -> JSONResponse:
         """取得目前生效的安全設定（不含 API key）。"""
         try:
-            from graphiti_mcp_server import app_config
+            import sys as _sys
+            _server_mod = _sys.modules.get('__main__') or _sys.modules.get('graphiti_mcp_server')
+            app_config = getattr(_server_mod, 'app_config', None)
             if app_config is None:
                 return JSONResponse({"error": "config not initialized"}, status_code=503)
             cfg = {
@@ -1686,7 +1692,9 @@ def create_web_routes(
     async def api_patch_config(request: Request) -> JSONResponse:
         """更新部分可修改設定（運行時生效，不寫入磁碟）。"""
         try:
-            from graphiti_mcp_server import app_config
+            import sys as _sys
+            _server_mod = _sys.modules.get('__main__') or _sys.modules.get('graphiti_mcp_server')
+            app_config = getattr(_server_mod, 'app_config', None)
             if app_config is None:
                 return JSONResponse({"error": "config not initialized"}, status_code=503)
             body = await request.json()
