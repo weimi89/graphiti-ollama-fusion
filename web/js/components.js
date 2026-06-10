@@ -18,6 +18,9 @@ const Components = {
         ask: '知識問答讓你測試 AI 對特定問題能取得哪些上下文，驗證知識庫的覆蓋度。',
         communities: '社群頁面顯示知識圖譜中自動檢測到的社群聚類，了解實體之間的緊密關聯群組。',
         tasks: '背景任務頁面列出所有 add_memory / add_episode_bulk / build_communities 的非同步處理進度，重啟後仍可查詢歷史狀態。',
+        quality: '品質維護頁面整合過時記憶分析、清理操作和知識品質指標，幫助保持知識圖譜的健康度。',
+        import: '匯入頁面支援將 JSON 格式的記憶片段批量導入知識圖譜，可貼上 JSON 或上傳檔案。',
+        config: '設定頁面允許在不重啟的情況下調整部分運行參數（本次進程生效）。',
     },
 
     renderPageDescription(page) {
@@ -1183,6 +1186,166 @@ const Components = {
 
         html += '</div>';
         return html;
+    },
+
+    /** 渲染品質維護頁面（#6） */
+    renderQuality(quality, stale) {
+        let html = `<div class="page-header">
+            <div class="page-header-top">
+                <h2 class="page-title">品質維護</h2>
+                <div style="display:flex;gap:8px">
+                    <button class="btn btn-secondary btn-sm" onclick="App._renderQuality(document.getElementById('app'))">&#x21bb; 重新整理</button>
+                    <button class="btn btn-secondary btn-sm" onclick="App.cleanupStale(true)">預覽清理</button>
+                    <button class="btn btn-danger btn-sm" onclick="App.cleanupStale(false)">執行清理</button>
+                </div>
+            </div>
+            <p class="page-description">${this.PAGE_DESCRIPTIONS.quality}</p>
+        </div>`;
+
+        if (quality && !quality.error) {
+            html += `<div class="quality-grid">
+                <div class="quality-card"><div class="quality-label">節點總數</div><div class="quality-value">${quality.total_nodes ?? '-'}</div></div>
+                <div class="quality-card"><div class="quality-label">事實總數</div><div class="quality-value">${quality.total_edges ?? '-'}</div></div>
+                <div class="quality-card"><div class="quality-label">孤立節點</div><div class="quality-value ${(quality.orphan_nodes || 0) > 0 ? 'quality-warn' : ''}">${quality.orphan_nodes ?? 0}</div></div>
+                <div class="quality-card"><div class="quality-label">平均關係數</div><div class="quality-value">${(quality.avg_edges_per_node || 0).toFixed(1)}</div></div>
+            </div>`;
+        }
+
+        if (stale && stale.memories?.length > 0) {
+            html += `<h3 class="section-title">過時記憶（低存取量）</h3><div class="task-list">`;
+            for (const m of stale.memories.slice(0, 20)) {
+                html += `<div class="task-card task-pending">
+                    <div class="task-header">
+                        <span class="task-name">${this._esc(m.name || m.uuid || '未命名')}</span>
+                        <span class="tag">${this._esc(m.group_id || '')}</span>
+                        <span class="tag-yellow tag">存取 ${m.access_count ?? 0} 次</span>
+                    </div>
+                    <div class="task-footer">
+                        <span>最後存取：${m.last_accessed ? new Date(m.last_accessed).toLocaleDateString() : '從未'}</span>
+                        <span>建立：${m.created_at ? new Date(m.created_at).toLocaleDateString() : ''}</span>
+                    </div>
+                </div>`;
+            }
+            html += '</div>';
+        } else if (stale) {
+            html += '<div class="empty-state"><p>沒有過時記憶，知識庫狀態良好。</p></div>';
+        }
+
+        return html;
+    },
+
+    /** 渲染匯入頁面（#8） */
+    renderImport() {
+        return `<div class="page-header">
+            <h2 class="page-title">批量匯入</h2>
+            <p class="page-description">${this.PAGE_DESCRIPTIONS.import}</p>
+        </div>
+        <div class="config-section">
+            <form id="import-form" class="memory-form">
+                <div class="form-group">
+                    <label>JSON 格式（陣列或單一物件）</label>
+                    <textarea id="import-json" rows="12" placeholder='[
+  {"name": "記憶名稱", "content": "記憶內容", "group_id": "my-group", "source": "text"},
+  ...
+]'></textarea>
+                </div>
+                <div class="form-group">
+                    <label>上傳 JSON 檔案</label>
+                    <input type="file" id="import-file" accept=".json">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="import-group">預設群組</label>
+                        <input type="text" id="import-group" placeholder="default" value="default">
+                    </div>
+                    <div class="form-group" style="display:flex;align-items:flex-end">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="import-background" checked>
+                            背景處理
+                        </label>
+                    </div>
+                </div>
+                <div class="dialog-actions" style="justify-content:flex-start">
+                    <button type="submit" class="btn btn-primary">開始匯入</button>
+                </div>
+            </form>
+            <div class="import-hint">
+                <strong>欄位說明：</strong>
+                <code>name</code>（必填）、<code>content</code>（必填）、
+                <code>group_id</code>（選填，覆蓋上方預設）、
+                <code>source</code>（text/json/message）、
+                <code>source_description</code>（來源說明）
+            </div>
+        </div>`;
+    },
+
+    /** 渲染設定頁面（#5） */
+    renderConfig(cfg) {
+        if (cfg.error) {
+            return `<div class="empty-state"><p>無法載入設定：${this._esc(cfg.error)}</p></div>`;
+        }
+        const mp = cfg.memory_performance || {};
+        const field = (name, label, value, type = 'text', extra = '') =>
+            `<div class="form-group">
+                <label for="${name}">${label}</label>
+                <input type="${type}" id="${name}" name="${name}" value="${this._esc(String(value ?? ''))}" ${extra}>
+            </div>`;
+        const check = (name, label, checked) =>
+            `<div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="${name}" name="${name}" ${checked ? 'checked' : ''}>
+                    ${label}
+                </label>
+            </div>`;
+
+        return `<div class="page-header">
+            <h2 class="page-title">運行設定</h2>
+            <p class="page-description">${this.PAGE_DESCRIPTIONS.config}</p>
+            <div class="config-readonly">
+                <span>LLM：<strong>${this._esc(cfg.llm_provider || '')}</strong></span>
+                <span>模型：<strong>${this._esc(cfg.active_model || '')}</strong></span>
+                <span>Embedding：<strong>${this._esc(cfg.embedding_provider || '')}</strong></span>
+            </div>
+        </div>
+        <div class="config-section">
+            <form id="config-form" class="memory-form">
+                <h3 class="section-title">伺服器</h3>
+                <div class="form-row">
+                    ${field('server_lang', 'MCP 回應語言', cfg.server_lang)}
+                    ${field('display_timezone', '顯示時區（IANA）', cfg.display_timezone)}
+                </div>
+                <h3 class="section-title">搜尋</h3>
+                <div class="form-row">
+                    ${field('search_limit', '搜尋結果上限', cfg.search_limit, 'number', 'min="1" max="100"')}
+                    ${field('cosine_similarity_threshold', '去重相似度閾值', cfg.cosine_similarity_threshold, 'number', 'min="0" max="1" step="0.01"')}
+                </div>
+                <div class="form-row form-checkboxes">
+                    ${check('enable_deduplication', '啟用去重', cfg.enable_deduplication)}
+                </div>
+                <h3 class="section-title">重要性追蹤</h3>
+                <div class="form-row">
+                    ${field('importance_weight', '重要性權重', cfg.importance_weight, 'number', 'min="0" max="1" step="0.01"')}
+                    ${field('stale_days_threshold', '過時天數閾值', cfg.stale_days_threshold, 'number', 'min="1"')}
+                    ${field('stale_min_access_count', '最低存取次數', cfg.stale_min_access_count, 'number', 'min="0"')}
+                </div>
+                <div class="form-row form-checkboxes">
+                    ${check('enable_importance_tracking', '啟用存取追蹤', cfg.enable_importance_tracking)}
+                </div>
+                <h3 class="section-title">記憶處理效能</h3>
+                <div class="form-row">
+                    ${field('chunk_threshold', '觸發切分閾值（字元）', mp.chunk_threshold, 'number', 'min="100"')}
+                    ${field('max_chunk_size', '每段最大字元數', mp.max_chunk_size, 'number', 'min="100"')}
+                    ${field('max_coroutines', '最大並行協程', mp.max_coroutines, 'number', 'min="1" max="20"')}
+                </div>
+                <div class="form-row form-checkboxes">
+                    ${check('default_background', '預設使用背景處理', mp.default_background)}
+                </div>
+                <div class="dialog-actions" style="justify-content:flex-start;margin-top:16px">
+                    <button type="submit" class="btn btn-primary">套用設定</button>
+                    <small style="color:var(--text-muted);margin-left:8px">僅本次進程生效，重啟後恢復配置檔設定</small>
+                </div>
+            </form>
+        </div>`;
     },
 
     /** 渲染三元組新增按鈕（用於事實頁面） */

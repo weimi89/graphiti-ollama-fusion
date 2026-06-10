@@ -1638,6 +1638,139 @@ def create_web_routes(
             return JSONResponse({"error": str(e)}, status_code=500)
 
     # ------------------------------------------------------------------
+    # Config API（#5 config 落地）
+    # ------------------------------------------------------------------
+
+    # 可安全公開與在線修改的欄位（不含 API key / 密碼）
+    _CONFIG_RW_FIELDS = {
+        "server_lang", "search_limit", "enable_deduplication",
+        "cosine_similarity_threshold", "enable_importance_tracking",
+        "importance_weight", "stale_days_threshold", "stale_min_access_count",
+        "display_timezone",
+    }
+    _CONFIG_MP_FIELDS = {
+        "chunk_threshold", "max_chunk_size", "max_coroutines", "default_background",
+    }
+
+    async def api_get_config(request: Request) -> JSONResponse:
+        """取得目前生效的安全設定（不含 API key）。"""
+        try:
+            from graphiti_mcp_server import app_config
+            if app_config is None:
+                return JSONResponse({"error": "config not initialized"}, status_code=503)
+            cfg = {
+                "llm_provider": app_config.llm_provider,
+                "embedding_provider": app_config.get_embedding_provider(),
+                "active_model": app_config.get_active_model(),
+                "server_lang": app_config.server_lang,
+                "search_limit": app_config.search_limit,
+                "enable_deduplication": app_config.enable_deduplication,
+                "cosine_similarity_threshold": app_config.cosine_similarity_threshold,
+                "enable_importance_tracking": app_config.enable_importance_tracking,
+                "importance_weight": app_config.importance_weight,
+                "stale_days_threshold": app_config.stale_days_threshold,
+                "stale_min_access_count": app_config.stale_min_access_count,
+                "display_timezone": app_config.display_timezone,
+                "memory_performance": {
+                    "chunk_threshold": app_config.memory_performance.chunk_threshold,
+                    "max_chunk_size": app_config.memory_performance.max_chunk_size,
+                    "max_coroutines": app_config.memory_performance.max_coroutines,
+                    "default_background": app_config.memory_performance.default_background,
+                },
+            }
+            return JSONResponse(cfg)
+        except Exception as e:
+            logger.error(f"api_get_config error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_patch_config(request: Request) -> JSONResponse:
+        """更新部分可修改設定（運行時生效，不寫入磁碟）。"""
+        try:
+            from graphiti_mcp_server import app_config
+            if app_config is None:
+                return JSONResponse({"error": "config not initialized"}, status_code=503)
+            body = await request.json()
+            updated = {}
+            mp = body.pop("memory_performance", {}) or {}
+            for k, v in body.items():
+                if k in _CONFIG_RW_FIELDS and hasattr(app_config, k):
+                    setattr(app_config, k, v)
+                    updated[k] = v
+            for k, v in mp.items():
+                if k in _CONFIG_MP_FIELDS and hasattr(app_config.memory_performance, k):
+                    setattr(app_config.memory_performance, k, v)
+                    updated[f"memory_performance.{k}"] = v
+            return JSONResponse({"updated": updated, "note": "僅本次進程生效，重啟後恢復配置檔設定"})
+        except Exception as e:
+            logger.error(f"api_patch_config error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ------------------------------------------------------------------
+    # 匯入 API（#8 import UI）
+    # ------------------------------------------------------------------
+
+    async def api_import_episodes(request: Request) -> JSONResponse:
+        """批量匯入記憶片段（JSON 格式）。
+
+        Body: {"episodes": [{"name": str, "content": str, "group_id": str, "source": str}], "background": bool}
+        """
+        try:
+            body = await request.json()
+            episodes_raw = body.get("episodes", [])
+            group_id = body.get("group_id", "default")
+            background = bool(body.get("background", True))
+
+            if not episodes_raw or not isinstance(episodes_raw, list):
+                return JSONResponse({"error": "需要 episodes 陣列"}, status_code=400)
+            if len(episodes_raw) > 500:
+                return JSONResponse({"error": "單次匯入上限 500 筆"}, status_code=400)
+
+            if add_memory_fn is not None:
+                # 使用 MCP 完整流程（含去重、切分）
+                results = []
+                for ep in episodes_raw:
+                    r = await add_memory_fn(
+                        name=ep.get("name", "imported"),
+                        episode_body=ep.get("content", ep.get("episode_body", "")),
+                        group_id=ep.get("group_id", group_id),
+                        source=ep.get("source", "text"),
+                        background=background,
+                    )
+                    results.append(r)
+                return JSONResponse({
+                    "success": True,
+                    "count": len(results),
+                    "background": background,
+                    "results": results if not background else [{"task_id": r.get("task_id")} for r in results],
+                })
+            else:
+                # 快速批量（不走去重）
+                graphiti = await get_graphiti_fn()
+                from graphiti_core.utils import BulkEpisode
+                from graphiti_core.graph_types import EpisodeType
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+                bulk_eps = []
+                for ep in episodes_raw:
+                    try:
+                        ep_type = EpisodeType[ep.get("source", "text").lower()]
+                    except KeyError:
+                        ep_type = EpisodeType.text
+                    bulk_eps.append(BulkEpisode(
+                        name=ep.get("name", "imported"),
+                        content=ep.get("content", ep.get("episode_body", "")),
+                        group_id=ep.get("group_id", group_id),
+                        source_description=ep.get("source_description", "import"),
+                        episode_type=ep_type,
+                        reference_time=now,
+                    ))
+                await graphiti.add_episode_bulk(bulk_episodes=bulk_eps, group_id=group_id)
+                return JSONResponse({"success": True, "count": len(bulk_eps)})
+        except Exception as e:
+            logger.error(f"api_import_episodes error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ------------------------------------------------------------------
     # 組裝路由
     # ------------------------------------------------------------------
 
@@ -1674,6 +1807,9 @@ def create_web_routes(
         Route("/api/search/advanced", api_advanced_search, methods=["GET"]),
         Route("/api/analytics/stale", api_analytics_stale, methods=["GET"]),
         Route("/api/analytics/cleanup", api_analytics_cleanup, methods=["POST"]),
+        Route("/api/config", api_get_config, methods=["GET"]),
+        Route("/api/config", api_patch_config, methods=["PATCH"]),
+        Route("/api/import/episodes", api_import_episodes, methods=["POST"]),
     ]
 
     # 靜態文件（CSS/JS）

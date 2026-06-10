@@ -189,6 +189,15 @@ const App = {
                 case 'tasks':
                     await this._renderTasks(app);
                     break;
+                case 'quality':
+                    await this._renderQuality(app);
+                    break;
+                case 'import':
+                    await this._renderImport(app);
+                    break;
+                case 'config':
+                    await this._renderConfig(app);
+                    break;
                 default:
                     app.innerHTML = '<div class="empty-state"><div class="empty-state-text">頁面不存在</div></div>';
             }
@@ -914,6 +923,127 @@ const App = {
         } catch (err) {
             this._toast('查詢失敗: ' + err.message, 'error');
         }
+    },
+
+    // ============================================================
+    // 品質維護頁面（#6）
+    // ============================================================
+
+    async _renderQuality(app) {
+        app.innerHTML = '<div class="loading">載入中...</div>';
+        const [quality, stale] = await Promise.all([
+            API.quality({ groupId: this.state.groupId }).catch(() => null),
+            API.staleAnalysis({ groupId: this.state.groupId, limit: 20 }).catch(() => null),
+        ]);
+        app.innerHTML = Components.renderQuality(quality, stale);
+    },
+
+    async cleanupStale(dryRun = true) {
+        try {
+            this._toast(dryRun ? '分析過時記憶...' : '清理過時記憶...', 'info');
+            const result = await API.cleanupStale({
+                groupId: this.state.groupId, dryRun,
+            });
+            const count = result.deleted_count ?? result.preview_count ?? 0;
+            this._toast(
+                dryRun ? `預覽：${count} 筆可清理` : `已清理 ${count} 筆過時記憶`,
+                'success',
+            );
+            await this._renderQuality(document.getElementById('app'));
+        } catch (err) {
+            this._toast('操作失敗: ' + err.message, 'error');
+        }
+    },
+
+    // ============================================================
+    // 匯入頁面（#8）
+    // ============================================================
+
+    async _renderImport(app) {
+        app.innerHTML = Components.renderImport();
+        this._initImportForm();
+    },
+
+    _initImportForm() {
+        const form = document.getElementById('import-form');
+        if (!form) return;
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const raw = document.getElementById('import-json')?.value.trim() || '';
+            const groupId = document.getElementById('import-group')?.value.trim() || 'default';
+            const background = document.getElementById('import-background')?.checked || false;
+            let episodes;
+            try {
+                const parsed = JSON.parse(raw);
+                episodes = Array.isArray(parsed) ? parsed : [parsed];
+            } catch {
+                this._toast('JSON 格式錯誤，請檢查輸入', 'error');
+                return;
+            }
+            try {
+                const result = await API.importEpisodes({ episodes, groupId, background });
+                this._toast(`已匯入 ${result.count} 筆${background ? '（背景處理）' : ''}`, 'success');
+            } catch (err) {
+                this._toast('匯入失敗: ' + err.message, 'error');
+            }
+        });
+
+        const fileInput = document.getElementById('import-file');
+        if (fileInput) {
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    const textarea = document.getElementById('import-json');
+                    if (textarea) textarea.value = ev.target.result;
+                };
+                reader.readAsText(file);
+            });
+        }
+    },
+
+    // ============================================================
+    // 設定頁面（#5）
+    // ============================================================
+
+    async _renderConfig(app) {
+        app.innerHTML = '<div class="loading">載入中...</div>';
+        const cfg = await API.getConfig().catch(e => ({ error: e.message }));
+        app.innerHTML = Components.renderConfig(cfg);
+        this._initConfigForm(cfg);
+    },
+
+    _initConfigForm(cfg) {
+        const form = document.getElementById('config-form');
+        if (!form || cfg.error) return;
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const body = {
+                server_lang: form.elements['server_lang']?.value,
+                search_limit: parseInt(form.elements['search_limit']?.value || '20'),
+                enable_deduplication: form.elements['enable_deduplication']?.checked,
+                cosine_similarity_threshold: parseFloat(form.elements['cosine_similarity_threshold']?.value || '0.8'),
+                enable_importance_tracking: form.elements['enable_importance_tracking']?.checked,
+                importance_weight: parseFloat(form.elements['importance_weight']?.value || '0.1'),
+                stale_days_threshold: parseInt(form.elements['stale_days_threshold']?.value || '30'),
+                stale_min_access_count: parseInt(form.elements['stale_min_access_count']?.value || '2'),
+                display_timezone: form.elements['display_timezone']?.value,
+                memory_performance: {
+                    chunk_threshold: parseInt(form.elements['chunk_threshold']?.value || '800'),
+                    max_chunk_size: parseInt(form.elements['max_chunk_size']?.value || '600'),
+                    max_coroutines: parseInt(form.elements['max_coroutines']?.value || '10'),
+                    default_background: form.elements['default_background']?.checked,
+                },
+            };
+            try {
+                const result = await API.patchConfig(body);
+                const keys = Object.keys(result.updated || {}).join(', ');
+                this._toast(`設定已更新：${keys || '無變更'}`, 'success');
+            } catch (err) {
+                this._toast('更新失敗: ' + err.message, 'error');
+            }
+        });
     },
 
     // ============================================================

@@ -136,6 +136,29 @@ const API = {
         });
     },
 
+    /** 取得設定 */
+    async getConfig() {
+        return this._get('/api/config');
+    },
+
+    /** 更新設定（PATCH） */
+    async patchConfig(body) {
+        const res = await fetch('/api/config', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+    },
+
+    /** 批量匯入記憶片段 */
+    async importEpisodes({ episodes, groupId = 'default', background = true }) {
+        return this._post('/api/import/episodes', {
+            episodes, group_id: groupId, background,
+        });
+    },
+
     /** 列出背景任務 */
     async tasks({ status = '', limit = 50, offset = 0 } = {}) {
         const params = new URLSearchParams();
