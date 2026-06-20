@@ -34,7 +34,7 @@ docker run -p 8000:8000 --env-file .env graphiti-mcp
 ## Testing
 
 ```bash
-# 運行所有測試（203 個測試）
+# 運行所有測試（273 個測試）
 uv run python -m pytest tests/
 
 # 僅執行內容切分測試
@@ -102,7 +102,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 │   ├── migrate_embeddings.py    # Embedding 模型遷移（切換模型後重新生成向量）
 │   ├── inspect_schema.py        # Neo4j 結構檢查
 │   └── performance_diagnose.py  # 性能診斷
-├── tests/                       # 測試套件（203 個測試）
+├── tests/                       # 測試套件（273 個測試）
 │   ├── test_content_preprocessor.py # 智慧切分邏輯測試（17 個）
 │   ├── test_new_features.py     # 新功能測試（32 個）
 │   ├── test_i18n.py             # 多國語系測試（57 個，驗證 33 語言 key/佔位符對齊、無英文殘留、非 CJK 語言不含 CJK 字）
@@ -152,6 +152,8 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 **重要性追蹤**：`src/importance.py` 在搜尋操作完成後，用 `asyncio.create_task()` 非同步更新 `access_count` 和 `last_accessed` 屬性。`get_stale_memories` 和 `cleanup_stale_memories` 工具基於這些屬性識別過時記憶。
 
 **進階搜尋**：`SEARCH_RECIPES` 字典映射 16 個 `SearchConfig` 預設方案，`_build_search_filters()` 輔助函數將簡化參數轉換為 `SearchFilters` 物件。`search_memory_facts` 已升級為使用 `graphiti.search_()` API。
+
+**Cross-encoder post-rerank（命中率核心）**：`search_memory_nodes` 在 RRF 候選池（`_candidate_pool_limit` 放大至 ~30）與截斷 top_k 之間，用 `_apply_rerank()` 依 query 相關性對候選重排（單例快取 reranker、失敗/未啟用優雅退回 RRF），再做 `_apply_importance_boost`。由 `cross_encoder.rerank_search`（`RERANK_SEARCH` 環境變數，預設 True）控制。評估框架實測（150 筆分層 golden）：**本地 BGE（`BAAI/bge-reranker-v2-m3`，`CROSS_ENCODER_PROVIDER=bge`，需 `uv sync --extra reranker`）使 node recall@10 0.808→0.949、MRR 0.460→0.819（+78%），本機快速、零 API 成本**。關鍵教訓：① **LLM 做相關性評分對搜尋有害**（recall/MRR 雙降、慢 45 倍），故 rerank_search 僅建議搭配 `bge`；② 直接把預設 recipe 換成 `node_cross_encoder` 會引入 bfs 圖遍歷污染候選池（recall 掉到 0.564），正解是在純 RRF 池上做 post-rerank。僅對 node 啟用（edge 已 recall 1.0）。評估工具 `tools/evaluate_search.py`（+`src/search_eval.py`）支援持久 golden set、edge 召回、`--compare-baseline` 回歸偵測、`--post-rerank`/`--cross-encoder-provider` A/B 量測；報告見 `docs/搜尋命中率評估報告.md`。
 
 **社群檢測**：`build_communities` 工具包裝 graphiti-core 的 Label Propagation 演算法，預設背景執行。Web UI 新增社群瀏覽頁面。
 
