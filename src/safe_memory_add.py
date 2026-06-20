@@ -90,6 +90,17 @@ async def safe_add_memory(
         # 直接保存到資料庫
         await episode_node.save(graphiti_client.driver)
 
+        # 為去重比對補存 content 嵌入（fire-and-forget，失敗不影響寫入）
+        try:
+            import asyncio as _asyncio
+            from src.deduplication import store_episode_embedding
+            _asyncio.create_task(store_episode_embedding(
+                graphiti_client.driver, graphiti_client.embedder,
+                episode_node.uuid, content,
+            ))
+        except Exception:
+            pass
+
         logger.info(f"安全記憶添加成功: {episode_node.uuid}")
 
         return {

@@ -43,6 +43,32 @@ def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+async def store_episode_embedding(
+    driver: Any, embedder: Any, uuid: str, content: str
+) -> None:
+    """為指定 Episodic 計算 content 嵌入並存入 e.embedding，供日後去重比對。
+
+    graphiti-core 的 add_episode 只儲存 Episodic 的 content 文本、不計算其嵌入，
+    導致 check_episode_similarity 查無可比對對象、去重永遠空轉。寫入記憶後以
+    fire-and-forget 方式呼叫本函數補上嵌入，讓去重真正生效。
+    """
+    if not uuid or not content:
+        return
+    try:
+        # OllamaEmbedder.create 接受 str 並回傳單一向量；勿傳 list[dict]
+        emb = await embedder.create(content)
+        if not emb:
+            return
+        async with driver.session() as session:
+            await session.run(
+                "MATCH (e:Episodic {uuid: $uuid}) SET e.embedding = $emb",
+                {"uuid": uuid, "emb": emb},
+            )
+        logger.debug(f"已存入 Episodic 嵌入: {uuid}")
+    except Exception as e:
+        logger.warning(f"存 Episodic 嵌入失敗（不影響寫入）: {e}")
+
+
 async def check_episode_similarity(
     driver: Any,
     embedder: Any,
@@ -66,14 +92,14 @@ async def check_episode_similarity(
         DuplicateCheckResult: 檢查結果
     """
     try:
-        # 生成新內容的嵌入
-        embeddings = await embedder.create([{"text": content}])
-        if not embeddings or not embeddings[0]:
+        # 生成新內容的嵌入（OllamaEmbedder.create 接受 str 回單一向量；
+        # 過去誤傳 list[dict] 並取 [0]，使 new_embedding 變成單一 float，相似度全錯）
+        new_embedding = await embedder.create(content)
+        if not new_embedding:
             return DuplicateCheckResult(
                 is_duplicate=False, max_similarity=0.0,
                 message="無法生成嵌入向量，跳過去重檢查",
             )
-        new_embedding = embeddings[0]
 
         # 從 Neo4j 取得最近的 episodes（含嵌入）
         query = """
