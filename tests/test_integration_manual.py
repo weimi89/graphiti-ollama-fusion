@@ -121,7 +121,8 @@ async def test_graphiti_integration() -> bool:
     from graphiti_core import Graphiti
     from graphiti_core.llm_client.config import LLMConfig
     from src.ollama_embedder import OllamaEmbedder
-    from src.ollama_graphiti_client import OptimizedOllamaClient, SimpleCrossEncoder
+    from src.ollama_graphiti_client import OptimizedOllamaClient
+    from src.cross_encoder_client import PassthroughCrossEncoder
 
     print("=" * 70)
     print("優化的 Ollama + Graphiti 解決方案測試")
@@ -157,7 +158,7 @@ async def test_graphiti_integration() -> bool:
 
         # 初始化 Cross-encoder
         print("\n初始化 Cross-encoder...")
-        cross_encoder = SimpleCrossEncoder()
+        cross_encoder = PassthroughCrossEncoder()
         print("  Cross-encoder 初始化成功")
 
         # 初始化 Graphiti

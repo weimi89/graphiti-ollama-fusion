@@ -12,7 +12,6 @@
 
 主要類別：
     - OptimizedOllamaClient: 優化的 LLM 客戶端
-    - SimpleCrossEncoder: 簡化的 Cross-encoder 實現
 
 技術特點：
     - 自動修復 Pydantic 驗證錯誤
@@ -34,7 +33,6 @@ import aiohttp
 from dotenv import load_dotenv
 
 from graphiti_core import Graphiti
-from graphiti_core.cross_encoder.client import CrossEncoderClient
 from graphiti_core.llm_client.client import LLMClient
 from graphiti_core.llm_client.config import LLMConfig, ModelSize
 
@@ -772,24 +770,3 @@ class OptimizedOllamaClient(LLMClient):
             return validated.model_dump()
         except Exception:
             return None
-
-
-class SimpleCrossEncoder(CrossEncoderClient):
-    """
-    簡化的 Cross-encoder 實現。
-
-    使用預設分數，適用於不需要精確重排序的場景。
-    """
-
-    async def rank(self, query: str, passages: List[str]) -> List[tuple]:
-        """
-        對段落進行排序。
-
-        Args:
-            query: 查詢文字
-            passages: 段落列表
-
-        Returns:
-            List[tuple]: (段落, 分數) 的列表，所有分數為 1.0
-        """
-        return [(passage, 1.0) for passage in passages]

@@ -1457,7 +1457,7 @@ def create_web_routes(
             if not q:
                 return JSONResponse({"error": t("search.missing_query", lang)}, status_code=400)
 
-            recipe = request.query_params.get("recipe", "combined_cross_encoder")
+            recipe = request.query_params.get("recipe", "combined_rrf")
             limit_val = min(int(request.query_params.get("limit", 10)), 50)
             group_ids_str = request.query_params.get("group_ids", "")
             group_ids = [g.strip() for g in group_ids_str.split(",") if g.strip()] if group_ids_str else []

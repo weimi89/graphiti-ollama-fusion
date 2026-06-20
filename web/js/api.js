@@ -210,7 +210,7 @@ const API = {
     },
 
     /** 進階搜尋 */
-    async advancedSearch(q, { recipe = 'combined_cross_encoder', groupIds = [], limit = 10 } = {}) {
+    async advancedSearch(q, { recipe = 'combined_rrf', groupIds = [], limit = 10 } = {}) {
         const params = new URLSearchParams({ q, recipe });
         if (groupIds.length) params.set('group_ids', groupIds.join(','));
         if (limit !== 10) params.set('limit', limit);

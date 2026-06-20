@@ -209,6 +209,73 @@ class TestSearchRecipes:
         for name, config in SEARCH_RECIPES.items():
             assert isinstance(config, SearchConfig), f"{name} is not a SearchConfig"
 
+    def test_advanced_search_default_recipe_is_rrf(self):
+        """advanced_search 預設 recipe 必須是可運作的 combined_rrf，
+        而非會在無真實 cross_encoder 時失敗的 combined_cross_encoder。"""
+        import inspect
+        from graphiti_mcp_server import advanced_search
+        sig = inspect.signature(advanced_search)
+        assert sig.parameters["search_recipe"].default == "combined_rrf"
+
+
+class TestExcludedEntityTypesKwarg:
+    """回歸測試：excluded_entity_types 須以正確 kwarg 傳給 graphiti-core。
+
+    歷史 bug：誤用 entity_types（需 dict）導致 graphiti-core 的
+    validate_entity_types 拋 AttributeError，被外層 except 靜默降級為
+    safe_mode（只建立不可搜尋的 EpisodicNode），使該記憶 recall=0。
+    """
+
+    def test_excluded_entity_types_uses_correct_kwarg(self):
+        import asyncio
+        import time
+        from unittest.mock import AsyncMock
+        from graphiti_core.nodes import EpisodeType
+        from graphiti_mcp_server import _add_memory_full_mode
+
+        graphiti = AsyncMock()
+        result = asyncio.run(_add_memory_full_mode(
+            graphiti=graphiti,
+            name="t",
+            episode_body="short body",
+            group_id="g",
+            source_description="d",
+            episode_type=EpisodeType.text,
+            episode_uuid=None,
+            source="text",
+            start_time=time.time(),
+            excluded_entity_types=["Preference"],
+        ))
+
+        graphiti.add_episode.assert_awaited_once()
+        kwargs = graphiti.add_episode.await_args.kwargs
+        assert kwargs.get("excluded_entity_types") == ["Preference"]
+        assert "entity_types" not in kwargs
+        assert result["success"] is True
+
+    def test_no_excluded_entity_types_passes_nothing(self):
+        import asyncio
+        import time
+        from unittest.mock import AsyncMock
+        from graphiti_core.nodes import EpisodeType
+        from graphiti_mcp_server import _add_memory_full_mode
+
+        graphiti = AsyncMock()
+        asyncio.run(_add_memory_full_mode(
+            graphiti=graphiti,
+            name="t",
+            episode_body="short body",
+            group_id="g",
+            source_description="d",
+            episode_type=EpisodeType.text,
+            episode_uuid=None,
+            source="text",
+            start_time=time.time(),
+        ))
+        kwargs = graphiti.add_episode.await_args.kwargs
+        assert "excluded_entity_types" not in kwargs
+        assert "entity_types" not in kwargs
+
 
 # ============================================================
 # _build_search_filters 測試

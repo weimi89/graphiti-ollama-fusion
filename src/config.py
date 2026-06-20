@@ -470,7 +470,7 @@ class GraphitiConfig:
     search_limit: int = 20
     enable_deduplication: bool = True
     pydantic_validation_fixes: bool = True
-    cosine_similarity_threshold: float = 0.8
+    cosine_similarity_threshold: float = 0.9
 
     # 重要性追蹤設定
     enable_importance_tracking: bool = True

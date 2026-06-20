@@ -55,6 +55,7 @@ from src.logging_setup import (
 )
 from src.ollama_graphiti_client import OptimizedOllamaClient
 from src.ollama_embedder import OllamaEmbedder
+from src.cross_encoder_client import PassthroughCrossEncoder
 from src.timezone_utils import configure_timezone, format_timestamp
 from src.task_store import get_task_store, initialize_task_store
 
@@ -299,6 +300,7 @@ async def initialize_graphiti() -> Graphiti:
                 password=app_config.neo4j.password,
                 llm_client=llm_client,
                 embedder=embedder,
+                cross_encoder=_create_cross_encoder(),
                 max_coroutines=max_coroutines,
             )
 
@@ -352,6 +354,21 @@ def _create_llm_client():
     except Exception as e:
         glog.warning(f"LLM 客戶端初始化失敗 (provider={provider})，使用 None: {e}")
         return None
+
+
+def _create_cross_encoder():
+    """
+    建立 cross-encoder（reranker）客戶端並注入 Graphiti。
+
+    若不注入，graphiti-core 會 fallback 為 OpenAIRerankerClient(model='gpt-4.1-nano')
+    並打向 OPENAI_BASE_URL（本機 Ollama），因 Ollama 無此模型且不支援 logprobs，
+    導致所有 *_cross_encoder recipe 在 rank() 時拋錯、搜尋回傳失敗。
+
+    Commit 1：先回傳安全的 PassthroughCrossEncoder（no-op，永不拋錯）。
+    Commit 2：改為依 CROSS_ENCODER_PROVIDER（llm / bge / none）路由到真實 reranker，
+    任何初始化失敗一律降級為 Passthrough。
+    """
+    return PassthroughCrossEncoder()
 
 
 def _create_ollama_client(glog) -> Optional[OptimizedOllamaClient]:
@@ -883,7 +900,10 @@ async def _add_memory_full_mode(
     # 準備 add_episode 的額外參數
     add_episode_kwargs: dict[str, Any] = {}
     if excluded_entity_types:
-        add_episode_kwargs["entity_types"] = excluded_entity_types
+        # graphiti-core add_episode 的參數名為 excluded_entity_types（list[str]）；
+        # 誤用 entity_types（需 dict）會在 validate_entity_types 觸發 AttributeError
+        # 並被外層 except 靜默降級為 safe_mode（寫出不可搜尋的 EpisodicNode）。
+        add_episode_kwargs["excluded_entity_types"] = excluded_entity_types
 
     # 取得切分配置
     chunk_threshold = 800
@@ -1531,7 +1551,7 @@ async def build_communities(
 @mcp.tool()
 async def advanced_search(
     query: str,
-    search_recipe: str = "combined_cross_encoder",
+    search_recipe: str = "combined_rrf",
     max_results: int = 10,
     group_ids: Optional[List[str]] = None,
     center_node_uuid: Optional[str] = None,
