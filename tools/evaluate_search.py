@@ -183,8 +183,8 @@ async def _build_golden_edges(graphiti, n, group_id, seed):
     return golden
 
 
-async def _build_golden(graphiti, n, group_id, seed, kind="node"):
-    """依 kind 建立 golden set。kind: node | edge | both。"""
+async def _build_golden_one(graphiti, n, group_id, seed, kind):
+    """單一 group（或全圖）建立 golden set。kind: node | edge | both。"""
     if kind == "edge":
         return await _build_golden_edges(graphiti, n, group_id, seed)
     if kind == "both":
@@ -193,6 +193,67 @@ async def _build_golden(graphiti, n, group_id, seed, kind="node"):
         edges = await _build_golden_edges(graphiti, half, group_id, seed + 1)
         return nodes + edges
     return await _build_golden_nodes(graphiti, n, group_id, seed)
+
+
+def _allocate(total, weights, min_each=1):
+    """依權重把 total 分配到各桶（最大餘數法），每桶至少 min_each。"""
+    keys = list(weights.keys())
+    wsum = sum(weights.values()) or 1
+    raw = {k: total * weights[k] / wsum for k in keys}
+    alloc = {k: max(min_each, int(raw[k])) for k in keys}
+    # 依餘數補足到 total（在不破壞 min_each 的前提下做加減）
+    diff = total - sum(alloc.values())
+    order = sorted(keys, key=lambda k: raw[k] - int(raw[k]), reverse=True)
+    i = 0
+    while diff > 0 and order:
+        alloc[order[i % len(order)]] += 1
+        diff -= 1
+        i += 1
+    # 若超配，從配額最多者回收（仍守 min_each）
+    while diff < 0:
+        cand = max(keys, key=lambda k: alloc[k])
+        if alloc[cand] <= min_each:
+            break
+        alloc[cand] -= 1
+        diff += 1
+    return alloc
+
+
+async def _build_golden_stratified(graphiti, n, seed, kind, top_groups):
+    """分層取樣：依各 group 的 Entity 數比例，從前 top_groups 大 group 取樣，
+    避免樣本全落在最大 group。一定納入 global（若存在）。"""
+    async with graphiti.driver.session() as s:
+        rows = await (await s.run(
+            "MATCH (e:Entity) WHERE e.summary IS NOT NULL AND size(e.summary) > 20 "
+            "RETURN e.group_id AS g, count(e) AS c ORDER BY c DESC LIMIT $lim",
+            {"lim": top_groups},
+        )).data()
+    weights = {r["g"]: r["c"] for r in rows if r["g"]}
+    if not weights:
+        return await _build_golden_one(graphiti, n, None, seed, kind)
+    # 確保 global 入選
+    if "global" not in weights:
+        async with graphiti.driver.session() as s:
+            gr = await (await s.run(
+                "MATCH (e:Entity) WHERE e.group_id='global' RETURN count(e) AS c"
+            )).single()
+        if gr and gr["c"]:
+            weights["global"] = gr["c"]
+    alloc = _allocate(n, weights, min_each=2)
+    print(f"分層取樣配額（{len(alloc)} groups）: " +
+          ", ".join(f"{g}:{a}" for g, a in sorted(alloc.items(), key=lambda x: -x[1])))
+    golden = []
+    for i, (g, a) in enumerate(sorted(alloc.items())):
+        items = await _build_golden_one(graphiti, a, g, seed + i, kind)
+        golden.extend(items)
+    return golden
+
+
+async def _build_golden(graphiti, n, group_id, seed, kind="node", stratified=False, top_groups=15):
+    """依 kind 建立 golden set。stratified=True 時跨 group 分層取樣（忽略 group_id）。"""
+    if stratified and not group_id:
+        return await _build_golden_stratified(graphiti, n, seed, kind, top_groups)
+    return await _build_golden_one(graphiti, n, group_id, seed, kind)
 
 
 def _recipe_domain(recipe: str) -> str:
@@ -220,10 +281,16 @@ def _item_kind_for_domain(domain: str) -> str:
 
 
 async def _evaluate(graphiti, server, golden, recipes, k, mmr_lambda, sim_min_score, verbose):
-    """對每個 recipe 跑 golden set，回傳 RecipeMetrics 清單。"""
+    """對每個 recipe 跑 golden set。
+
+    回傳 (metrics, raw)：
+      metrics: RecipeMetrics 清單（跨全部樣本彙總）
+      raw: {recipe: [(group_id, ranked, target_uuid), ...]}，供 per-group 拆解
+    """
     from src.search_eval import compute_metrics
 
     all_metrics = []
+    raw = {}
     for recipe_name in recipes:
         domain = _recipe_domain(recipe_name)
         want_kind = _item_kind_for_domain(domain)
@@ -237,7 +304,7 @@ async def _evaluate(graphiti, server, golden, recipes, k, mmr_lambda, sim_min_sc
         if mmr_lambda is not None or sim_min_score is not None:
             server._apply_search_tuning(config, sim_min_score=sim_min_score, mmr_lambda=mmr_lambda)
 
-        results, durations = [], []
+        results, durations, recipe_raw = [], [], []
         for item in items:
             t0 = time.monotonic()
             try:
@@ -251,13 +318,40 @@ async def _evaluate(graphiti, server, golden, recipes, k, mmr_lambda, sim_min_sc
                     print(f"  [錯誤] {recipe_name} / {item.query[:30]}: {e}")
             durations.append(time.monotonic() - t0)
             results.append((ranked, item.target_uuid))
+            recipe_raw.append((item.group_id, ranked, item.target_uuid))
             if verbose:
                 hit = item.target_uuid in ranked[:k]
                 print(f"  {recipe_name} | {'✓' if hit else '✗'} | {item.query[:50]}")
         m = compute_metrics(recipe_name, results, k, durations)
         all_metrics.append(m)
+        raw[recipe_name] = recipe_raw
         print(f"  完成 {recipe_name}: recall@{k}={m.recall_at_k:.3f}, MRR={m.mrr:.3f} (n={m.total})")
-    return all_metrics
+    return all_metrics, raw
+
+
+def _format_per_group(raw, k, low_recall=0.8):
+    """依 group 拆解每個 recipe 的 recall@k / MRR，標出低於門檻的 group。"""
+    from src.search_eval import compute_metrics
+
+    lines = ["", "--- per-group 拆解 ---"]
+    weak = []
+    for recipe_name, rows in raw.items():
+        by_group = {}
+        for gid, ranked, target in rows:
+            by_group.setdefault(gid, []).append((ranked, target))
+        lines.append(f"\n[{recipe_name}]")
+        lines.append(f"  {'group':<28} {'recall@'+str(k):>10} {'MRR':>8} {'n':>5}")
+        for gid in sorted(by_group, key=lambda g: compute_metrics('', by_group[g], k).recall_at_k):
+            m = compute_metrics(recipe_name, by_group[gid], k)
+            flag = "  ⚠️ 低召回" if m.recall_at_k < low_recall else ""
+            lines.append(f"  {gid:<28} {m.recall_at_k:>10.3f} {m.mrr:>8.3f} {m.total:>5}{flag}")
+            if m.recall_at_k < low_recall:
+                weak.append((recipe_name, gid, m.recall_at_k, m.total))
+    if weak:
+        lines.append(f"\n弱點 group（recall<{low_recall}）共 {len(weak)} 項：")
+        for r, g, rec, n in sorted(weak, key=lambda x: x[2]):
+            lines.append(f"  {r} / {g}: recall={rec:.3f} (n={n})")
+    return "\n".join(lines)
 
 
 def _filter_recipes(recipes_arg, server):
@@ -277,8 +371,13 @@ async def _close_embedder(graphiti):
 async def cmd_build_golden(args, server, graphiti):
     from src.search_eval import save_golden
 
-    print(f"建立 golden set（kind={args.kind}, 取樣 {args.sample}，LLM 生成查詢中）...")
-    golden = await _build_golden(graphiti, args.sample, args.group_id, args.seed, args.kind)
+    mode = "分層" if getattr(args, "stratified", False) else "單層"
+    print(f"建立 golden set（kind={args.kind}, {mode}取樣 {args.sample}，LLM 生成查詢中）...")
+    golden = await _build_golden(
+        graphiti, args.sample, args.group_id, args.seed, args.kind,
+        stratified=getattr(args, "stratified", False),
+        top_groups=getattr(args, "top_groups", 15),
+    )
     if not golden:
         print("無可取樣的目標，請確認圖譜有資料。")
         return 1
@@ -313,7 +412,7 @@ async def cmd_run(args, server, graphiti):
         return 1
     print(f"golden 樣本數: {len(golden)}；評估 recipe: {recipes}\n")
 
-    metrics = await _evaluate(
+    metrics, raw = await _evaluate(
         graphiti, server, golden, recipes, args.k,
         args.mmr_lambda, args.sim_min_score, args.verbose,
     )
@@ -322,6 +421,9 @@ async def cmd_run(args, server, graphiti):
     print(f"命中率評估結果（n={len(golden)}, k={args.k}）")
     print("=" * 60)
     print(format_comparison_table(metrics, args.k))
+
+    if getattr(args, "per_group", False):
+        print(_format_per_group(raw, args.k, args.low_recall))
 
     exit_code = 0
     if getattr(args, "compare_baseline", False):
@@ -365,6 +467,8 @@ def _parse_args(argv):
     pb.add_argument("--group-id", default=None)
     pb.add_argument("--seed", type=int, default=13)
     pb.add_argument("--kind", default="node", choices=["node", "edge", "both"])
+    pb.add_argument("--stratified", action="store_true", help="跨 group 依規模分層取樣")
+    pb.add_argument("--top-groups", type=int, default=15, help="分層取樣納入的前 N 大 group")
 
     pr = sub.add_parser("run", help="評估 recipe（可載入 golden / 對比 baseline）")
     _add_common(pr)
@@ -373,6 +477,8 @@ def _parse_args(argv):
     pr.add_argument("--save-baseline", action="store_true", help="把本次度量存為新 baseline")
     pr.add_argument("--baseline", default=DEFAULT_BASELINE, help="baseline JSON 路徑")
     pr.add_argument("--tol", type=float, default=0.05, help="回歸容忍下滑幅度")
+    pr.add_argument("--per-group", action="store_true", help="輸出各 group 的 recall/MRR 拆解")
+    pr.add_argument("--low-recall", type=float, default=0.8, help="per-group 低召回警示門檻")
 
     # 向後相容：無子命令 = run（即時生成）
     _add_common(parser)

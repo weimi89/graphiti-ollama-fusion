@@ -1,0 +1,1056 @@
+{
+  "version": 1,
+  "count": 150,
+  "items": [
+    {
+      "query": "fix for loginFailed method error in admin auth login request file",
+      "target_uuid": "89448252-6568-4019-a0e1-baa117ef5344",
+      "group_id": "FeiqingHtml",
+      "target_name": "app/Http/Requests/Admin/Auth/LoginRequest.php",
+      "kind": "node"
+    },
+    {
+      "query": "读取Excel序列日期、字符串和当前日期的工厂工具",
+      "target_uuid": "7dbf0dbf-678a-4a81-b79b-cbc34c128a85",
+      "group_id": "FeiqingHtml",
+      "target_name": "ReadIOFactory",
+      "kind": "node"
+    },
+    {
+      "query": "Laravel artisan command to process transaction details for 客乐得 client with bash script and periods option",
+      "target_uuid": "49c1782d-1f2f-4db4-80ec-9174af7efda2",
+      "group_id": "FeiqingHtml",
+      "target_name": "HandleTransactionDetailSeleniumTCat",
+      "kind": "node"
+    },
+    {
+      "query": "PhpSpreadsheet Excel serial date number conversion object",
+      "target_uuid": "be1ea863-d2d3-4e2a-a389-d6b52db1aa08",
+      "group_id": "FeiqingHtml",
+      "target_name": "DateTime 物件",
+      "kind": "node"
+    },
+    {
+      "query": "發票明細腳本執行後自動執行SeleniumTCat命令",
+      "target_uuid": "3c389203-b6f2-4dcf-a12a-2f4c20cdf6cc",
+      "group_id": "FeiqingHtml",
+      "target_name": "3",
+      "kind": "edge"
+    },
+    {
+      "query": "Process facade 执行外部 bash 脚本的方法",
+      "target_uuid": "1de8bad3-e5b4-4413-9043-d6dba5f1787b",
+      "group_id": "FeiqingHtml",
+      "target_name": "EXECUTED_BY",
+      "kind": "edge"
+    },
+    {
+      "query": "Linux_客戶交易明細.sh 使用 Process facade 執行",
+      "target_uuid": "08fa44f4-0643-46e3-9752-a56fdeeeedb3",
+      "group_id": "FeiqingHtml",
+      "target_name": "2",
+      "kind": "edge"
+    },
+    {
+      "query": "Does a smartwatch monitor sessionStorage?",
+      "target_uuid": "c4addc7f-d446-42c9-b376-9f53b7390749",
+      "group_id": "FeiqingHtml",
+      "target_name": "MONITORS",
+      "kind": "edge"
+    },
+    {
+      "query": "lock rows in transaction to prevent duplicate serial numbers",
+      "target_uuid": "d5e03686-a876-45ec-b3c6-27e4d0264dc7",
+      "group_id": "HaulyOps",
+      "target_name": "lockForUpdate",
+      "kind": "node"
+    },
+    {
+      "query": "electronic invoice for member with tax type and buyer uniform number",
+      "target_uuid": "a72d3916-b1ed-4b19-b7ae-f1270a328228",
+      "group_id": "HaulyOps",
+      "target_name": "Invoice",
+      "kind": "node"
+    },
+    {
+      "query": "HaulyOps Phase 3 sensitive keyword management and report deepening",
+      "target_uuid": "0a58920a-a9ad-42bc-a0cf-b6d9cd51743d",
+      "group_id": "HaulyOps",
+      "target_name": "Inertia",
+      "kind": "node"
+    },
+    {
+      "query": "transaction with lockForUpdate for concurrent number allocation",
+      "target_uuid": "4f7dd096-90ab-48a3-8435-b6f40d861969",
+      "group_id": "HaulyOps",
+      "target_name": "DB::transaction",
+      "kind": "node"
+    },
+    {
+      "query": "Payment and invoice fields merchant_trade_no tax_type carrier buyer_uniform_no in HaulyOps docs",
+      "target_uuid": "15f3216d-cac1-47d9-9838-d20183986c31",
+      "group_id": "HaulyOps",
+      "target_name": "HaulyWeb docs/07",
+      "kind": "node"
+    },
+    {
+      "query": "清关模块4个页面，vite-build通过，route:list无fatal，前端usePostQuery/useForm/TablePagination",
+      "target_uuid": "0fb432ba-8fb7-4755-b23b-b2b81c2a8f1c",
+      "group_id": "HaulyOps",
+      "target_name": "前端页面",
+      "kind": "node"
+    },
+    {
+      "query": "member's TWD wallet balance from transaction ledger",
+      "target_uuid": "22df13f6-00a8-4436-b83e-61e9c591e5ca",
+      "group_id": "HaulyOps",
+      "target_name": "Wallet",
+      "kind": "node"
+    },
+    {
+      "query": "exception for insufficient wallet balance debit rollback",
+      "target_uuid": "0a9f56c4-e70f-473d-9388-96339338ec27",
+      "group_id": "HaulyOps",
+      "target_name": "RuntimeException",
+      "kind": "node"
+    },
+    {
+      "query": "How does a unique idempotency key prevent duplicate adjustments?",
+      "target_uuid": "89325c88-5de0-456a-bd0d-1bbec995b3e7",
+      "group_id": "HaulyOps",
+      "target_name": "PREVENTS_DUPLICATE",
+      "kind": "edge"
+    },
+    {
+      "query": "Find wallet transactions belonging to a member",
+      "target_uuid": "01424f3b-ae56-4f22-83f1-859060cef3ae",
+      "group_id": "HaulyOps",
+      "target_name": "BELONGS_TO",
+      "kind": "edge"
+    },
+    {
+      "query": "how many tables does migrate create",
+      "target_uuid": "f3dc67e8-62df-4bf9-99a5-00e5a0d6cfa3",
+      "group_id": "HaulyOps",
+      "target_name": "CREATES",
+      "kind": "edge"
+    },
+    {
+      "query": "How does Adjust handle database transactions?",
+      "target_uuid": "0b36b928-5117-44dd-860a-40adad328f8e",
+      "group_id": "HaulyOps",
+      "target_name": "USES",
+      "kind": "edge"
+    },
+    {
+      "query": "Find wallets with balance equal to ledger latest balance_after",
+      "target_uuid": "574be349-976e-4355-9eda-ee33c10605d1",
+      "group_id": "HaulyOps",
+      "target_name": "IS_EQUAL_TO",
+      "kind": "edge"
+    },
+    {
+      "query": "docs/03 uses wallet_transactions instead of wallet_ledgers",
+      "target_uuid": "cb44a4d3-3703-477b-9dcf-16ad5ff080f0",
+      "group_id": "HaulyOps",
+      "target_name": "DOES_NOT_USE",
+      "kind": "edge"
+    },
+    {
+      "query": "AccessSeeder assigns keyword_manage and ip_manage permission trees to admin",
+      "target_uuid": "5ff38a17-3fb1-4247-92c7-1742fbda36f8",
+      "group_id": "HaulyOps",
+      "target_name": "ASSIGNS_TO",
+      "kind": "edge"
+    },
+    {
+      "query": "usePostQuery in topups/index.vue",
+      "target_uuid": "9f0b2d26-95bc-435b-97e2-62030198afac",
+      "group_id": "HaulyOps",
+      "target_name": "USES",
+      "kind": "edge"
+    },
+    {
+      "query": "user with addresses and automatic default assignment",
+      "target_uuid": "4d1e14f1-6747-4b9c-9743-17e6dae7a8fb",
+      "group_id": "HaulyPlatform",
+      "target_name": "Member",
+      "kind": "node"
+    },
+    {
+      "query": "9狀態機含退貨分支的運輸單查詢",
+      "target_uuid": "9603bc54-0600-4fc4-a4f5-a3e831ea1f1f",
+      "group_id": "HaulyPlatform",
+      "target_name": "集運單",
+      "kind": "node"
+    },
+    {
+      "query": "view my consolidated shipment list with status filter and counts",
+      "target_uuid": "abd54b03-2fb8-425e-bca5-18e6a91920c3",
+      "group_id": "HaulyPlatform",
+      "target_name": "集運單「我的集運」列表功能",
+      "kind": "node"
+    },
+    {
+      "query": "payment status on orders page from shipment data unpaid paid",
+      "target_uuid": "de62124b-5311-4a6f-929e-5a2366c252e2",
+      "group_id": "HaulyPlatform",
+      "target_name": "pay_status",
+      "kind": "node"
+    },
+    {
+      "query": "Feature tests for shipment detail with timeline and access control",
+      "target_uuid": "99fb7bbe-1280-4616-b3af-951fa05b5699",
+      "group_id": "HaulyPlatform",
+      "target_name": "ShipmentTest",
+      "kind": "node"
+    },
+    {
+      "query": "Which order type uses M9 state?",
+      "target_uuid": "b153926d-f771-42af-8a76-31eb7e9f0ecf",
+      "group_id": "HaulyPlatform",
+      "target_name": "APPLIES_TO",
+      "kind": "edge"
+    },
+    {
+      "query": "淘寶自動匯入訂單有綁定淘寶帳號卡元件嗎？",
+      "target_uuid": "fdf448a2-ed8d-40cf-97e6-47878594bb77",
+      "group_id": "HaulyPlatform",
+      "target_name": "CONTAINS",
+      "kind": "edge"
+    },
+    {
+      "query": "What admin panel does Hauly use?",
+      "target_uuid": "7d1a4b59-e1a4-4a48-ba1a-f9d08ba4d317",
+      "group_id": "HaulyPlatform",
+      "target_name": "HAS_COMPONENT",
+      "kind": "edge"
+    },
+    {
+      "query": "ShipmentController uses member guard for authentication?",
+      "target_uuid": "98bb751d-f65e-4759-9e0f-cc14efdf415d",
+      "group_id": "HaulyPlatform",
+      "target_name": "USES",
+      "kind": "edge"
+    },
+    {
+      "query": "記憶快照在集運單我的集運列表之前生成",
+      "target_uuid": "81fc9f3a-cd05-4368-8be7-ebb319c5c7d1",
+      "group_id": "HaulyPlatform",
+      "target_name": "GENERATED_BEFORE",
+      "kind": "edge"
+    },
+    {
+      "query": "role management with Google2FA and Gate::before backdoor for admin access",
+      "target_uuid": "5acff586-309a-4bfd-ab8f-df7b70cec7aa",
+      "group_id": "HaulyPlatform-decisions",
+      "target_name": "Spatie HasRoles",
+      "kind": "node"
+    },
+    {
+      "query": "employee user table with role permissions and two-factor authentication",
+      "target_uuid": "98e55fcb-7b12-495b-91d2-af6701bb1039",
+      "group_id": "HaulyPlatform-decisions",
+      "target_name": "grs_users",
+      "kind": "node"
+    },
+    {
+      "query": "Architecture requiring independent frontend with separate database and auth guard.",
+      "target_uuid": "a0ed3c8c-3ac2-4e05-85a4-3c3c5599ec8a",
+      "group_id": "HaulyPlatform-decisions",
+      "target_name": "ADR-001",
+      "kind": "node"
+    },
+    {
+      "query": "What brand does HaulyPlatform operate under?",
+      "target_uuid": "b2468836-2b20-48ce-9714-1d321666d52a",
+      "group_id": "HaulyPlatform-decisions",
+      "target_name": "HAS_BRAND_NAME",
+      "kind": "edge"
+    },
+    {
+      "query": "Hauly API v2 endpoints for member operations",
+      "target_uuid": "a212f520-c720-4248-8c93-0dd8669a7894",
+      "group_id": "HaulyPlatform-decisions",
+      "target_name": "USES",
+      "kind": "edge"
+    },
+    {
+      "query": "grs_ table prefix used in MySQL database",
+      "target_uuid": "697ca2cc-459e-43f1-b8fd-cea855bd9055",
+      "group_id": "HaulyPlatform-decisions",
+      "target_name": "HAS_PREFIX",
+      "kind": "edge"
+    },
+    {
+      "query": "JavaScript minifier for production environments",
+      "target_uuid": "1ecbca21-497b-4391-a43a-9c6b56275270",
+      "group_id": "LohasOwner-decisions",
+      "target_name": "terser",
+      "kind": "node"
+    },
+    {
+      "query": "PostCSS plugin for SCSS removed during package cleanup",
+      "target_uuid": "14b4b677-af9e-491f-b780-e020fceb5be3",
+      "group_id": "LohasOwner-decisions",
+      "target_name": "postcss-scss",
+      "kind": "node"
+    },
+    {
+      "query": "built-in local minification tool in Vite 8",
+      "target_uuid": "305c74d8-49ed-4841-a957-fa6cc2e64c62",
+      "group_id": "LohasOwner-decisions",
+      "target_name": "oxc",
+      "kind": "node"
+    },
+    {
+      "query": "dynamically loaded page-level package preserving lazy-load and tree-shaking",
+      "target_uuid": "87d69049-4fae-4ba8-b4c1-c56900b615fb",
+      "group_id": "LohasOwner-decisions",
+      "target_name": "vuefinder",
+      "kind": "node"
+    },
+    {
+      "query": "Which component was the only user of shiki before removal?",
+      "target_uuid": "3dde77a3-db8e-4756-8799-b899f038fa44",
+      "group_id": "LohasOwner-decisions",
+      "target_name": "DEPENDS_ON",
+      "kind": "edge"
+    },
+    {
+      "query": "What minification tool is built into Vite 8?",
+      "target_uuid": "1c1281d9-f742-440c-b156-558b8db1be3d",
+      "group_id": "LohasOwner-decisions",
+      "target_name": "HAS_FEATURE",
+      "kind": "edge"
+    },
+    {
+      "query": "Is prosemirror part of tiptap vendor chunk?",
+      "target_uuid": "3c476874-2ff1-4810-a0ec-52844874b5bb",
+      "group_id": "LohasOwner-decisions",
+      "target_name": "INCLUDES",
+      "kind": "edge"
+    },
+    {
+      "query": "resolutions that included motion-ui before removal",
+      "target_uuid": "de908885-5d04-4b5f-b321-e3779785bd24",
+      "group_id": "LohasOwner-decisions",
+      "target_name": "INCLUDES",
+      "kind": "edge"
+    },
+    {
+      "query": "project folder about John Doe TechCorp CloudStorageX data security Silicon Valley",
+      "target_uuid": "a17af195-3d8a-48d2-895a-e8a4f2e3779e",
+      "group_id": "OnlinePixelAgents",
+      "target_name": "~/.claude/projects/",
+      "kind": "node"
+    },
+    {
+      "query": "web server using Socket.IO for OnlinePixelAgents communication",
+      "target_uuid": "d1e9c931-571f-44a5-8224-7de1b0d864e3",
+      "group_id": "OnlinePixelAgents",
+      "target_name": "Express server",
+      "kind": "node"
+    },
+    {
+      "query": "Client for OnlinePixelAgents with Traditional Chinese support built with Vite and React",
+      "target_uuid": "7470bfa6-e16b-4015-b5cb-531c5919dfca",
+      "group_id": "OnlinePixelAgents",
+      "target_name": "Vite+React client",
+      "kind": "node"
+    },
+    {
+      "query": "OnlinePixelAgents web 目录的 Express+Socket.IO 服务器",
+      "target_uuid": "65edd558-335e-4fb7-abc7-e22f3b9a3240",
+      "group_id": "OnlinePixelAgents",
+      "target_name": "Express+Socket.IO server",
+      "kind": "node"
+    },
+    {
+      "query": "What does 動态掃描間隔 include?",
+      "target_uuid": "e1ea7b1f-0e7d-4a62-9b75-05ad976fcee5",
+      "group_id": "OnlinePixelAgents",
+      "target_name": "INCLUDES",
+      "kind": "edge"
+    },
+    {
+      "query": "Gemini 增量讀取 大於100KB 尾部讀取",
+      "target_uuid": "1dc9d5aa-ace5-4b94-bd14-b51859030c4b",
+      "group_id": "OnlinePixelAgents",
+      "target_name": "INCLUDES",
+      "kind": "edge"
+    },
+    {
+      "query": "Phase 2 包含 JSONL 扫描快取",
+      "target_uuid": "a4d36b45-287d-4116-b544-e672919d9cfb",
+      "group_id": "OnlinePixelAgents",
+      "target_name": "INCLUDES",
+      "kind": "edge"
+    },
+    {
+      "query": "Vue 3 Inertia.js Vuetify 3.12.2 theme configuration file",
+      "target_uuid": "197a5073-9a3a-49d4-b440-86739bba8be5",
+      "group_id": "RD-CAT",
+      "target_name": "themeConfig.js",
+      "kind": "node"
+    },
+    {
+      "query": "Vue icon library used in cix3752iWeb project",
+      "target_uuid": "4c55f240-690c-45b5-9d61-51add8fdd6e4",
+      "group_id": "RD-CAT",
+      "target_name": "@iconify/vue",
+      "kind": "node"
+    },
+    {
+      "query": "light theme color hex 7367f0",
+      "target_uuid": "ed03468c-4482-4bec-ba06-aba128df708e",
+      "group_id": "RD-CAT",
+      "target_name": "Primary #7367F0",
+      "kind": "node"
+    },
+    {
+      "query": "SVG icons for Vue 3 Inertia.js Vuetify 3.12.2 project",
+      "target_uuid": "9bc8d3a2-7db8-4b5c-92c5-0802d8219510",
+      "group_id": "RD-CAT",
+      "target_name": "custom SVG icons",
+      "kind": "node"
+    },
+    {
+      "query": "file that registers plugins from resources/js/plugins/ directory",
+      "target_uuid": "69552903-2a0c-43de-a2ab-b70217b85c31",
+      "group_id": "RD-CAT",
+      "target_name": "@core/utils/plugins.js",
+      "kind": "node"
+    },
+    {
+      "query": "What utility from plugins.js is used in app.js?",
+      "target_uuid": "39a7936d-d1e6-442d-9329-61a36d84fa56",
+      "group_id": "RD-CAT",
+      "target_name": "USES",
+      "kind": "edge"
+    },
+    {
+      "query": "Vue 3 and Inertia.js Laravel adapter core stack?",
+      "target_uuid": "8c1a1cd4-2b37-4661-b9a8-8645bfcd9ba4",
+      "group_id": "RD-CAT",
+      "target_name": "USES",
+      "kind": "edge"
+    },
+    {
+      "query": "useCookie.js 使用了 use2FA 吗？",
+      "target_uuid": "59ce61fe-7c6e-4eca-ac41-6ce8601aace6",
+      "group_id": "RD-CAT",
+      "target_name": "USES",
+      "kind": "edge"
+    },
+    {
+      "query": "Vue 3 dependencies @vueuse/core and @vueuse/math",
+      "target_uuid": "4103f191-7886-46d3-84d8-5f5830bae777",
+      "group_id": "RD-CAT",
+      "target_name": "USES",
+      "kind": "edge"
+    },
+    {
+      "query": "Selenium專案增加客戶代號欄位與Discord通知",
+      "target_uuid": "798ad62f-e365-47e8-aedf-2f9c6a95ff3a",
+      "group_id": "SeleniumPelican",
+      "target_name": "SeleniumPelican",
+      "kind": "node"
+    },
+    {
+      "query": "scraper with Discord and Email notifications fixes iframe loading",
+      "target_uuid": "3d5888e7-3b4e-43a8-b4e3-e256bea0d7d2",
+      "group_id": "SeleniumPelican",
+      "target_name": "PaymentScraper",
+      "kind": "node"
+    },
+    {
+      "query": "Python library for Excel files used in SeleniumPelican project scrapers",
+      "target_uuid": "c2de43be-f2e7-4ae8-8018-bf8a7ba5629e",
+      "group_id": "SeleniumPelican",
+      "target_name": "openpyxl",
+      "kind": "node"
+    },
+    {
+      "query": "SeleniumPelican 專案進度 46/56 完成",
+      "target_uuid": "d4ff731b-6686-4afd-97ec-28e7282777bb",
+      "group_id": "SeleniumPelican",
+      "target_name": "3",
+      "kind": "edge"
+    },
+    {
+      "query": "任務5.7 加強異常記錄 診斷資訊 完成",
+      "target_uuid": "ad95862d-6a41-4535-9652-bb07faffb56f",
+      "group_id": "SeleniumPelican",
+      "target_name": "3",
+      "kind": "edge"
+    },
+    {
+      "query": "macOS process scheduler for daily automation script and persistent Flask service",
+      "target_uuid": "25bb5451-1087-4bca-8161-9d7ebf8b17f0",
+      "group_id": "SheetAutomation",
+      "target_name": "launchd",
+      "kind": "node"
+    },
+    {
+      "query": "automated pull requests requiring human review and sensitive file protection",
+      "target_uuid": "a25cf9e5-e18d-4618-aac8-dee4749b2f00",
+      "group_id": "SheetAutomation",
+      "target_name": "PR",
+      "kind": "node"
+    },
+    {
+      "query": "Discussion rooms with operator/customer RBAC, approval workflow, and security defenses",
+      "target_uuid": "a5af97c5-3900-4521-a1db-9db9ef8d6054",
+      "group_id": "SheetAutomation",
+      "target_name": "SheetAutomation",
+      "kind": "node"
+    },
+    {
+      "query": "Which OS does auto_run.py run on?",
+      "target_uuid": "44f66220-dd29-4a25-9476-0268624d7858",
+      "group_id": "SheetAutomation",
+      "target_name": "RUNS_ON",
+      "kind": "edge"
+    },
+    {
+      "query": "What is headless Claude used for in classification?",
+      "target_uuid": "541ab233-f120-4696-bd0b-3aef19b234fe",
+      "group_id": "SheetAutomation",
+      "target_name": "IS_INSTANCE_OF",
+      "kind": "edge"
+    },
+    {
+      "query": "Valxe app code editor bug fixes and JavaScript injection analysis",
+      "target_uuid": "301973fb-bdf7-480d-834d-812193dfa1a2",
+      "group_id": "Valxe",
+      "target_name": "Monaco Editor",
+      "kind": "node"
+    },
+    {
+      "query": "Weiminet 组织的 SwiftUI 项目，bundle ID com.weiminet.valxe",
+      "target_uuid": "83f465f2-681a-48c1-9099-a9efb96dd615",
+      "group_id": "Valxe",
+      "target_name": "thebaselab/codeapp",
+      "kind": "node"
+    },
+    {
+      "query": "Monaco API method for text selection that may cause issues in WebView input handling",
+      "target_uuid": "78570114-cff0-4da3-8664-c80dba71b065",
+      "group_id": "Valxe",
+      "target_name": "getValueInRange()",
+      "kind": "node"
+    },
+    {
+      "query": "Updated app capabilities for Valxe bundle com.weiminet.valxe",
+      "target_uuid": "42d16848-6f1e-461e-ae76-b38b1c20d381",
+      "group_id": "Valxe",
+      "target_name": "entitlements",
+      "kind": "node"
+    },
+    {
+      "query": "event where the word 'Cursor' is misspelled as 'Crusor' in the name",
+      "target_uuid": "e0be31b5-eb0b-4412-b273-816c65c0108d",
+      "group_id": "Valxe",
+      "target_name": "Event name",
+      "kind": "node"
+    },
+    {
+      "query": "Swift SwiftUI project crashing on iOS 26.1 beta due to unsupported Swift language",
+      "target_uuid": "d140f70e-1510-45f4-aca0-cb0828fb921c",
+      "group_id": "Valxe",
+      "target_name": "Valxe/Weiminet",
+      "kind": "node"
+    },
+    {
+      "query": "Swift file with as? instead of as! and guard instead of try!",
+      "target_uuid": "7f04c1b8-1da6-4660-80e4-5a271aec7c0d",
+      "group_id": "Valxe",
+      "target_name": "/Users/RD-CAT/Documents/喵_程式/Valxe/CodeApp/Managers/EditorImplementation/MonacoImplementation.swift",
+      "kind": "node"
+    },
+    {
+      "query": "typo crusor position changed event handler",
+      "target_uuid": "1ea61634-ee01-4124-9506-0d220945c991",
+      "group_id": "Valxe",
+      "target_name": "Monaco wrapper",
+      "kind": "node"
+    },
+    {
+      "query": "Swift code in Valxe app using SwiftUI fixing force unwrap and try! with guard and do-catch",
+      "target_uuid": "f757ea55-9dc6-4b91-949d-692bdf12aa3d",
+      "group_id": "Valxe",
+      "target_name": "Swift 程式碼",
+      "kind": "node"
+    },
+    {
+      "query": "programming language used in Valxe APP on iPad",
+      "target_uuid": "ed2c0c0a-9f6b-4937-95eb-05c097a52a49",
+      "group_id": "Valxe",
+      "target_name": "Java",
+      "kind": "node"
+    },
+    {
+      "query": "KNOWN_ISSUES.md 修复记录章节",
+      "target_uuid": "d0e7534c-19cd-46b4-807c-c62061ec375f",
+      "group_id": "Valxe",
+      "target_name": "ADDED_SECTION",
+      "kind": "edge"
+    },
+    {
+      "query": "When to use evaluateJavaScriptAsync after terminal init and webView load?",
+      "target_uuid": "309baf08-db3a-4af9-9481-e42ff42ca3fc",
+      "group_id": "Valxe",
+      "target_name": "CAN_BE_USED_AFTER",
+      "kind": "edge"
+    },
+    {
+      "query": "How does issue #1265 affect the Terminal emulator?",
+      "target_uuid": "7a32fdf7-9bdb-487d-a788-0e48c7b37cc1",
+      "group_id": "Valxe",
+      "target_name": "AFFECTS",
+      "kind": "edge"
+    },
+    {
+      "query": "blur function in TerminalInstance.swift file",
+      "target_uuid": "8218ea60-e46e-4e17-9ca8-c9b226ee5f53",
+      "group_id": "Valxe",
+      "target_name": "ASSOCIATED_WITH",
+      "kind": "edge"
+    },
+    {
+      "query": "What file contains ToolbarView?",
+      "target_uuid": "8cfe552b-c4c8-4235-948e-1ea1e3e89610",
+      "group_id": "Valxe",
+      "target_name": "HAS_TOOLBAR_VIEW",
+      "kind": "edge"
+    },
+    {
+      "query": "file with Monaco cursor position error",
+      "target_uuid": "8e08f4ea-f4ee-4f57-af09-5e338aff7ccd",
+      "group_id": "Valxe",
+      "target_name": "FILE_CONTAINS_ENTITY",
+      "kind": "edge"
+    },
+    {
+      "query": "How to set focus to overlay element in JavaScript?",
+      "target_uuid": "37fa2746-db31-4114-8915-12fa5713d9f8",
+      "group_id": "Valxe",
+      "target_name": "ASSOCIATED_WITH",
+      "kind": "edge"
+    },
+    {
+      "query": "How does blur() execute focus mechanism in JavaScript?",
+      "target_uuid": "677114c1-1850-4e9f-96ab-316004bc68c2",
+      "group_id": "Valxe",
+      "target_name": "EXECUTES",
+      "kind": "edge"
+    },
+    {
+      "query": "use evaluateJavaScriptAsync after setupEditor initializes editor",
+      "target_uuid": "d894872a-94bf-4dcb-99a8-c1cb513552e1",
+      "group_id": "Valxe",
+      "target_name": "CAN_BE_USED_AFTER",
+      "kind": "edge"
+    },
+    {
+      "query": "Valxe 專案鍵盤工具列問題修復",
+      "target_uuid": "ba82bbff-65ed-429c-91b1-656222dfec7e",
+      "group_id": "Valxe",
+      "target_name": "FIXED_ISSUE",
+      "kind": "edge"
+    },
+    {
+      "query": "users with forwarder guard access and statistical report roles",
+      "target_uuid": "81609e3e-e348-4012-a42e-257b1d2e27c4",
+      "group_id": "cix3752iForwarderPlatform",
+      "target_name": "統計報表",
+      "kind": "node"
+    },
+    {
+      "query": "frontend framework for ForwarderPlatform using Vuetify 3 and Inertia.js",
+      "target_uuid": "cd9e7569-7ba0-42f3-b779-9db6470fc67d",
+      "group_id": "cix3752iForwarderPlatform",
+      "target_name": "Inertia.js",
+      "kind": "node"
+    },
+    {
+      "query": "Database used by Vuetify 3 and Inertia.js platform",
+      "target_uuid": "012edff9-deb6-4bd0-87d4-8ef9f2a4ad36",
+      "group_id": "cix3752iForwarderPlatform",
+      "target_name": "MySQL",
+      "kind": "node"
+    },
+    {
+      "query": "Vuetify 3 Inertia.js complaint system with separate models no API layer",
+      "target_uuid": "6021cf68-8a55-4018-b605-fb946c35e5e1",
+      "group_id": "cix3752iForwarderPlatform",
+      "target_name": "客訴",
+      "kind": "node"
+    },
+    {
+      "query": "SQL script for allowed_shipping_providers added to ForwarderPlatform",
+      "target_uuid": "e19e0837-a054-4072-bbbc-76ba93bcec98",
+      "group_id": "cix3752iForwarderPlatform",
+      "target_name": "ADDED_SQL_SCRIPT",
+      "kind": "edge"
+    },
+    {
+      "query": "file that initializes Vue app in resources/js/bootstrap.js",
+      "target_uuid": "05567e99-5f9e-472f-8fd6-2e191a6177ca",
+      "group_id": "cix3752iForwarderPlatform",
+      "target_name": "HAS_FILE",
+      "kind": "edge"
+    },
+    {
+      "query": "What file is contained in js/config.json?",
+      "target_uuid": "f693e973-7ae0-4d00-ac21-f331333901d5",
+      "group_id": "cix3752iForwarderPlatform",
+      "target_name": "INCLUDES",
+      "kind": "edge"
+    },
+    {
+      "query": "cix3752iSupportBot privacy policy security measures for user data",
+      "target_uuid": "add08fed-c1b3-45fd-85e6-baca259a24ae",
+      "group_id": "cix3752iSupportBot",
+      "target_name": "資料保護措施",
+      "kind": "node"
+    },
+    {
+      "query": "utility-first CSS framework for building custom designs quickly",
+      "target_uuid": "e965bdad-bc71-4547-aad5-5b354a7f5328",
+      "group_id": "cix3752iSupportBot",
+      "target_name": "Tailwind CSS",
+      "kind": "node"
+    },
+    {
+      "query": "客訴記錄點擊詳情自動填入編號品牌動態配置",
+      "target_uuid": "6ec29037-0796-4395-a5d9-f27e98bd44a7",
+      "group_id": "cix3752iSupportBot",
+      "target_name": "客訴資料處理",
+      "kind": "node"
+    },
+    {
+      "query": "包裹内容区域并保持样式一致的组件",
+      "target_uuid": "95fa4fb1-d290-4924-991e-92ea5aa1f85a",
+      "group_id": "cix3752iSupportBot",
+      "target_name": "view-item-wrapper",
+      "kind": "node"
+    },
+    {
+      "query": "Terms of service for iPhone X and Face ID",
+      "target_uuid": "b29b06fa-4401-4299-93c7-6dd2be827c3a",
+      "group_id": "cix3752iSupportBot",
+      "target_name": "terms-of-service.vue",
+      "kind": "node"
+    },
+    {
+      "query": "SupportBot not included in manual chunks because missing i18n",
+      "target_uuid": "7d1a540b-7959-4d7f-bfba-6a8b44050b18",
+      "group_id": "cix3752iSupportBot",
+      "target_name": "NOT_INSTALLED",
+      "kind": "edge"
+    },
+    {
+      "query": "Why is date-fns missing from SupportBot manual chunks?",
+      "target_uuid": "7de47b12-841e-49d8-aaf3-e1e357d38f39",
+      "group_id": "cix3752iSupportBot",
+      "target_name": "NOT_INSTALLED",
+      "kind": "edge"
+    },
+    {
+      "query": "vite.config.js file in cix3752iSupportBot project",
+      "target_uuid": "8a0d1050-815e-4b7a-994c-4ebc050ce61b",
+      "group_id": "cix3752iSupportBot",
+      "target_name": "HAS_FILE",
+      "kind": "edge"
+    },
+    {
+      "query": "Why is vuetify absent from SupportBot manual chunks?",
+      "target_uuid": "ba1590b9-b717-4460-ad74-089fc94ac399",
+      "group_id": "cix3752iSupportBot",
+      "target_name": "NOT_INSTALLED",
+      "kind": "edge"
+    },
+    {
+      "query": "SupportBot installed vue runtime in manual chunks",
+      "target_uuid": "43ec744f-d6d1-41d4-be6c-8ae055607418",
+      "group_id": "cix3752iSupportBot",
+      "target_name": "HAS_INSTALLED",
+      "kind": "edge"
+    },
+    {
+      "query": "controller managing forwarder platform users with guard filter",
+      "target_uuid": "665edbda-5b12-46f0-980c-b4bafa58dbd4",
+      "group_id": "cix3752iWeb",
+      "target_name": "UserController",
+      "kind": "node"
+    },
+    {
+      "query": "物流商權限控制已增加的便利商店",
+      "target_uuid": "a19bc132-091e-43d9-bf40-285849366ec1",
+      "group_id": "cix3752iWeb",
+      "target_name": "萊爾富",
+      "kind": "node"
+    },
+    {
+      "query": "新增訂單時寫入所有欄位的PHP檔案",
+      "target_uuid": "82ca879f-a00d-4f5f-ae99-2a8b4eb323e3",
+      "group_id": "cix3752iWeb",
+      "target_name": "FindStorageShipmentNo.php",
+      "kind": "node"
+    },
+    {
+      "query": "logic for processing resend orders with label and barcode reading",
+      "target_uuid": "82596625-dcbc-46cd-bc1f-c57c50b2722a",
+      "group_id": "cix3752iWeb",
+      "target_name": "processResendFields",
+      "kind": "node"
+    },
+    {
+      "query": "remove special characters, normalize place names, convert fullwidth, encrypt personal data",
+      "target_uuid": "362b4ac1-075a-427a-9479-6912c48137a3",
+      "group_id": "cix3752iWeb",
+      "target_name": "禁止字元移除",
+      "kind": "node"
+    },
+    {
+      "query": "utility for ordering and filtering by write_file_no",
+      "target_uuid": "da099589-13bf-4ca0-bd50-8fbbe7859b28",
+      "group_id": "cix3752iWeb",
+      "target_name": "sortable",
+      "kind": "node"
+    },
+    {
+      "query": "Forwarder platform permission to view package contents",
+      "target_uuid": "94a23ec9-cb92-41b5-a969-c6f3e32d40a2",
+      "group_id": "cix3752iWeb",
+      "target_name": "canViewPackageContents",
+      "kind": "node"
+    },
+    {
+      "query": "Logistics provider with provider_account_record_family and auto view by Super Admin",
+      "target_uuid": "605a8a07-252b-4d8b-9866-9943195b1dd9",
+      "group_id": "cix3752iWeb",
+      "target_name": "全家",
+      "kind": "node"
+    },
+    {
+      "query": "Refresh remittance schedule cache monthly or full refresh service",
+      "target_uuid": "3a90f6a8-dd5f-4450-9a28-05dabd8349ed",
+      "group_id": "cix3752iWeb",
+      "target_name": "index 方法",
+      "kind": "node"
+    },
+    {
+      "query": "fix monthly freight account split deduction ignoring sub-account settings",
+      "target_uuid": "7abfbcd2-53de-4428-b5cd-58ec6d260a27",
+      "group_id": "cix3752iWeb",
+      "target_name": "FREIGHT",
+      "kind": "node"
+    },
+    {
+      "query": "使用LIBXML_PARSEHUGE和只读模式处理大型Excel的命令",
+      "target_uuid": "cde83d70-9e8d-4ce2-9b1f-1113372ec70e",
+      "group_id": "cix3752iWeb",
+      "target_name": "UploadReturnAmount 命令",
+      "kind": "node"
+    },
+    {
+      "query": "刪除訂單邏輯，包括訂單編號、客戶名稱、狀態",
+      "target_uuid": "d8ea4d9b-047e-4ed5-881f-bc204db32bf4",
+      "group_id": "cix3752iWeb",
+      "target_name": "destroy 方法",
+      "kind": "node"
+    },
+    {
+      "query": "解決ACCOUNT_NORMALIZATION及分拆扣款的方法",
+      "target_uuid": "7ad92c39-f5a3-448b-8b04-2dce48f8b34d",
+      "group_id": "cix3752iWeb",
+      "target_name": "calculateShippingTime 方法",
+      "kind": "node"
+    },
+    {
+      "query": "user with administrative privileges",
+      "target_uuid": "0ac890a7-2eb6-4f46-955f-1cb1fdf8e621",
+      "group_id": "cix3752iWeb",
+      "target_name": "AdminUser",
+      "kind": "node"
+    },
+    {
+      "query": "拥有所有物流商查看权限的用户角色",
+      "target_uuid": "e2788606-824b-4588-8d18-296eab7a37d7",
+      "group_id": "cix3752iWeb",
+      "target_name": "Super Admin",
+      "kind": "node"
+    },
+    {
+      "query": "Which file manages TrackTCatController.php?",
+      "target_uuid": "c01784ab-33b7-472a-bec3-aa54f4213c09",
+      "group_id": "cix3752iWeb",
+      "target_name": "MANAGES",
+      "kind": "edge"
+    },
+    {
+      "query": "何種respond_code會啟用黑貓宅急便DeliveryCompensation建立功能?",
+      "target_uuid": "1234d78e-9a92-46fd-9160-40cd40fc51ab",
+      "group_id": "cix3752iWeb",
+      "target_name": "3",
+      "kind": "edge"
+    },
+    {
+      "query": "在HandleInertiaRequests.php選單新增退件統計項目",
+      "target_uuid": "3bb91a4e-b079-425a-993f-e1b75467ae87",
+      "group_id": "cix3752iWeb",
+      "target_name": "5",
+      "kind": "edge"
+    },
+    {
+      "query": "Which controller is accessible from ProviderAccountRecordController?",
+      "target_uuid": "48fe13d7-d4fa-445c-a369-f587212c6dda",
+      "group_id": "cix3752iWeb",
+      "target_name": "RELATES_TO",
+      "kind": "edge"
+    },
+    {
+      "query": "How does delivery_respond_tcat_manage relate to DeliveryRespondCatController?",
+      "target_uuid": "1427f55f-54f6-4ec2-ab56-a893202cf81b",
+      "group_id": "cix3752iWeb",
+      "target_name": "RELATIONSHIP",
+      "kind": "edge"
+    },
+    {
+      "query": "recalculateWarehouseStatus方法中warehouse_mode参数的使用",
+      "target_uuid": "a3e8ed8f-28d9-4b6d-b466-eafc90298569",
+      "group_id": "cix3752iWeb",
+      "target_name": "3",
+      "kind": "edge"
+    },
+    {
+      "query": "Taipei total shipments change from 452372 to 452253",
+      "target_uuid": "5cb5a423-a5da-49b1-b6fe-6bdfc0c56548",
+      "group_id": "cix3752iWeb",
+      "target_name": "CHANGED",
+      "kind": "edge"
+    },
+    {
+      "query": "File implementing Artisan Command ExportTCatShipmentZipcode",
+      "target_uuid": "a4a83bde-8fdd-4fd8-b9b0-f56312359dc3",
+      "group_id": "cix3752iWeb",
+      "target_name": "HAS_COMMAND",
+      "kind": "edge"
+    },
+    {
+      "query": "What is the default volume multiplier?",
+      "target_uuid": "2cc37efc-147e-4f19-a66c-733914d3cd8e",
+      "group_id": "cix3752iWeb",
+      "target_name": "SET_TO",
+      "kind": "edge"
+    },
+    {
+      "query": "Added three fields to showFields in OnlineComplainController.php for complain index list",
+      "target_uuid": "388aeba6-b1ef-4cfe-bd6e-da6f75a0b266",
+      "group_id": "cix3752iWeb",
+      "target_name": "5",
+      "kind": "edge"
+    },
+    {
+      "query": "轉寄統計與代寄統計共用控制器方法",
+      "target_uuid": "10cee58c-d516-4689-8687-2260000507d3",
+      "group_id": "cix3752iWeb",
+      "target_name": "3",
+      "kind": "edge"
+    },
+    {
+      "query": "Does increasing gain cause distortion?",
+      "target_uuid": "1904689e-f75c-44b3-804c-f78a2e1527da",
+      "group_id": "cix3752iWeb",
+      "target_name": "CAUSED_BY",
+      "kind": "edge"
+    },
+    {
+      "query": "modified page size for warehouse-search-labels.vue",
+      "target_uuid": "12c4035c-e1cc-49a2-967a-0a8cf29a5ab1",
+      "group_id": "cix3752iWeb",
+      "target_name": "MODIFIED",
+      "kind": "edge"
+    },
+    {
+      "query": "Tips for normalizing or pre-gaining mp3 files",
+      "target_uuid": "0dae78c3-fc8e-4c2d-8a07-89897703cf68",
+      "group_id": "cix3752iWeb",
+      "target_name": "SUGGESTED_ACTION",
+      "kind": "edge"
+    },
+    {
+      "query": "2026-03-11 安裝 intelephense 至 /opt/homebrew/bin 的系統",
+      "target_uuid": "0b17de49-99ed-4dc3-bb35-9efcb60707df",
+      "group_id": "global",
+      "target_name": "Serena MCP",
+      "kind": "node"
+    },
+    {
+      "query": "Intelephense 全域安裝用於 PHP 語言伺服器",
+      "target_uuid": "008b80e5-a846-432d-b5c8-f96d67839496",
+      "group_id": "global",
+      "target_name": "PHP LSP",
+      "kind": "node"
+    },
+    {
+      "query": "區域網路內使用 HTTP 的 IP 位址",
+      "target_uuid": "5c618423-2789-447b-a9d3-3d320b8130d9",
+      "group_id": "global",
+      "target_name": "區網 IP",
+      "kind": "node"
+    },
+    {
+      "query": "Laravel and Vite used together for web development",
+      "target_uuid": "c73a0cdd-19a7-4949-84f7-456c5664787b",
+      "group_id": "global",
+      "target_name": "SERVES",
+      "kind": "edge"
+    },
+    {
+      "query": "CORS setup for Vite cross-port requests",
+      "target_uuid": "c0b79868-fe94-49ec-8a75-782142381e0f",
+      "group_id": "global",
+      "target_name": "REQUIRES",
+      "kind": "edge"
+    },
+    {
+      "query": "Why does AI skip search_memory_nodes when task-focused despite the rule?",
+      "target_uuid": "555e8e40-d2f2-40be-857c-18d82ae74eb0",
+      "group_id": "global",
+      "target_name": "FAILS_TO_EXECUTE",
+      "kind": "edge"
+    },
+    {
+      "query": "OnlinePixelAgents protocol extensions for heartbeat and excluded projects sync",
+      "target_uuid": "9079a70a-dc93-48bb-b254-c346dd0f0120",
+      "group_id": "web",
+      "target_name": "protocol extensions",
+      "kind": "node"
+    },
+    {
+      "query": "Heartbeat events and server node messages in TypeScript protocol file",
+      "target_uuid": "a185c26e-896e-4c79-b437-3ddf2e97cffa",
+      "group_id": "web",
+      "target_name": "protocol.ts",
+      "kind": "node"
+    },
+    {
+      "query": "protocol.ts added heartbeat AgentNodeEvent",
+      "target_uuid": "8a7dbe5e-7d59-4c96-bd23-90a382556ebe",
+      "group_id": "web",
+      "target_name": "ADDED",
+      "kind": "edge"
+    },
+    {
+      "query": "Heartbeat timer starts after authentication?",
+      "target_uuid": "aa9a9d71-75e2-4c69-809f-ba3b60bd622a",
+      "group_id": "web",
+      "target_name": "STARTED_AFTER",
+      "kind": "edge"
+    }
+  ]
+}

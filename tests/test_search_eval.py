@@ -105,6 +105,25 @@ class TestGoldenPersistence:
         assert loaded[0].query == "ok"
 
 
+class TestStratifiedAllocate:
+    def test_proportional_and_total_preserved(self):
+        from tools.evaluate_search import _allocate
+        a = _allocate(100, {"big": 1000, "mid": 500, "small": 100}, min_each=2)
+        assert sum(a.values()) == 100
+        assert all(v >= 2 for v in a.values())
+        assert a["big"] > a["mid"] > a["small"]
+
+    def test_min_each_lifts_tiny_buckets(self):
+        from tools.evaluate_search import _allocate
+        b = _allocate(10, {"a": 1000, "b": 1, "c": 1}, min_each=2)
+        assert sum(b.values()) == 10
+        assert b["b"] >= 2 and b["c"] >= 2
+
+    def test_single_bucket(self):
+        from tools.evaluate_search import _allocate
+        assert _allocate(7, {"only": 5}, min_each=1) == {"only": 7}
+
+
 class TestBaselineRegression:
     def _metric(self, recipe, recall, mrr):
         from src.search_eval import RecipeMetrics
