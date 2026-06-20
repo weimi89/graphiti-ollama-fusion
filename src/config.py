@@ -525,6 +525,10 @@ class GraphitiConfig:
     enable_importance_tracking: bool = True
     importance_weight: float = 0.1
 
+    # Query 前處理設定（正規化總是啟用；expansion 預設關，避免每次搜尋多一次 LLM 呼叫）
+    enable_query_expansion: bool = False
+    query_expansion_terms: int = 5
+
     # 智慧遺忘設定
     stale_days_threshold: int = 30
     stale_min_access_count: int = 2
@@ -731,6 +735,8 @@ class GraphitiConfig:
                 "cosine_similarity_threshold",
                 "enable_importance_tracking",
                 "importance_weight",
+                "enable_query_expansion",
+                "query_expansion_terms",
                 "stale_days_threshold",
                 "stale_min_access_count",
                 "display_timezone",
@@ -880,6 +886,8 @@ class GraphitiConfig:
                 "cosine_similarity_threshold": self.cosine_similarity_threshold,
                 "enable_importance_tracking": self.enable_importance_tracking,
                 "importance_weight": self.importance_weight,
+                "enable_query_expansion": self.enable_query_expansion,
+                "query_expansion_terms": self.query_expansion_terms,
                 "stale_days_threshold": self.stale_days_threshold,
                 "stale_min_access_count": self.stale_min_access_count,
                 "display_timezone": self.display_timezone,
@@ -1140,6 +1148,12 @@ def _load_graphiti_settings(config: GraphitiConfig) -> None:
 
     if os.getenv("STALE_MIN_ACCESS_COUNT"):
         config.stale_min_access_count = int(os.getenv("STALE_MIN_ACCESS_COUNT"))
+
+    # Query 前處理設定
+    if os.getenv("ENABLE_QUERY_EXPANSION"):
+        config.enable_query_expansion = os.getenv("ENABLE_QUERY_EXPANSION").lower() == "true"
+    if os.getenv("QUERY_EXPANSION_TERMS"):
+        config.query_expansion_terms = int(os.getenv("QUERY_EXPANSION_TERMS"))
 
     # Cross-encoder（reranker）設定
     config.cross_encoder.provider = os.getenv(

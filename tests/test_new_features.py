@@ -493,6 +493,37 @@ class TestImportanceBoost:
         assert s._apply_importance_boost(items) == items
 
 
+class TestQueryPreprocessing:
+    """測試 Commit 5 query 前處理。"""
+
+    def test_normalize_fullwidth_to_halfwidth(self):
+        from graphiti_mcp_server import _normalize_query
+        assert _normalize_query("ＡＰＩ") == "API"
+        assert _normalize_query("ｈｅｌｌｏ１２３") == "hello123"
+
+    def test_normalize_compress_whitespace(self):
+        from graphiti_mcp_server import _normalize_query
+        assert _normalize_query("  知識   圖譜  ") == "知識 圖譜"
+
+    def test_normalize_fullwidth_space(self):
+        from graphiti_mcp_server import _normalize_query
+        assert _normalize_query("知識　圖譜") == "知識 圖譜"
+
+    def test_normalize_preserves_chinese(self):
+        from graphiti_mcp_server import _normalize_query
+        assert _normalize_query("知識圖譜記憶") == "知識圖譜記憶"
+
+    def test_normalize_empty(self):
+        from graphiti_mcp_server import _normalize_query
+        assert _normalize_query("") == ""
+
+    def test_query_expansion_config_default_off(self):
+        from src.config import GraphitiConfig
+        cfg = GraphitiConfig()
+        assert cfg.enable_query_expansion is False
+        assert cfg.query_expansion_terms == 5
+
+
 # ============================================================
 # _build_search_filters 測試
 # ============================================================

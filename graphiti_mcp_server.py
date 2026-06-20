@@ -25,6 +25,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import sys
 import time
 import uuid as uuid_mod
@@ -97,6 +98,7 @@ from graphiti_core import Graphiti
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType, CommunityNode
+from pydantic import BaseModel
 from graphiti_core.search.search_config import SearchConfig, SearchResults
 from graphiti_core.search.search_config_recipes import (
     NODE_HYBRID_SEARCH_RRF,
@@ -654,6 +656,74 @@ def _apply_importance_boost(items: list) -> list:
     return [item for _, item in indexed]
 
 
+def _normalize_query(query: str) -> str:
+    """輕量 query 正規化（不改變語義）：全形 ASCII 轉半形、壓縮多餘空白。
+
+    讓「ＡＰＩ」與 "API"、中英間多餘空白等表面差異不影響召回。零成本、總是啟用。
+    """
+    if not query:
+        return query
+    chars = []
+    for ch in query:
+        code = ord(ch)
+        if code == 0x3000:  # 全形空格
+            chars.append(" ")
+        elif 0xFF01 <= code <= 0xFF5E:  # 全形 ASCII → 半形
+            chars.append(chr(code - 0xFEE0))
+        else:
+            chars.append(ch)
+    return re.sub(r"\s+", " ", "".join(chars)).strip()
+
+
+class _QueryExpansion(BaseModel):
+    keywords: List[str]
+
+
+async def _expand_query(query: str, graphiti: Graphiti) -> str:
+    """用 LLM 產生語義相關的補充關鍵詞（同義詞、中英對照），附加到原 query 提升召回。
+
+    預設關閉（enable_query_expansion）。單次 LLM 呼叫，失敗時退回原 query，不影響搜尋。
+    """
+    if not query or not (app_config and getattr(app_config, "enable_query_expansion", False)):
+        return query
+    llm = getattr(graphiti, "llm_client", None)
+    if llm is None:
+        return query
+    try:
+        from graphiti_core.prompts.models import Message
+
+        n = getattr(app_config, "query_expansion_terms", 5) or 5
+        messages = [
+            Message(
+                role="system",
+                content=(
+                    "You expand search queries for a knowledge-graph retrieval system. "
+                    "Produce semantically related keywords (synonyms, English/Chinese "
+                    "equivalents, closely related terms) that improve recall. Keep them "
+                    "tightly relevant; do not drift to unrelated topics."
+                ),
+            ),
+            Message(
+                role="user",
+                content=(
+                    f"Query: {query}\n"
+                    f"Return up to {n} additional keywords or short phrases as a JSON "
+                    'object: {"keywords": [...]}.'
+                ),
+            ),
+        ]
+        result = await llm.generate_response(messages, response_model=_QueryExpansion)
+        kws = result.get("keywords", []) if isinstance(result, dict) else []
+        kws = [k.strip() for k in kws if isinstance(k, str) and k.strip()][:n]
+        if kws:
+            expanded = f"{query} {' '.join(kws)}"
+            logger.debug(f"query expansion: '{query}' -> '{expanded}'")
+            return expanded
+    except Exception as e:
+        logger.warning(f"query expansion 失敗，使用原 query：{e}")
+    return query
+
+
 def _build_search_filters(
     node_labels: Optional[List[str]] = None,
     edge_types: Optional[List[str]] = None,
@@ -1201,6 +1271,10 @@ async def search_memory_nodes(
     try:
         graphiti = await initialize_graphiti()
 
+        # query 前處理：正規化（總是）+ 可選 LLM 展開
+        query = _normalize_query(query)
+        query = await _expand_query(query, graphiti)
+
         # 建立搜索過濾器
         search_filters = _build_search_filters(
             node_labels=entity_types,
@@ -1337,6 +1411,10 @@ async def search_memory_facts(
             )
 
         graphiti = await initialize_graphiti()
+
+        # query 前處理：正規化（總是）+ 可選 LLM 展開
+        query = _normalize_query(query)
+        query = await _expand_query(query, graphiti)
 
         # recipe 選擇（僅允許 edge_* 系列）
         if search_recipe:
@@ -1780,6 +1858,10 @@ async def advanced_search(
 
     try:
         graphiti = await initialize_graphiti()
+
+        # query 前處理：正規化（總是）+ 可選 LLM 展開
+        query = _normalize_query(query)
+        query = await _expand_query(query, graphiti)
 
         # 取得搜尋配置
         if search_recipe not in SEARCH_RECIPES:
