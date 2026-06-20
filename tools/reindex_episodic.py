@@ -12,6 +12,7 @@ safe mode 或完整模式降級（full mode 失敗 fallback）會寫出只有 Ep
     uv run python tools/reindex_episodic.py                 # dry-run，只報告
     uv run python tools/reindex_episodic.py --execute       # 實際重建實體
     uv run python tools/reindex_episodic.py --group-id foo  # 限定 group
+    uv run python tools/reindex_episodic.py --exclude-group boundary_test,boundary_extreme  # 排除測試資料
     uv run python tools/reindex_episodic.py --limit 50      # 限制處理數量
     uv run python tools/reindex_episodic.py --execute --delete-orphans  # 重建後刪除舊孤兒
 """
@@ -24,13 +25,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
-async def _find_orphans(driver, group_id, limit):
-    """查詢無 MENTIONS→Entity 出邊的 Episodic（safe-mode 殘留）。"""
+async def _find_orphans(driver, group_id, limit, exclude_groups=None):
+    """查詢無 MENTIONS→Entity 出邊的 Episodic（safe-mode 殘留）。
+
+    exclude_groups：排除的 group 清單（如 boundary 測試資料），避免對無意義
+    內容重跑 LLM 提取、產生雜訊實體。
+    """
     where = "WHERE NOT (e)-[:MENTIONS]->(:Entity)"
     params = {"limit": limit}
     if group_id:
         where += " AND e.group_id = $group_id"
         params["group_id"] = group_id
+    if exclude_groups:
+        where += " AND NOT e.group_id IN $exclude_groups"
+        params["exclude_groups"] = exclude_groups
     query = f"""
     MATCH (e:Episodic)
     {where}
@@ -57,6 +65,10 @@ async def main():
     )
     parser.add_argument("--execute", action="store_true", help="實際重建（預設 dry-run）")
     parser.add_argument("--group-id", default=None, help="限定 group_id")
+    parser.add_argument(
+        "--exclude-group", default=None,
+        help="排除的 group（逗號分隔，如測試資料 boundary_test,boundary_extreme）",
+    )
     parser.add_argument("--limit", type=int, default=1000, help="最多處理數量")
     parser.add_argument(
         "--delete-orphans", action="store_true", help="重建成功後刪除舊孤兒節點（避免重複）"
@@ -69,7 +81,11 @@ async def main():
     server.app_config = load_config()
     graphiti = await server.initialize_graphiti()
 
-    orphans = await _find_orphans(graphiti.driver, args.group_id, args.limit)
+    exclude_groups = (
+        [g.strip() for g in args.exclude_group.split(",") if g.strip()]
+        if args.exclude_group else None
+    )
+    orphans = await _find_orphans(graphiti.driver, args.group_id, args.limit, exclude_groups)
     print(f"找到 {len(orphans)} 個孤兒 Episodic（無 Entity，不可被向量搜尋）")
     if not orphans:
         return
