@@ -132,6 +132,7 @@ from src.content_preprocessor import smart_chunk, should_chunk
 # 載入新功能模組
 from src.deduplication import check_episode_similarity, store_episode_embedding
 from src.importance import update_access_metadata, get_stale_entities, cleanup_stale_entities
+from src.hybrid_search import query_claude_mem
 
 # ============================================================================
 # 搜尋策略對照表（16 種 SearchConfig recipe）
@@ -1956,6 +1957,61 @@ async def advanced_search(
         duration = time.time() - start_time
         log_operation_error("advanced_search", e, query=query[:50], duration=duration)
         return create_error_response(e, "進階搜尋失敗")
+
+
+@mcp.tool()
+async def hybrid_search(
+    query: str,
+    max_results: int = 5,
+    group_ids: Optional[List[str]] = None,
+    project: Optional[str] = None,
+) -> dict:
+    """
+    雙記憶混合搜尋：同時查詢 Graphiti 知識圖譜與 claude-mem 工作記憶並融合來源。
+
+    - Graphiti：結構化實體節點 + 關係（跨 session 推理、向量 + 圖搜尋）
+    - claude-mem：即時自動捕獲的 session 工作記憶（SQLite FTS + 向量）
+
+    claude-mem 不可用時優雅降級為純 Graphiti 結果，不影響可用性。
+
+    Args:
+        query: 搜尋查詢
+        max_results: 每個來源的結果上限
+        group_ids: Graphiti 分組過濾
+        project: claude-mem 專案過濾（可選）
+
+    Returns:
+        dict: graphiti_nodes（結構化）+ claude_mem（即時 text）+ sources
+    """
+    start_time = time.time()
+    log_operation_start("hybrid_search", query=query[:50])
+    try:
+        # Graphiti 結構化搜尋（含本專案所有命中率改善：reranker / importance / query 展開）
+        g_result = await search_memory_nodes(query, max_nodes=max_results, group_ids=group_ids)
+        graphiti_nodes = g_result.get("nodes", []) if isinstance(g_result, dict) else []
+
+        # claude-mem 即時工作記憶（優雅降級）
+        cm_url = getattr(app_config, "claude_mem_url", "") if app_config else ""
+        cm_text = await query_claude_mem(cm_url, query, project, max_results) if cm_url else None
+
+        sources = ["graphiti"]
+        if cm_text:
+            sources.append("claude-mem")
+
+        duration = time.time() - start_time
+        log_operation_success("hybrid_search", duration, result_count=len(graphiti_nodes))
+        return {
+            "success": True,
+            "query": query,
+            "graphiti_nodes": graphiti_nodes,
+            "claude_mem": cm_text or "(claude-mem 不可用或無結果，已降級為純 Graphiti)",
+            "sources": sources,
+            "duration": round(duration, 2),
+        }
+    except Exception as e:
+        duration = time.time() - start_time
+        log_operation_error("hybrid_search", e, query=query[:50], duration=duration)
+        return create_error_response(e, "雙記憶混合搜尋失敗")
 
 
 @mcp.tool()

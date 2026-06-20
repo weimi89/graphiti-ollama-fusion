@@ -529,6 +529,9 @@ class GraphitiConfig:
     enable_query_expansion: bool = False
     query_expansion_terms: int = 5
 
+    # 雙記憶混合：claude-mem 工作記憶 worker URL（空字串停用 hybrid_search 的 claude-mem 來源）
+    claude_mem_url: str = "http://localhost:37777"
+
     # 智慧遺忘設定
     stale_days_threshold: int = 30
     stale_min_access_count: int = 2
@@ -737,6 +740,7 @@ class GraphitiConfig:
                 "importance_weight",
                 "enable_query_expansion",
                 "query_expansion_terms",
+                "claude_mem_url",
                 "stale_days_threshold",
                 "stale_min_access_count",
                 "display_timezone",
@@ -888,6 +892,7 @@ class GraphitiConfig:
                 "importance_weight": self.importance_weight,
                 "enable_query_expansion": self.enable_query_expansion,
                 "query_expansion_terms": self.query_expansion_terms,
+                "claude_mem_url": self.claude_mem_url,
                 "stale_days_threshold": self.stale_days_threshold,
                 "stale_min_access_count": self.stale_min_access_count,
                 "display_timezone": self.display_timezone,
@@ -1154,6 +1159,8 @@ def _load_graphiti_settings(config: GraphitiConfig) -> None:
         config.enable_query_expansion = os.getenv("ENABLE_QUERY_EXPANSION").lower() == "true"
     if os.getenv("QUERY_EXPANSION_TERMS"):
         config.query_expansion_terms = int(os.getenv("QUERY_EXPANSION_TERMS"))
+
+    config.claude_mem_url = os.getenv("CLAUDE_MEM_URL", config.claude_mem_url)
 
     # Cross-encoder（reranker）設定
     config.cross_encoder.provider = os.getenv(
