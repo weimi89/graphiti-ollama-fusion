@@ -155,7 +155,11 @@ const App = {
 
     async _renderCurrentPage() {
         const app = document.getElementById('app');
-        app.innerHTML = '<div class="loading-spinner">載入中...</div>';
+        // 列表型頁面用骨架屏降低版面跳動，其餘用 spinner
+        const listPages = ['dashboard', 'nodes', 'facts', 'episodes', 'overview', 'timeline', 'communities'];
+        app.innerHTML = listPages.includes(this.state.page)
+            ? Components.skeleton(5)
+            : '<div class="loading-spinner">載入中...</div>';
 
         try {
             switch (this.state.page) {

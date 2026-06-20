@@ -888,13 +888,28 @@ const Components = {
     // Helpers
     // ============================================================
 
-    _empty(text) {
+    _empty(text, hint) {
         return `
             <div class="empty-state">
                 <div class="empty-state-icon">&#9671;</div>
                 <div class="empty-state-text">${text}</div>
+                ${hint ? `<div class="empty-state-hint">${hint}</div>` : ''}
             </div>
         `;
+    },
+
+    // 載入骨架屏：以卡片占位降低載入時的版面跳動
+    skeleton(count = 4) {
+        const card = `
+            <div class="skeleton-card" aria-hidden="true">
+                <div class="skeleton-line sk-badge"></div>
+                <div class="skeleton-line sk-title"></div>
+                <div class="skeleton-line sk-text"></div>
+                <div class="skeleton-line sk-text-2"></div>
+                <div class="skeleton-line sk-foot"></div>
+            </div>
+        `;
+        return `<div class="skeleton-list" role="status" aria-label="載入中">${card.repeat(count)}</div>`;
     },
 
     _esc(str) {

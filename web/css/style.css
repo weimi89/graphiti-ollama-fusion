@@ -61,10 +61,12 @@
 
     --font-mono: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
 
-    --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
-    --radius: 8px;
-    --radius-sm: 4px;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.24), 0 1px 2px rgba(0, 0, 0, 0.30);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.22);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.40);
+    --radius: 12px;
+    --radius-sm: 6px;
+    --radius-lg: 16px;
 }
 
 /* -- CSS 變數：淺色主題 — 配色參考 claude-mem viewer -- */
@@ -125,8 +127,9 @@
 
     --font-mono: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
 
-    --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.12);
+    --shadow: 0 1px 3px rgba(40, 35, 28, 0.06), 0 1px 2px rgba(40, 35, 28, 0.08);
+    --shadow-card: 0 1px 2px rgba(40, 35, 28, 0.05), 0 1px 3px rgba(40, 35, 28, 0.04);
+    --shadow-lg: 0 8px 24px rgba(40, 35, 28, 0.10);
 }
 
 /* -- Reset & Base -- */
@@ -170,28 +173,35 @@ body {
 
 .navbar-links {
     display: flex;
-    gap: 4px;
-    margin-left: 24px;
+    gap: 2px;
+    margin-left: 20px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
 }
 
+.navbar-links::-webkit-scrollbar { display: none; }
+
 .nav-link {
-    padding: 8px 16px;
+    padding: 8px 14px;
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     text-decoration: none;
     font-size: 14px;
     font-weight: 500;
-    transition: all 0.15s ease;
+    white-space: nowrap;
+    transition: color 0.15s ease, background 0.15s ease;
 }
 
 .nav-link:hover {
     color: var(--text-primary);
-    background: var(--accent-bg);
+    background: var(--bg-card-hover);
 }
 
 .nav-link.active {
     color: var(--accent);
     background: var(--accent-bg);
+    font-weight: 600;
 }
 
 .navbar-actions {
@@ -259,37 +269,39 @@ body {
 
 .stat-card {
     background: var(--bg-card);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border-light);
     border-radius: var(--radius);
-    padding: 20px;
+    box-shadow: var(--shadow-card);
+    padding: 24px 20px;
     text-align: center;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
     cursor: pointer;
 }
 
 .stat-card:hover {
     transform: translateY(-2px);
-    box-shadow: var(--shadow);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--border-color);
 }
 
 .stat-number {
-    font-size: 36px;
+    font-size: 38px;
     font-weight: 700;
     color: var(--accent);
     line-height: 1.2;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
 }
 
 .stat-label {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-secondary);
-    margin-top: 4px;
+    margin-top: 6px;
+    letter-spacing: 0.01em;
 }
 
-.stat-card.nodes { border-left: 3px solid var(--card-entity-border); }
 .stat-card.nodes .stat-number { color: var(--tag-entity); }
-.stat-card.facts { border-left: 3px solid var(--card-fact-border); }
 .stat-card.facts .stat-number { color: var(--tag-fact); }
-.stat-card.episodes { border-left: 3px solid var(--card-episode-border); }
 .stat-card.episodes .stat-number { color: var(--tag-episode); }
 
 /* -- 頁面標題區 -- */
@@ -341,38 +353,36 @@ body {
 
 .card {
     background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-left: 3px solid var(--border-color);
+    border: 1px solid var(--border-light);
     border-radius: var(--radius);
-    padding: 16px 20px;
+    box-shadow: var(--shadow-card);
+    padding: 18px 22px;
     display: flex;
     flex-direction: column;
     gap: 10px;
-    transition: background 0.15s ease, border-color 0.15s ease;
+    transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
 }
 
 .card:hover {
-    background: var(--bg-card-hover);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--border-color);
+    transform: translateY(-1px);
 }
 
 .card.card-entity {
     background: var(--card-entity-bg);
-    border-left-color: var(--card-entity-border);
+    border-left: 3px solid var(--card-entity-border);
 }
 
 .card.card-fact {
     background: var(--card-fact-bg);
-    border-left-color: var(--card-fact-border);
+    border-left: 3px solid var(--card-fact-border);
 }
 
 .card.card-episode {
     background: var(--card-episode-bg);
-    border-left-color: var(--card-episode-border);
+    border-left: 3px solid var(--card-episode-border);
 }
-
-[data-theme="light"] .card.card-entity { border-left-width: 4px; }
-[data-theme="light"] .card.card-fact { border-left-width: 4px; }
-[data-theme="light"] .card.card-episode { border-left-width: 4px; }
 
 /* -- 卡片 tags 容器 -- */
 .card-tags {
@@ -590,10 +600,18 @@ body {
 .card-tag {
     font-size: 11px;
     font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 10px;
+    padding: 3px 9px;
+    border-radius: var(--radius-sm);
     white-space: nowrap;
     flex-shrink: 0;
+}
+
+.card-tag.entity,
+.card-tag.fact,
+.card-tag.episode {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 10px;
 }
 
 .card-tag.entity {
@@ -869,8 +887,8 @@ body {
 
 /* -- Dialog -- */
 .confirm-dialog {
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
     background: var(--bg-card);
     color: var(--text-primary);
     padding: 0;
@@ -884,8 +902,11 @@ body {
     margin: 0;
 }
 
-.confirm-dialog::backdrop {
-    background: rgba(0, 0, 0, 0.5);
+.confirm-dialog::backdrop,
+.add-memory-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
 }
 
 .dialog-content {
@@ -984,18 +1005,68 @@ body {
 /* -- Empty State -- */
 .empty-state {
     text-align: center;
-    padding: 60px 20px;
+    padding: 72px 20px;
     color: var(--text-muted);
 }
 
 .empty-state-icon {
-    font-size: 48px;
-    margin-bottom: 12px;
-    opacity: 0.5;
+    font-size: 44px;
+    margin-bottom: 14px;
+    opacity: 0.4;
+    line-height: 1;
 }
 
 .empty-state-text {
     font-size: 15px;
+    color: var(--text-secondary);
+}
+
+.empty-state-hint {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+/* -- Skeleton 載入骨架屏 -- */
+.skeleton-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.skeleton-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+    padding: 18px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.skeleton-line {
+    height: 12px;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(
+        90deg,
+        var(--border-light) 25%,
+        var(--bg-card-hover) 37%,
+        var(--border-light) 63%
+    );
+    background-size: 400% 100%;
+    animation: skeleton-shimmer 1.4s ease infinite;
+}
+
+.skeleton-line.sk-badge { width: 64px; height: 16px; border-radius: var(--radius-sm); }
+.skeleton-line.sk-title { width: 45%; height: 15px; }
+.skeleton-line.sk-text { width: 92%; }
+.skeleton-line.sk-text-2 { width: 78%; }
+.skeleton-line.sk-foot { width: 30%; height: 10px; opacity: 0.7; }
+
+@keyframes skeleton-shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
 }
 
 /* -- 儀表板最近列表 -- */
@@ -1012,8 +1083,8 @@ body {
 
 /* -- 新增記憶 Dialog -- */
 .add-memory-dialog {
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
     background: var(--bg-card);
     color: var(--text-primary);
     padding: 0;
@@ -1025,10 +1096,6 @@ body {
     left: 50%;
     transform: translate(-50%, -50%);
     margin: 0;
-}
-
-.add-memory-dialog::backdrop {
-    background: rgba(0, 0, 0, 0.5);
 }
 
 .memory-form {
