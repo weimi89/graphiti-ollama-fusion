@@ -524,6 +524,49 @@ class TestQueryPreprocessing:
         assert cfg.query_expansion_terms == 5
 
 
+class TestSafeModeSearchability:
+    """測試 Commit 6 safe_mode 可搜尋性防護。"""
+
+    def test_add_memory_simple_has_fallback_param(self):
+        import inspect
+        from graphiti_mcp_server import add_memory_simple
+        params = inspect.signature(add_memory_simple).parameters
+        assert "fallback_to_safe" in params
+        assert params["fallback_to_safe"].default is True
+
+    def test_full_mode_marks_searchable_true(self):
+        import asyncio
+        import time
+        from unittest.mock import AsyncMock
+        from graphiti_core.nodes import EpisodeType
+        from graphiti_mcp_server import _add_memory_full_mode
+
+        graphiti = AsyncMock()
+        result = asyncio.run(_add_memory_full_mode(
+            graphiti=graphiti, name="t", episode_body="short body", group_id="g",
+            source_description="d", episode_type=EpisodeType.text,
+            episode_uuid=None, source="text", start_time=time.time(),
+        ))
+        assert result["searchable"] is True
+
+    def test_safe_add_marks_searchable_false(self, monkeypatch):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        import src.safe_memory_add as sma
+
+        # mock EpisodicNode 以避免真實 DB 寫入
+        fake_node = MagicMock()
+        fake_node.uuid = "fake-uuid"
+        fake_node.save = AsyncMock()
+        monkeypatch.setattr(sma, "EpisodicNode", lambda **kw: fake_node)
+
+        g = MagicMock()
+        g.driver = MagicMock()
+        result = asyncio.run(sma.safe_add_memory(g, name="n", content="c", group_id="g"))
+        assert result["success"] is True
+        assert result["searchable"] is False
+
+
 # ============================================================
 # _build_search_filters 測試
 # ============================================================

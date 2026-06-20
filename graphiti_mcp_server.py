@@ -829,6 +829,7 @@ async def add_memory_simple(
     background: bool = False,
     excluded_entity_types: Optional[List[str]] = None,
     force: bool = False,
+    fallback_to_safe: bool = True,
 ) -> dict:
     """
     添加記憶到知識圖譜。
@@ -853,6 +854,8 @@ async def add_memory_simple(
         background: 是否在背景非同步處理（立刻返回 task_id）
         excluded_entity_types: 排除的實體類型列表，減少不需要的實體提取
         force: 跳過去重檢查，強制添加
+        fallback_to_safe: 完整模式失敗時是否自動降級為 safe 模式（預設 True）。
+            設為 False 則寧可回報失敗，也不寫出不可搜尋的記憶（避免靜默 recall 損失）
 
     Returns:
         dict: 包含操作結果的字典
@@ -908,6 +911,7 @@ async def add_memory_simple(
             _background_add_memory(
                 task, name, episode_body, group_id, source_description,
                 source, episode_uuid, use_safe_mode, excluded_entity_types,
+                fallback_to_safe,
             )
         )
 
@@ -923,6 +927,7 @@ async def add_memory_simple(
     return await _sync_add_memory(
         name, episode_body, group_id, source_description,
         source, episode_uuid, use_safe_mode, excluded_entity_types,
+        fallback_to_safe,
     )
 
 
@@ -935,6 +940,7 @@ async def _sync_add_memory(
     episode_uuid: Optional[str],
     use_safe_mode: bool,
     excluded_entity_types: Optional[List[str]],
+    fallback_to_safe: bool = True,
 ) -> dict:
     """同步執行記憶添加。"""
     start_time = time.time()
@@ -958,16 +964,25 @@ async def _sync_add_memory(
             except Exception as full_err:
                 import traceback
                 logger.warning(
-                    f"完整模式失敗，自動降級到安全模式: {str(full_err)[:200]}"
+                    f"完整模式失敗: {str(full_err)[:200]}"
                 )
                 logger.warning(f"完整模式 traceback:\n{traceback.format_exc()}")
+                if not fallback_to_safe:
+                    # 呼叫端要求寧可失敗也不接受不可搜尋的降級結果
+                    duration = time.time() - start_time
+                    log_operation_error("add_memory", full_err, duration=duration)
+                    return create_error_response(
+                        CommonErrors.operation_failed("add_memory", str(full_err)),
+                        f"完整模式失敗且已停用 safe 降級（fallback_to_safe=False），未寫入: {full_err}",
+                    )
                 safe_result = await _add_memory_safe_mode(
                     graphiti, name, episode_body, group_id,
                     source_description, source, start_time
                 )
                 safe_result["mode_used"] = "safe"
                 safe_result["fallback_reason"] = str(full_err)[:200]
-                safe_result["note"] = "完整模式失敗，已自動降級到安全模式保底"
+                safe_result["searchable"] = False
+                safe_result["note"] = "完整模式失敗，已自動降級到安全模式保底（此記憶不可被向量搜尋，可用 tools/reindex_episodic.py 補建）"
                 return safe_result
 
     except Exception as e:
@@ -989,6 +1004,7 @@ async def _background_add_memory(
     episode_uuid: Optional[str],
     use_safe_mode: bool,
     excluded_entity_types: Optional[List[str]],
+    fallback_to_safe: bool = True,
 ) -> None:
     """背景執行記憶添加任務。"""
     task.status = "processing"
@@ -996,6 +1012,7 @@ async def _background_add_memory(
         result = await _sync_add_memory(
             name, episode_body, group_id, source_description,
             source, episode_uuid, use_safe_mode, excluded_entity_types,
+            fallback_to_safe,
         )
         task.result = result
         task.status = "completed" if result.get("success") else "failed"
@@ -1072,6 +1089,7 @@ async def _add_memory_safe_mode(
             "source": source,
             "processing_time": f"{duration:.2f}s",
             "method": "safe_direct_node_creation",
+            "searchable": False,
             "note": t("memory.note_safe_mode", _srv_lang()),
         }
     else:
@@ -1156,6 +1174,7 @@ async def _add_memory_full_mode(
             "source": source,
             "processing_time": f"{duration:.2f}s",
             "method": "full_entity_extraction",
+            "searchable": True,
             "note": t("memory.note_full_mode", _srv_lang()),
         }
 
@@ -1193,6 +1212,7 @@ async def _add_memory_full_mode(
         "processing_time": f"{duration:.2f}s",
         "method": "full_entity_extraction_chunked_bulk",
         "chunks": total_chunks,
+        "searchable": True,
         "note": t("memory.note_chunked", _srv_lang(), count=total_chunks),
     }
 
