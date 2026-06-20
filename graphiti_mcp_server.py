@@ -625,6 +625,35 @@ def _apply_search_tuning(
     return config
 
 
+def _get_access_count(item: Any) -> int:
+    """從節點/邊物件取 access_count（可能位於屬性或 attributes dict）。"""
+    ac = getattr(item, "access_count", None)
+    if ac is None:
+        ac = (getattr(item, "attributes", {}) or {}).get("access_count", 0)
+    try:
+        return int(ac or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _apply_importance_boost(items: list) -> list:
+    """依 access_count 對搜尋結果做穩定的重要性加權微調。
+
+    以初篩/重排名次為主序，高存取次數的項目微幅提前（幅度由 importance_weight
+    控制）。enable_importance_tracking 關閉或 importance_weight<=0 時不調整。
+    這讓既有的存取追蹤資料（過去只寫不讀）實際回饋到搜尋排序。
+    """
+    if not items or not app_config or not app_config.enable_importance_tracking:
+        return items
+    weight = getattr(app_config, "importance_weight", 0) or 0
+    if weight <= 0:
+        return items
+    indexed = list(enumerate(items))
+    # 名次越小越前；access_count 越高，扣分越多 → 越往前。stable sort 保留同分原序。
+    indexed.sort(key=lambda pair: pair[0] - _get_access_count(pair[1]) * weight)
+    return [item for _, item in indexed]
+
+
 def _build_search_filters(
     node_labels: Optional[List[str]] = None,
     edge_types: Optional[List[str]] = None,
@@ -1197,7 +1226,8 @@ async def search_memory_nodes(
             search_filter=search_filters,
         )
 
-        nodes = (search_results.nodes or [])[:top_k]
+        # 候選池先依重要性（access_count）加權微調，再截斷至 top_k
+        nodes = _apply_importance_boost(search_results.nodes or [])[:top_k]
         duration = time.time() - start_time
         log_operation_success("search_nodes", duration, result_count=len(nodes))
 
@@ -1349,7 +1379,8 @@ async def search_memory_facts(
             search_filter=search_filters,
         )
 
-        edges = (search_results.edges or [])[:top_k]
+        # 候選池先依重要性（access_count）加權微調，再截斷至 top_k
+        edges = _apply_importance_boost(search_results.edges or [])[:top_k]
         duration = time.time() - start_time
         log_operation_success("search_facts", duration, result_count=len(edges))
 

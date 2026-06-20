@@ -435,6 +435,64 @@ class TestSearchRecallEnhancements:
             assert p in params, f"缺少參數 {p}"
 
 
+class TestImportanceBoost:
+    """測試 Commit 4 importance-aware 排序。"""
+
+    def test_get_access_count_from_attributes(self):
+        from types import SimpleNamespace
+        from graphiti_mcp_server import _get_access_count
+        assert _get_access_count(SimpleNamespace(attributes={"access_count": 5})) == 5
+
+    def test_get_access_count_from_attr(self):
+        from types import SimpleNamespace
+        from graphiti_mcp_server import _get_access_count
+        assert _get_access_count(SimpleNamespace(access_count=7, attributes={})) == 7
+
+    def test_get_access_count_default_zero(self):
+        from types import SimpleNamespace
+        from graphiti_mcp_server import _get_access_count
+        assert _get_access_count(SimpleNamespace(attributes={})) == 0
+
+    def test_boost_promotes_high_access(self, monkeypatch):
+        from types import SimpleNamespace
+        import graphiti_mcp_server as s
+        monkeypatch.setattr(
+            s, "app_config",
+            SimpleNamespace(enable_importance_tracking=True, importance_weight=0.1),
+        )
+        items = [
+            SimpleNamespace(attributes={"access_count": 0}),
+            SimpleNamespace(attributes={"access_count": 0}),
+            SimpleNamespace(attributes={"access_count": 100}),  # 100*0.1=10 名提前
+        ]
+        out = s._apply_importance_boost(items)
+        assert out[0].attributes["access_count"] == 100
+
+    def test_boost_stable_when_equal_access(self, monkeypatch):
+        from types import SimpleNamespace
+        import graphiti_mcp_server as s
+        monkeypatch.setattr(
+            s, "app_config",
+            SimpleNamespace(enable_importance_tracking=True, importance_weight=0.1),
+        )
+        items = [SimpleNamespace(name=f"n{i}", attributes={"access_count": 0}) for i in range(4)]
+        out = s._apply_importance_boost(items)
+        assert [i.name for i in out] == ["n0", "n1", "n2", "n3"]  # 同分保留原序
+
+    def test_boost_disabled_returns_unchanged(self, monkeypatch):
+        from types import SimpleNamespace
+        import graphiti_mcp_server as s
+        monkeypatch.setattr(
+            s, "app_config",
+            SimpleNamespace(enable_importance_tracking=False, importance_weight=0.1),
+        )
+        items = [
+            SimpleNamespace(attributes={"access_count": 0}),
+            SimpleNamespace(attributes={"access_count": 100}),
+        ]
+        assert s._apply_importance_boost(items) == items
+
+
 # ============================================================
 # _build_search_filters 測試
 # ============================================================
