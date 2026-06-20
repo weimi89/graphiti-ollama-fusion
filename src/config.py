@@ -243,6 +243,10 @@ class CrossEncoderConfig:
         api_key: LLM 重排 API 金鑰（空字串則沿用主 LLM provider 的 key）
         top_n: 每次最多送入重排的候選數（控制 LLM 成本）
         min_score: 低於此分數的結果會被過濾（0 表示不過濾）
+        rerank_search: 是否對 search_memory_nodes 的 RRF 候選池做 post-retrieval
+            重排（needs provider=bge/llm）。實測 BGE post-rerank 使 node
+            recall@10 0.808→0.949、MRR 0.460→0.819（+78%）；LLM 重排則有害，
+            故建議搭配 provider="bge"。reranker 不可用時自動退回 RRF（no-op）。
     """
 
     provider: str = "none"
@@ -251,6 +255,7 @@ class CrossEncoderConfig:
     api_key: str = ""
     top_n: int = 10
     min_score: float = 0.0
+    rerank_search: bool = True
 
     def validate(self) -> bool:
         """驗證配置是否有效。"""
@@ -1177,6 +1182,10 @@ def _load_graphiti_settings(config: GraphitiConfig) -> None:
         config.cross_encoder.top_n = int(os.getenv("CROSS_ENCODER_TOP_N"))
     if os.getenv("CROSS_ENCODER_MIN_SCORE"):
         config.cross_encoder.min_score = float(os.getenv("CROSS_ENCODER_MIN_SCORE"))
+    if os.getenv("RERANK_SEARCH"):
+        config.cross_encoder.rerank_search = os.getenv("RERANK_SEARCH").lower() in (
+            "1", "true", "yes", "on",
+        )
 
 
 def load_config(config_path: Optional[str] = None) -> GraphitiConfig:

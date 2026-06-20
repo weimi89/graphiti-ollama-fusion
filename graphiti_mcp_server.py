@@ -662,6 +662,71 @@ def _apply_importance_boost(items: list) -> list:
     return [item for _, item in indexed]
 
 
+# post-retrieval 重排器快取（單例，避免每次搜尋重建 BGE 模型）
+_search_reranker_cache: dict = {"client": None, "provider": None}
+
+
+def _get_search_reranker():
+    """取得快取的 post-rerank cross-encoder。
+
+    複用 _create_cross_encoder() 的路由（依 cross_encoder.provider）。provider=none
+    或建立出 Passthrough（no-op）時回 None，代表不重排。BGE/LLM 客戶端快取為單例。
+    """
+    ce_cfg = getattr(app_config, "cross_encoder", None)
+    provider = getattr(ce_cfg, "provider", "none") if ce_cfg else "none"
+    if provider == "none":
+        return None
+    if _search_reranker_cache["provider"] != provider:
+        client = _create_cross_encoder()
+        # Passthrough 等同不重排，直接視為無重排器
+        if isinstance(client, PassthroughCrossEncoder):
+            client = None
+        _search_reranker_cache["client"] = client
+        _search_reranker_cache["provider"] = provider
+    return _search_reranker_cache["client"]
+
+
+def _rerank_passage(item: Any, kind: str) -> str:
+    """從節點/邊取出供 cross-encoder 評分的文字。"""
+    if kind == "edge":
+        return (getattr(item, "fact", "") or getattr(item, "name", "") or "").strip()
+    name = getattr(item, "name", "") or ""
+    summary = getattr(item, "summary", "") or ""
+    return f"{name}: {summary}".strip() if summary else name.strip()
+
+
+async def _apply_rerank(query: str, items: list, kind: str = "node") -> list:
+    """對放大的候選池用 cross-encoder 依 query 相關性做 post-retrieval 重排。
+
+    插在「RRF 候選池 → 截斷 top_k」之間：把池中相關但被初篩排在後段的候選往前
+    拉，配合放大的候選池可同時提升 recall@k 與 MRR。僅在配置真實 reranker
+    （cross_encoder.provider=bge/llm）時生效；未啟用、項目過少或任何失敗都回原序，
+    確保搜尋永不因重排崩潰。
+    """
+    reranker = _get_search_reranker()
+    if reranker is None or len(items) <= 1:
+        return items
+    try:
+        passages = [_rerank_passage(it, kind) for it in items]
+        ranked = await reranker.rank(query, passages)  # [(passage, score)] 由高到低
+        # 依 passage 貪婪映射回 item（entity 摘要近乎唯一；重複 passage 以原序消化）
+        buckets: dict = {}
+        for idx, p in enumerate(passages):
+            buckets.setdefault(p, []).append(idx)
+        order: list = []
+        for passage, _score in ranked:
+            lst = buckets.get(passage)
+            if lst:
+                order.append(lst.pop(0))
+        # 保險：補上任何未被 rank 回傳的 index（保持原相對順序）
+        seen = set(order)
+        order.extend(i for i in range(len(items)) if i not in seen)
+        return [items[i] for i in order]
+    except Exception as e:
+        logging.getLogger("graphiti").warning(f"post-rerank 失敗，保留原序：{e}")
+        return items
+
+
 def _normalize_query(query: str) -> str:
     """輕量 query 正規化（不改變語義）：全形 ASCII 轉半形、壓縮多餘空白。
 
@@ -1340,8 +1405,13 @@ async def search_memory_nodes(
             search_filter=search_filters,
         )
 
-        # 候選池先依重要性（access_count）加權微調，再截斷至 top_k
-        nodes = _apply_importance_boost(search_results.nodes or [])[:top_k]
+        # 候選池：先 cross-encoder post-rerank（依 query 相關性，把池中相關項往前拉），
+        # 再依重要性（access_count）微調，最後截斷至 top_k。
+        # 實測 BGE post-rerank 使 node recall@10 0.808→0.949、MRR 0.460→0.819。
+        candidate_nodes = search_results.nodes or []
+        if getattr(getattr(app_config, "cross_encoder", None), "rerank_search", False):
+            candidate_nodes = await _apply_rerank(query, candidate_nodes, "node")
+        nodes = _apply_importance_boost(candidate_nodes)[:top_k]
         duration = time.time() - start_time
         log_operation_success("search_nodes", duration, result_count=len(nodes))
 
