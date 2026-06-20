@@ -154,6 +154,22 @@ SEARCH_RECIPES: Dict[str, SearchConfig] = {
     "community_cross_encoder": COMMUNITY_HYBRID_SEARCH_CROSS_ENCODER,
 }
 
+# 修正 graphiti-core 的 COMBINED_HYBRID_SEARCH_MMR 把 mmr_lambda 硬設為 1（多樣性
+# 完全失效，退化為純相似度排序）。統一為 0.5，讓 MMR 真正發揮去冗餘作用。
+for _mmr_recipe in (SEARCH_RECIPES["combined_mmr"],):
+    for _sub_cfg in (_mmr_recipe.node_config, _mmr_recipe.edge_config, _mmr_recipe.community_config):
+        if _sub_cfg is not None and getattr(_sub_cfg, "mmr_lambda", None) == 1:
+            _sub_cfg.mmr_lambda = 0.5
+
+# search_memory_facts 僅允許 edge_* 系列 recipe（其餘 recipe 不會產生 edges 結果）
+_EDGE_SEARCH_RECIPES = {
+    "edge_rrf",
+    "edge_mmr",
+    "edge_node_distance",
+    "edge_episode_mentions",
+    "edge_cross_encoder",
+}
+
 # 載入環境變數（明確指定 .env 路徑，避免 PM2/MCP 啟動時 cwd 不在專案根目錄）
 load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
@@ -570,12 +586,53 @@ def _create_deepseek_client(glog):
 # ============================================================================
 
 
+# 候選池放大：搜尋時抓取比 max_results 更多的候選供 reranker 重排，回傳前再截斷。
+# graphiti-core 各 sub-search 實際抓取 2×config.limit，故放大 config.limit 即放大候選池。
+_CANDIDATE_POOL_MULTIPLIER = 3
+_CANDIDATE_POOL_MIN = 20
+_CANDIDATE_POOL_CAP = 100
+
+
+def _candidate_pool_limit(max_results: int) -> int:
+    """計算放大後的候選池大小（供 reranker 重排），上限 _CANDIDATE_POOL_CAP。"""
+    return min(
+        max(max_results * _CANDIDATE_POOL_MULTIPLIER, _CANDIDATE_POOL_MIN),
+        _CANDIDATE_POOL_CAP,
+    )
+
+
+def _apply_search_tuning(
+    config: SearchConfig,
+    reranker_min_score: Optional[float] = None,
+    sim_min_score: Optional[float] = None,
+    mmr_lambda: Optional[float] = None,
+) -> SearchConfig:
+    """將可選的搜尋調參套用到 SearchConfig 及其各 sub-config（None 表不覆寫）。"""
+    if reranker_min_score is not None:
+        config.reranker_min_score = reranker_min_score
+    for sub in (
+        config.node_config,
+        config.edge_config,
+        config.episode_config,
+        config.community_config,
+    ):
+        if sub is None:
+            continue
+        if sim_min_score is not None and hasattr(sub, "sim_min_score"):
+            sub.sim_min_score = sim_min_score
+        if mmr_lambda is not None and hasattr(sub, "mmr_lambda"):
+            sub.mmr_lambda = mmr_lambda
+    return config
+
+
 def _build_search_filters(
     node_labels: Optional[List[str]] = None,
     edge_types: Optional[List[str]] = None,
     created_after: Optional[str] = None,
     created_before: Optional[str] = None,
     only_valid: bool = False,
+    valid_after: Optional[str] = None,
+    valid_before: Optional[str] = None,
 ) -> SearchFilters:
     """
     建構 SearchFilters 物件。
@@ -588,28 +645,30 @@ def _build_search_filters(
         created_after: ISO datetime，只搜尋此時間之後建立的
         created_before: ISO datetime，只搜尋此時間之前建立的
         only_valid: 僅搜尋未失效的事實
+        valid_after: ISO datetime，只搜尋事實生效時間於此之後的
+        valid_before: ISO datetime，只搜尋事實生效時間於此之前的
 
     Returns:
         SearchFilters: 建構好的過濾器
     """
-    created_at_filters = None
-    invalid_at_filters = None
 
-    if created_after or created_before:
-        date_conditions = []
-        if created_after:
-            dt = datetime.fromisoformat(created_after.replace("Z", "+00:00"))
-            date_conditions.append(DateFilter(
+    def _range_filters(after: Optional[str], before: Optional[str]):
+        conditions = []
+        if after:
+            dt = datetime.fromisoformat(after.replace("Z", "+00:00"))
+            conditions.append(DateFilter(
                 date=dt, comparison_operator=ComparisonOperator.greater_than_equal
             ))
-        if created_before:
-            dt = datetime.fromisoformat(created_before.replace("Z", "+00:00"))
-            date_conditions.append(DateFilter(
+        if before:
+            dt = datetime.fromisoformat(before.replace("Z", "+00:00"))
+            conditions.append(DateFilter(
                 date=dt, comparison_operator=ComparisonOperator.less_than_equal
             ))
-        if date_conditions:
-            created_at_filters = [date_conditions]
+        return [conditions] if conditions else None
 
+    created_at_filters = _range_filters(created_after, created_before)
+    valid_at_filters = _range_filters(valid_after, valid_before)
+    invalid_at_filters = None
     if only_valid:
         invalid_at_filters = [[DateFilter(
             date=None, comparison_operator=ComparisonOperator.is_null
@@ -619,6 +678,7 @@ def _build_search_filters(
         node_labels=node_labels,
         edge_types=edge_types,
         created_at=created_at_filters,
+        valid_at=valid_at_filters,
         invalid_at=invalid_at_filters,
     )
 
@@ -1075,6 +1135,9 @@ async def search_memory_nodes(
     search_recipe: Optional[str] = None,
     created_after: Optional[str] = None,
     created_before: Optional[str] = None,
+    reranker_min_score: Optional[float] = None,
+    sim_min_score: Optional[float] = None,
+    mmr_lambda: Optional[float] = None,
 ) -> dict:
     """
     搜索記憶節點（實體）。
@@ -1092,6 +1155,9 @@ async def search_memory_nodes(
             node_episode_mentions, node_cross_encoder
         created_after: ISO datetime，只搜尋此時間之後建立的節點
         created_before: ISO datetime，只搜尋此時間之前建立的節點
+        reranker_min_score: 重排分數下限（0-1），低於此分數的結果被過濾
+        sim_min_score: 向量相似度下限（0-1），調高可提升 precision
+        mmr_lambda: MMR 多樣性係數（0-1，僅 *_mmr recipe 生效；越低越多樣）
 
     Returns:
         dict: 包含搜索結果的字典
@@ -1118,7 +1184,10 @@ async def search_memory_nodes(
             search_config = SEARCH_RECIPES[search_recipe].model_copy(deep=True)
         else:
             search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
-        search_config.limit = min(max_nodes, 50)
+        # 放大候選池供 reranker 重排，回傳前再截斷至 max_nodes
+        top_k = min(max_nodes, 50)
+        search_config.limit = _candidate_pool_limit(top_k)
+        _apply_search_tuning(search_config, reranker_min_score, sim_min_score, mmr_lambda)
 
         # 執行搜索
         search_results = await graphiti.search_(
@@ -1128,7 +1197,7 @@ async def search_memory_nodes(
             search_filter=search_filters,
         )
 
-        nodes = search_results.nodes if search_results.nodes else []
+        nodes = (search_results.nodes or [])[:top_k]
         duration = time.time() - start_time
         log_operation_success("search_nodes", duration, result_count=len(nodes))
 
@@ -1190,6 +1259,12 @@ async def search_memory_facts(
     created_after: Optional[str] = None,
     created_before: Optional[str] = None,
     only_valid: bool = False,
+    search_recipe: Optional[str] = None,
+    valid_after: Optional[str] = None,
+    valid_before: Optional[str] = None,
+    reranker_min_score: Optional[float] = None,
+    sim_min_score: Optional[float] = None,
+    mmr_lambda: Optional[float] = None,
 ) -> dict:
     """
     搜索記憶事實（實體間的關係）。
@@ -1205,6 +1280,13 @@ async def search_memory_facts(
         created_after: ISO datetime，只搜尋此時間之後建立的事實
         created_before: ISO datetime，只搜尋此時間之前建立的事實
         only_valid: 僅搜尋未失效（invalid_at 為空）的事實
+        search_recipe: 邊搜尋策略（僅 edge_* 系列）；edge_node_distance 需配
+            center_node_uuid。未指定時用 edge_rrf
+        valid_after: ISO datetime，只搜尋生效時間於此之後的事實
+        valid_before: ISO datetime，只搜尋生效時間於此之前的事實
+        reranker_min_score: 重排分數下限（0-1）
+        sim_min_score: 向量相似度下限（0-1）
+        mmr_lambda: MMR 多樣性係數（0-1，僅 edge_mmr 生效）
 
     Returns:
         dict: 包含搜索結果的字典
@@ -1226,17 +1308,38 @@ async def search_memory_facts(
 
         graphiti = await initialize_graphiti()
 
+        # recipe 選擇（僅允許 edge_* 系列）
+        if search_recipe:
+            if search_recipe not in _EDGE_SEARCH_RECIPES:
+                return create_error_response(
+                    ValueError(
+                        f"search_memory_facts 僅支援 edge_* 策略: {sorted(_EDGE_SEARCH_RECIPES)}"
+                    ),
+                    "參數錯誤: 不支援的 search_recipe",
+                )
+            if search_recipe == "edge_node_distance" and not center_node_uuid:
+                return create_error_response(
+                    ValueError("edge_node_distance 需提供 center_node_uuid 作為距離基準點"),
+                    "參數錯誤: edge_node_distance 缺少 center_node_uuid",
+                )
+            search_config = SEARCH_RECIPES[search_recipe].model_copy(deep=True)
+        else:
+            search_config = EDGE_HYBRID_SEARCH_RRF.model_copy(deep=True)
+
         # 建構過濾器
         search_filters = _build_search_filters(
             edge_types=edge_types,
             created_after=created_after,
             created_before=created_before,
             only_valid=only_valid,
+            valid_after=valid_after,
+            valid_before=valid_before,
         )
 
-        # 使用新版 search_() API
-        search_config = EDGE_HYBRID_SEARCH_RRF.model_copy(deep=True)
-        search_config.limit = min(max_facts, 50)
+        # 放大候選池供 reranker 重排，回傳前再截斷至 max_facts
+        top_k = min(max_facts, 50)
+        search_config.limit = _candidate_pool_limit(top_k)
+        _apply_search_tuning(search_config, reranker_min_score, sim_min_score, mmr_lambda)
 
         search_results = await graphiti.search_(
             query=query,
@@ -1246,7 +1349,7 @@ async def search_memory_facts(
             search_filter=search_filters,
         )
 
-        edges = search_results.edges if search_results.edges else []
+        edges = (search_results.edges or [])[:top_k]
         duration = time.time() - start_time
         log_operation_success("search_facts", duration, result_count=len(edges))
 
@@ -1268,6 +1371,7 @@ async def search_memory_facts(
                 "center_node_uuid": center_node_uuid,
                 "edge_types": edge_types,
                 "only_valid": only_valid,
+                "search_recipe": search_recipe or "edge_rrf",
             },
             "duration": round(duration, 2),
         }
@@ -1613,6 +1717,9 @@ async def advanced_search(
     max_results: int = 10,
     group_ids: Optional[List[str]] = None,
     center_node_uuid: Optional[str] = None,
+    reranker_min_score: Optional[float] = None,
+    sim_min_score: Optional[float] = None,
+    mmr_lambda: Optional[float] = None,
 ) -> dict:
     """
     使用進階搜尋策略搜索知識圖譜。
@@ -1630,6 +1737,9 @@ async def advanced_search(
         max_results: 每類結果的最大數量（上限 50）
         group_ids: 分組 ID 列表
         center_node_uuid: 中心節點 UUID
+        reranker_min_score: 重排分數下限（0-1）
+        sim_min_score: 向量相似度下限（0-1）
+        mmr_lambda: MMR 多樣性係數（0-1，僅 *_mmr recipe 生效）
 
     Returns:
         dict: 包含 nodes, edges, episodes, communities 的完整搜尋結果
@@ -1649,7 +1759,9 @@ async def advanced_search(
             }
 
         search_config = SEARCH_RECIPES[search_recipe].model_copy(deep=True)
-        search_config.limit = min(max_results, 50)
+        top_k = min(max_results, 50)
+        search_config.limit = _candidate_pool_limit(top_k)
+        _apply_search_tuning(search_config, reranker_min_score, sim_min_score, mmr_lambda)
 
         # 執行搜索
         results = await graphiti.search_(
@@ -1661,6 +1773,9 @@ async def advanced_search(
 
         duration = time.time() - start_time
         simplified = _simplify_search_results(results)
+        # 候選池放大後，回傳前截斷每類至 max_results
+        for _cat in ("nodes", "edges", "episodes", "communities"):
+            simplified[_cat] = simplified[_cat][:top_k]
 
         total = (
             len(simplified["nodes"])

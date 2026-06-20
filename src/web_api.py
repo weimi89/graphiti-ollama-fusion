@@ -1461,12 +1461,9 @@ def create_web_routes(
             limit_val = min(int(request.query_params.get("limit", 10)), 50)
             group_ids_str = request.query_params.get("group_ids", "")
             group_ids = [g.strip() for g in group_ids_str.split(",") if g.strip()] if group_ids_str else []
+            center_node_uuid = request.query_params.get("center_node_uuid", "").strip() or None
 
-            from graphiti_core.search.search_config_recipes import (
-                COMBINED_HYBRID_SEARCH_CROSS_ENCODER,
-            )
-
-            # 動態載入配方
+            # 動態載入配方與搜尋輔助（共用 MCP 工具層的候選池放大邏輯）
             import graphiti_mcp_server as server
             recipes = getattr(server, "SEARCH_RECIPES", {})
             if recipe not in recipes:
@@ -1476,17 +1473,20 @@ def create_web_routes(
                 }, status_code=400)
 
             search_config = recipes[recipe].model_copy(deep=True)
-            search_config.limit = limit_val
+            # 放大候選池供 reranker 重排，回傳前再截斷至 limit_val
+            pool_fn = getattr(server, "_candidate_pool_limit", None)
+            search_config.limit = pool_fn(limit_val) if pool_fn else limit_val
 
             graphiti = await get_graphiti_fn()
             results = await asyncio.wait_for(
                 graphiti.search_(
                     query=q, config=search_config, group_ids=group_ids,
+                    center_node_uuid=center_node_uuid,
                 ),
                 timeout=SEARCH_TIMEOUT,
             )
 
-            # 簡化結果
+            # 簡化結果（候選池放大後，回傳前截斷每類至 limit_val）
             simplified = {
                 "nodes": [
                     {
@@ -1495,7 +1495,7 @@ def create_web_routes(
                         "summary": getattr(n, "summary", "")[:200],
                         "group_id": getattr(n, "group_id", ""),
                     }
-                    for n in (results.nodes or [])
+                    for n in (results.nodes or [])[:limit_val]
                 ],
                 "edges": [
                     {
@@ -1503,7 +1503,7 @@ def create_web_routes(
                         "name": getattr(e, "name", ""),
                         "fact": getattr(e, "fact", ""),
                     }
-                    for e in (results.edges or [])
+                    for e in (results.edges or [])[:limit_val]
                 ],
                 "communities": [
                     {
@@ -1511,7 +1511,7 @@ def create_web_routes(
                         "name": getattr(c, "name", ""),
                         "summary": getattr(c, "summary", "")[:200],
                     }
-                    for c in (results.communities or [])
+                    for c in (results.communities or [])[:limit_val]
                 ],
             }
 

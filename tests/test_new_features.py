@@ -381,6 +381,60 @@ class TestCrossEncoderConfig:
             del os.environ["CROSS_ENCODER_TOP_N"]
 
 
+class TestSearchRecallEnhancements:
+    """測試 Commit 3 召回/精度擴充。"""
+
+    def test_candidate_pool_limit(self):
+        from graphiti_mcp_server import _candidate_pool_limit
+        assert _candidate_pool_limit(10) == 30   # 10*3
+        assert _candidate_pool_limit(1) == 20    # 下限
+        assert _candidate_pool_limit(50) == 100  # 上限
+
+    def test_combined_mmr_lambda_fixed(self):
+        from graphiti_mcp_server import SEARCH_RECIPES
+        mmr = SEARCH_RECIPES["combined_mmr"]
+        for sub in (mmr.node_config, mmr.edge_config, mmr.community_config):
+            if sub is not None:
+                assert sub.mmr_lambda == 0.5
+
+    def test_build_filters_valid_at(self):
+        from graphiti_mcp_server import _build_search_filters
+        sf = _build_search_filters(
+            valid_after="2026-01-01T00:00:00Z", valid_before="2026-12-31T00:00:00Z"
+        )
+        assert sf.valid_at is not None
+        assert len(sf.valid_at[0]) == 2
+
+    def test_apply_search_tuning(self):
+        from graphiti_mcp_server import SEARCH_RECIPES, _apply_search_tuning
+        cfg = SEARCH_RECIPES["node_rrf"].model_copy(deep=True)
+        _apply_search_tuning(cfg, reranker_min_score=0.3, sim_min_score=0.7, mmr_lambda=0.4)
+        assert cfg.reranker_min_score == 0.3
+        assert cfg.node_config.sim_min_score == 0.7
+
+    def test_edge_recipes_whitelist(self):
+        from graphiti_mcp_server import _EDGE_SEARCH_RECIPES
+        assert _EDGE_SEARCH_RECIPES == {
+            "edge_rrf", "edge_mmr", "edge_node_distance",
+            "edge_episode_mentions", "edge_cross_encoder",
+        }
+
+    def test_facts_signature_has_recipe_and_tuning(self):
+        import inspect
+        from graphiti_mcp_server import search_memory_facts
+        params = inspect.signature(search_memory_facts).parameters
+        for p in ("search_recipe", "valid_after", "valid_before",
+                  "reranker_min_score", "sim_min_score", "mmr_lambda"):
+            assert p in params, f"缺少參數 {p}"
+
+    def test_nodes_signature_has_tuning(self):
+        import inspect
+        from graphiti_mcp_server import search_memory_nodes
+        params = inspect.signature(search_memory_nodes).parameters
+        for p in ("reranker_min_score", "sim_min_score", "mmr_lambda"):
+            assert p in params, f"缺少參數 {p}"
+
+
 # ============================================================
 # _build_search_filters 測試
 # ============================================================
