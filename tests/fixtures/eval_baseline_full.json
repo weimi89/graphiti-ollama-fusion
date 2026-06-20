@@ -1,0 +1,40 @@
+{
+  "k": 10,
+  "recipes": {
+    "node_rrf": {
+      "recall_at_k": 0.7949,
+      "mrr": 0.4839,
+      "hits": 62,
+      "total": 78,
+      "avg_duration": 0.194
+    },
+    "node_mmr": {
+      "recall_at_k": 0.4359,
+      "mrr": 0.2056,
+      "hits": 34,
+      "total": 78,
+      "avg_duration": 0.217
+    },
+    "combined_rrf": {
+      "recall_at_k": 0.7949,
+      "mrr": 0.4839,
+      "hits": 62,
+      "total": 78,
+      "avg_duration": 0.202
+    },
+    "edge_rrf": {
+      "recall_at_k": 1.0,
+      "mrr": 0.9441,
+      "hits": 72,
+      "total": 72,
+      "avg_duration": 0.188
+    },
+    "edge_mmr": {
+      "recall_at_k": 1.0,
+      "mrr": 0.9681,
+      "hits": 72,
+      "total": 72,
+      "avg_duration": 0.211
+    }
+  }
+}
