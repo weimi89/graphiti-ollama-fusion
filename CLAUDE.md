@@ -68,7 +68,7 @@ uv run python tools/migrate_embeddings.py      # Embedding 模型遷移
 ## Architecture
 
 ```
-graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 MCP 工具（19 個）
+graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 MCP 工具（20 個）
 ├── src/
 │   ├── config.py                # 配置管理（GraphitiConfig）支援 JSON/.env 層疊載入
 │   ├── web_api.py               # Web 管理介面 REST API 路由（30+ 端點）
@@ -157,7 +157,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **多國語系（i18n）**：`src/i18n.py` 維護 **33 種語言** 的訊息字典 `MESSAGES`，key 採 `group.action` 扁平命名。其中 `zh-TW`（基準/fallback）、`en`、`zh-CN`、`ja` 為手寫，其餘 29 種語言由 `src/i18n_generated.py` 的 `GENERATED_MESSAGE_OVERRIDES` 提供。合成邏輯（i18n.py 末段迴圈）每個語言以 `MESSAGES['en']` 為底，依序套用手寫覆蓋 → `GENERATED_MESSAGE_OVERRIDES` → `MANUAL_MESSAGE_OVERRIDES`，確保所有語言 key 與 `zh-TW` 完全對齊（缺翻譯自動回退英文）。`t(key, lang, **params)` 取模板並以 `str.format` 插值，fallback 順序為 `lang → zh-TW → key`，格式化失敗絕不冒泡成例外。兩條輸出路徑共用此字典但語言來源不同：**MCP 工具** 依 `app_config.server_lang`（`SERVER_LANG` 環境變數，透過模組級 `_srv_lang()` 取得）；**REST API** 依每個請求的 HTTP `Accept-Language` header，由 `parse_accept_language()`（含 q 值排序、裸 `zh`→`zh-TW`、萬用字元忽略）解析。新增訊息時只需補上 `zh-TW`，未翻譯語言會先回退英文；`tests/test_i18n.py` 會驗證所有語言 key 與佔位符對齊。注意：`create_error_response()` 餵入的技術性例外 context（如「搜索節點失敗」）由 `src/exceptions.py` 產生，未納入此 i18n 範圍。
 
-## MCP Tools (19 tools)
+## MCP Tools (20 tools)
 
 | 類別 | 工具 | 說明 |
 |------|------|------|
@@ -167,6 +167,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 | 記憶管理 | `search_memory_nodes` | 搜尋記憶節點（支援搜尋策略、時間過濾） |
 | 記憶管理 | `search_memory_facts` | 搜尋記憶事實（支援關係類型、時間、有效性過濾） |
 | 記憶管理 | `advanced_search` | 進階搜尋（16 種策略，回傳完整結果） |
+| 記憶管理 | `hybrid_search` | 雙記憶混合搜尋（融合 Graphiti 圖譜 + claude-mem 工作記憶，claude-mem 不可用時優雅降級） |
 | 記憶管理 | `get_episodes` | 獲取最近的記憶片段 |
 | 知識分析 | `check_conflicts` | 檢測兩實體間的事實衝突 |
 | 知識分析 | `get_node_edges` | 探索節點的入邊和出邊關係 |
@@ -314,4 +315,4 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 
 ## Upstream Reference
 
-本專案基於 [getzep/graphiti/mcp_server](https://github.com/getzep/graphiti/tree/main/mcp_server) 擴充開發。本地新增功能包括：多 LLM 提供者架構（Ollama / GLM / GROQ / OpenRouter / DeepSeek 動態切換）、Embedding 與 LLM 解耦（`EMBEDDING_PROVIDER`）、Ollama 深度適配（含雙模型分流）、OpenAICompatClient 基類（GLM / OpenRouter / DeepSeek 共用簡化 schema 注入與 DeepSeek json_object 保底防護）、Web 管理介面（含社群瀏覽、三元組表單、批量匯入、運行時設定）、19 個 MCP 工具（含進階搜尋、衝突偵測、去重、重要性追蹤、智慧遺忘）、安全模式（Safe Mode）、智慧內容切分、背景記憶處理（TaskStore SQLite 持久化）、運行時 Config API、33 語言 i18n、完整異常/日誌系統。上游使用 graphiti-core 最新版，本地依賴 >=0.24.3。
+本專案基於 [getzep/graphiti/mcp_server](https://github.com/getzep/graphiti/tree/main/mcp_server) 擴充開發。本地新增功能包括：多 LLM 提供者架構（Ollama / GLM / GROQ / OpenRouter / DeepSeek 動態切換）、Embedding 與 LLM 解耦（`EMBEDDING_PROVIDER`）、Ollama 深度適配（含雙模型分流）、OpenAICompatClient 基類（GLM / OpenRouter / DeepSeek 共用簡化 schema 注入與 DeepSeek json_object 保底防護）、Web 管理介面（含社群瀏覽、三元組表單、批量匯入、運行時設定）、20 個 MCP 工具（含進階搜尋、雙記憶混合搜尋、衝突偵測、去重、重要性追蹤、智慧遺忘）、安全模式（Safe Mode）、智慧內容切分、背景記憶處理（TaskStore SQLite 持久化）、運行時 Config API、33 語言 i18n、完整異常/日誌系統。上游使用 graphiti-core 最新版，本地依賴 >=0.24.3。
