@@ -94,7 +94,7 @@ class GlmConfig:
     base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
     model: str = "glm-4-flash"
     embedding_model: str = "embedding-3"
-    embedding_dimensions: int = 768
+    embedding_dimensions: int = 1024
     temperature: float = 0.1
     max_tokens: int = 4096
 
@@ -287,7 +287,7 @@ class OllamaEmbedderConfig:
 
     model: str = "bge-m3"
     base_url: str = "http://localhost:11434"
-    dimensions: int = 768
+    dimensions: int = 1024
     batch_size: int = 10
     timeout: int = 60
 
