@@ -156,12 +156,17 @@ SEARCH_RECIPES: Dict[str, SearchConfig] = {
     "community_cross_encoder": COMMUNITY_HYBRID_SEARCH_CROSS_ENCODER,
 }
 
-# 修正 graphiti-core 的 COMBINED_HYBRID_SEARCH_MMR 把 mmr_lambda 硬設為 1（多樣性
-# 完全失效，退化為純相似度排序）。統一為 0.5，讓 MMR 真正發揮去冗餘作用。
-for _mmr_recipe in (SEARCH_RECIPES["combined_mmr"],):
+# MMR recipe 的 mmr_lambda 預設過偏多樣性（node/edge 預設 0.5、combined 甚至 1），
+# 對「精確查找」傷害大：評估框架實測 node_mmr lambda=0.5 時 recall@5 僅 0.20，
+# 調至 0.9（主要 relevance + 少量去冗餘）升至 0.87。統一設為 0.9。
+_MMR_LAMBDA = 0.9
+for _mmr_key in ("combined_mmr", "node_mmr", "edge_mmr", "community_mmr"):
+    _mmr_recipe = SEARCH_RECIPES.get(_mmr_key)
+    if _mmr_recipe is None:
+        continue
     for _sub_cfg in (_mmr_recipe.node_config, _mmr_recipe.edge_config, _mmr_recipe.community_config):
-        if _sub_cfg is not None and getattr(_sub_cfg, "mmr_lambda", None) == 1:
-            _sub_cfg.mmr_lambda = 0.5
+        if _sub_cfg is not None and hasattr(_sub_cfg, "mmr_lambda"):
+            _sub_cfg.mmr_lambda = _MMR_LAMBDA
 
 # search_memory_facts 僅允許 edge_* 系列 recipe（其餘 recipe 不會產生 edges 結果）
 _EDGE_SEARCH_RECIPES = {

@@ -390,12 +390,15 @@ class TestSearchRecallEnhancements:
         assert _candidate_pool_limit(1) == 20    # 下限
         assert _candidate_pool_limit(50) == 100  # 上限
 
-    def test_combined_mmr_lambda_fixed(self):
+    def test_mmr_lambda_tuned_for_precision(self):
         from graphiti_mcp_server import SEARCH_RECIPES
-        mmr = SEARCH_RECIPES["combined_mmr"]
-        for sub in (mmr.node_config, mmr.edge_config, mmr.community_config):
-            if sub is not None:
-                assert sub.mmr_lambda == 0.5
+        # 所有 *_mmr recipe 的 mmr_lambda 應調至 0.9（偏 relevance，修復命中率災難
+        # ——評估實測 node_mmr lambda=0.5 時 recall@5 僅 0.20，0.9 時升至 0.87）
+        for key in ("combined_mmr", "node_mmr", "edge_mmr"):
+            r = SEARCH_RECIPES[key]
+            for sub in (r.node_config, r.edge_config, r.community_config):
+                if sub is not None and hasattr(sub, "mmr_lambda"):
+                    assert sub.mmr_lambda == 0.9, f"{key}: {sub.mmr_lambda}"
 
     def test_build_filters_valid_at(self):
         from graphiti_mcp_server import _build_search_filters
