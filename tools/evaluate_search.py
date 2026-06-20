@@ -120,6 +120,8 @@ async def main():
     parser.add_argument("--recipes", default=None, help="逗號分隔的 recipe；預設常用 5 種")
     parser.add_argument("--group-id", default=None, help="限定取樣與搜尋的 group")
     parser.add_argument("--seed", type=int, default=13, help="取樣亂數種子（可重現）")
+    parser.add_argument("--mmr-lambda", type=float, default=None, help="覆寫 mmr_lambda（掃描調參用）")
+    parser.add_argument("--sim-min-score", type=float, default=None, help="覆寫 sim_min_score")
     parser.add_argument("--verbose", action="store_true", help="印出每筆 query 與命中情形")
     args = parser.parse_args()
 
@@ -147,6 +149,10 @@ async def main():
         for recipe_name in recipes:
             config = server.SEARCH_RECIPES[recipe_name].model_copy(deep=True)
             config.limit = max(args.k, 10)
+            if args.mmr_lambda is not None or args.sim_min_score is not None:
+                server._apply_search_tuning(
+                    config, sim_min_score=args.sim_min_score, mmr_lambda=args.mmr_lambda
+                )
             results, durations = [], []
             for item in golden:
                 t0 = time.monotonic()
