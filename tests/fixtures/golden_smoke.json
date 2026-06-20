@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "count": 8,
+  "items": [
+    {
+      "query": "Vite dev server origin URL set in vite.config.js for Laravel project",
+      "target_uuid": "44d1beb8-35d4-40db-b983-b2ae9bab0e9e",
+      "group_id": "global",
+      "target_name": "origin",
+      "kind": "node"
+    },
+    {
+      "query": "Laravel Vite development server port 5074",
+      "target_uuid": "d910e4f3-ac2f-4119-99e9-adc1f71a8359",
+      "group_id": "global",
+      "target_name": "port",
+      "kind": "node"
+    },
+    {
+      "query": "內部網路位址設定為 http://192.168.x.x:port",
+      "target_uuid": "5c618423-2789-447b-a9d3-3d320b8130d9",
+      "group_id": "global",
+      "target_name": "區網 IP",
+      "kind": "node"
+    },
+    {
+      "query": "vite config to enable cross-origin requests",
+      "target_uuid": "f76d698b-0e1f-4bc4-9267-fb22bf92350a",
+      "group_id": "global",
+      "target_name": "cors",
+      "kind": "node"
+    },
+    {
+      "query": "Lessons learned from WiFiShare and Sites rebrand?",
+      "target_uuid": "07d3ec71-3144-4231-8f58-732225e1b0d0",
+      "group_id": "global",
+      "target_name": "CO_OCCURRED_IN_REBRAND",
+      "kind": "edge"
+    },
+    {
+      "query": "AI failure to execute search_memory_nodes during focused tasks",
+      "target_uuid": "555e8e40-d2f2-40be-857c-18d82ae74eb0",
+      "group_id": "global",
+      "target_name": "FAILS_TO_EXECUTE",
+      "kind": "edge"
+    },
+    {
+      "query": "How does hue rotation change old brand colors to new?",
+      "target_uuid": "1a6a8470-529e-40b5-ad6d-b26185c6bd3f",
+      "group_id": "global",
+      "target_name": "TRANSFORMS",
+      "kind": "edge"
+    },
+    {
+      "query": "rgba spaces cause shadow utility class to be discarded",
+      "target_uuid": "d2245277-6f49-4391-8367-1261238b0f5f",
+      "group_id": "global",
+      "target_name": "CAUSES_SILENT_DISCARD",
+      "kind": "edge"
+    }
+  ]
+}

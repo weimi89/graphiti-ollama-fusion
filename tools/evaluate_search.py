@@ -1,22 +1,33 @@
 #!/usr/bin/env python3
 """
-evaluate_search.py — 命中率評估框架（recipe A/B 對比）
-======================================================
+evaluate_search.py — 命中率評估框架（recipe A/B 對比 + 可重現 regression）
+==========================================================================
 
-自動建立 golden query set 並量化各 search recipe 的命中率，用來客觀比較不同
-策略/設定的 recall@k 與 MRR，驗證命中率改善是否真的有效。
+自動建立 golden query set 並量化各 search recipe 的命中率（recall@k / MRR），
+用來客觀比較不同策略/設定，並把改善「可重現地」證明出來、防止退步。
 
-流程：
-  1. 隨機取樣 N 個有 summary 的 Entity 作為「目標」
-  2. 用 LLM 從每個 summary 生成一個自然語言查詢（刻意不含實體名稱，避免 trivial 命中）
+子命令：
+  build-golden  生成 golden set 並存檔（LLM 成本一次付清，之後零 LLM 重複評估）
+  run           評估 recipe；可載入持久 golden set、對比/更新 baseline
+
+流程（生成 golden set 時）：
+  1. 隨機取樣 N 個有 summary 的 Entity（node）或有 fact 的 RELATES_TO 邊（edge）
+  2. 用 LLM 從 summary/fact 生成自然語言查詢（刻意不含實體名稱，避免 trivial 命中）
   3. 對每個 recipe 用 graphiti.search_ 跑查詢，檢查目標是否在 top-k
-  4. 計算 recall@k / MRR，輸出對比表
+  4. 計算 recall@k / MRR，輸出對比表；可與 baseline 對比偵測回歸
 
 用法：
-    uv run python tools/evaluate_search.py
-    uv run python tools/evaluate_search.py --sample 30 --k 10
-    uv run python tools/evaluate_search.py --recipes combined_rrf,combined_cross_encoder
-    uv run python tools/evaluate_search.py --group-id global --seed 42
+    # 一次生成可重現的 golden set
+    uv run python tools/evaluate_search.py build-golden --sample 30 --out tests/fixtures/golden.json
+    uv run python tools/evaluate_search.py build-golden --sample 30 --kind both --out tests/fixtures/golden.json
+
+    # 用持久 golden set 評估（零 LLM、可重現）
+    uv run python tools/evaluate_search.py run --golden tests/fixtures/golden.json
+    uv run python tools/evaluate_search.py run --golden tests/fixtures/golden.json --compare-baseline
+    uv run python tools/evaluate_search.py run --golden tests/fixtures/golden.json --save-baseline
+
+    # 向後相容：無子命令 = 即時生成 + 評估（舊行為）
+    uv run python tools/evaluate_search.py --sample 15 --recipes node_rrf,combined_rrf
 
 注意：含 *_cross_encoder 的 recipe 會對每筆查詢呼叫 LLM 重排，評估較慢。
 """
@@ -37,6 +48,7 @@ DEFAULT_RECIPES = [
     "combined_rrf",
     "combined_cross_encoder",
 ]
+DEFAULT_BASELINE = "data/eval_baseline.json"
 
 
 class _EvalQuery(BaseModel):
@@ -77,112 +89,316 @@ async def _gen_query(llm, name: str, summary: str) -> str:
         return fallback
 
 
-async def _build_golden(graphiti, n, group_id, seed):
+async def _gen_query_edge(llm, fact: str) -> str:
+    """用 LLM 從 edge fact 生成查詢（描述關係本身，避免直接照抄 fact）。"""
+    fallback = (fact or "")[:60]
+    if llm is None:
+        return fallback
+    try:
+        from graphiti_core.prompts.models import Message
+
+        msgs = [
+            Message(
+                role="system",
+                content=(
+                    "You generate ONE natural-language search query a user might type "
+                    "to find the described relationship/fact in a knowledge graph. "
+                    "Rephrase; do NOT copy the sentence verbatim. Keep it under 15 words."
+                ),
+            ),
+            Message(
+                role="user",
+                content=(f"Fact: {fact}\n" 'Return JSON: {"query": "..."}'),
+            ),
+        ]
+        r = await llm.generate_response(msgs, response_model=_EvalQuery)
+        q = (r.get("query", "") if isinstance(r, dict) else "").strip()
+        return q or fallback
+    except Exception:
+        return fallback
+
+
+def _shuffle_take(rows, n, seed):
+    """Python seed 洗牌後取前 n（Neo4j rand 無 seed，故先抓較大 pool 再取樣）。"""
+    import random
+
+    rng = random.Random(seed)
+    rng.shuffle(rows)
+    return rows[:n]
+
+
+async def _build_golden_nodes(graphiti, n, group_id, seed):
     from src.search_eval import GoldenItem
 
     where = "WHERE n.summary IS NOT NULL AND size(n.summary) > 20"
-    params = {"n": n}
+    params = {"pool": max(n * 5, n)}
     if group_id:
         where += " AND n.group_id = $group_id"
         params["group_id"] = group_id
-    # 用 rand(seed) 取樣（Neo4j rand 無 seed，改抓較多再由 Python seed 取樣）
     query = (
         f"MATCH (n:Entity) {where} "
         "RETURN n.uuid AS uuid, n.name AS name, n.summary AS summary, "
         "n.group_id AS group_id LIMIT $pool"
     )
-    params["pool"] = max(n * 5, n)
     async with graphiti.driver.session() as s:
-        result = await s.run(query, params)
-        rows = await result.data()
-
-    import random
-
-    rng = random.Random(seed)
-    rng.shuffle(rows)
-    rows = rows[:n]
+        rows = await (await s.run(query, params)).data()
+    rows = _shuffle_take(rows, n, seed)
 
     llm = getattr(graphiti, "llm_client", None)
     golden = []
     for row in rows:
         q = await _gen_query(llm, row["name"], row["summary"])
         golden.append(GoldenItem(
-            query=q, target_uuid=row["uuid"],
-            group_id=row["group_id"], target_name=row["name"],
+            query=q, target_uuid=row["uuid"], group_id=row["group_id"],
+            target_name=row["name"], kind="node",
         ))
     return golden
 
 
+async def _build_golden_edges(graphiti, n, group_id, seed):
+    from src.search_eval import GoldenItem
+
+    where = "WHERE r.fact IS NOT NULL AND size(r.fact) > 20"
+    params = {"pool": max(n * 5, n)}
+    if group_id:
+        where += " AND r.group_id = $group_id"
+        params["group_id"] = group_id
+    query = (
+        f"MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity) {where} "
+        "RETURN r.uuid AS uuid, r.fact AS fact, r.name AS name, "
+        "r.group_id AS group_id LIMIT $pool"
+    )
+    async with graphiti.driver.session() as s:
+        rows = await (await s.run(query, params)).data()
+    rows = _shuffle_take(rows, n, seed)
+
+    llm = getattr(graphiti, "llm_client", None)
+    golden = []
+    for row in rows:
+        q = await _gen_query_edge(llm, row["fact"])
+        golden.append(GoldenItem(
+            query=q, target_uuid=row["uuid"], group_id=row["group_id"],
+            target_name=row.get("name") or (row["fact"][:40]), kind="edge",
+        ))
+    return golden
+
+
+async def _build_golden(graphiti, n, group_id, seed, kind="node"):
+    """依 kind 建立 golden set。kind: node | edge | both。"""
+    if kind == "edge":
+        return await _build_golden_edges(graphiti, n, group_id, seed)
+    if kind == "both":
+        half = max(n // 2, 1)
+        nodes = await _build_golden_nodes(graphiti, n - half, group_id, seed)
+        edges = await _build_golden_edges(graphiti, half, group_id, seed + 1)
+        return nodes + edges
+    return await _build_golden_nodes(graphiti, n, group_id, seed)
+
+
+def _recipe_domain(recipe: str) -> str:
+    """recipe 的結果領域：edge | community | node（含 combined）。"""
+    if recipe.startswith("edge_"):
+        return "edge"
+    if recipe.startswith("community_"):
+        return "community"
+    return "node"  # node_* 與 combined_*
+
+
+def _extract_ranked(res, recipe: str):
+    """從 search_ 結果依 recipe 領域取出排序後的 uuid 清單。"""
+    domain = _recipe_domain(recipe)
+    if domain == "edge":
+        return [str(e.uuid) for e in (res.edges or [])]
+    if domain == "community":
+        return [str(c.uuid) for c in (res.communities or [])]
+    return [str(n.uuid) for n in (res.nodes or [])]
+
+
+def _item_kind_for_domain(domain: str) -> str:
+    """recipe 領域對應到應評估的 golden item kind。"""
+    return "edge" if domain == "edge" else "node"
+
+
+async def _evaluate(graphiti, server, golden, recipes, k, mmr_lambda, sim_min_score, verbose):
+    """對每個 recipe 跑 golden set，回傳 RecipeMetrics 清單。"""
+    from src.search_eval import compute_metrics
+
+    all_metrics = []
+    for recipe_name in recipes:
+        domain = _recipe_domain(recipe_name)
+        want_kind = _item_kind_for_domain(domain)
+        items = [g for g in golden if g.kind == want_kind]
+        if not items:
+            print(f"  跳過 {recipe_name}（無 {want_kind} 類樣本）")
+            continue
+
+        config = server.SEARCH_RECIPES[recipe_name].model_copy(deep=True)
+        config.limit = max(k, 10)
+        if mmr_lambda is not None or sim_min_score is not None:
+            server._apply_search_tuning(config, sim_min_score=sim_min_score, mmr_lambda=mmr_lambda)
+
+        results, durations = [], []
+        for item in items:
+            t0 = time.monotonic()
+            try:
+                res = await graphiti.search_(
+                    query=item.query, config=config, group_ids=[item.group_id]
+                )
+                ranked = _extract_ranked(res, recipe_name)
+            except Exception as e:
+                ranked = []
+                if verbose:
+                    print(f"  [錯誤] {recipe_name} / {item.query[:30]}: {e}")
+            durations.append(time.monotonic() - t0)
+            results.append((ranked, item.target_uuid))
+            if verbose:
+                hit = item.target_uuid in ranked[:k]
+                print(f"  {recipe_name} | {'✓' if hit else '✗'} | {item.query[:50]}")
+        m = compute_metrics(recipe_name, results, k, durations)
+        all_metrics.append(m)
+        print(f"  完成 {recipe_name}: recall@{k}={m.recall_at_k:.3f}, MRR={m.mrr:.3f} (n={m.total})")
+    return all_metrics
+
+
+def _filter_recipes(recipes_arg, server):
+    recipes = (
+        [r.strip() for r in recipes_arg.split(",") if r.strip()]
+        if recipes_arg else DEFAULT_RECIPES
+    )
+    return [r for r in recipes if r in server.SEARCH_RECIPES]
+
+
+async def _close_embedder(graphiti):
+    sess = getattr(getattr(graphiti, "embedder", None), "_session", None)
+    if sess and not sess.closed:
+        await sess.close()
+
+
+async def cmd_build_golden(args, server, graphiti):
+    from src.search_eval import save_golden
+
+    print(f"建立 golden set（kind={args.kind}, 取樣 {args.sample}，LLM 生成查詢中）...")
+    golden = await _build_golden(graphiti, args.sample, args.group_id, args.seed, args.kind)
+    if not golden:
+        print("無可取樣的目標，請確認圖譜有資料。")
+        return 1
+    n = save_golden(golden, args.out)
+    print(f"已寫入 {n} 筆 golden 樣本 → {args.out}")
+    by_kind = {}
+    for g in golden:
+        by_kind[g.kind] = by_kind.get(g.kind, 0) + 1
+    print(f"分布: {by_kind}")
+    return 0
+
+
+async def cmd_run(args, server, graphiti):
+    from src.search_eval import (
+        compare_to_baseline,
+        format_comparison_table,
+        load_golden,
+        save_baseline,
+    )
+    import json
+
+    recipes = _filter_recipes(args.recipes, server)
+
+    if getattr(args, "golden", None):
+        golden = load_golden(args.golden)
+        print(f"載入 golden set：{args.golden}（{len(golden)} 筆）")
+    else:
+        print(f"建立 golden query set（即時生成，取樣 {args.sample}）...")
+        golden = await _build_golden(graphiti, args.sample, args.group_id, args.seed, args.kind)
+    if not golden:
+        print("無 golden 樣本，請確認圖譜有資料或 golden 檔。")
+        return 1
+    print(f"golden 樣本數: {len(golden)}；評估 recipe: {recipes}\n")
+
+    metrics = await _evaluate(
+        graphiti, server, golden, recipes, args.k,
+        args.mmr_lambda, args.sim_min_score, args.verbose,
+    )
+
+    print("\n" + "=" * 60)
+    print(f"命中率評估結果（n={len(golden)}, k={args.k}）")
+    print("=" * 60)
+    print(format_comparison_table(metrics, args.k))
+
+    exit_code = 0
+    if getattr(args, "compare_baseline", False):
+        baseline = None
+        bp = Path(args.baseline)
+        if bp.exists():
+            baseline = json.loads(bp.read_text(encoding="utf-8"))
+        regressions, lines = compare_to_baseline(metrics, baseline, args.tol)
+        print("\n--- 對比 baseline ---")
+        print("\n".join(lines) if lines else "（無可對比項）")
+        if regressions:
+            print(f"\n⚠️ 偵測到 {len(regressions)} 項回歸（tol={args.tol}）")
+            exit_code = 2
+
+    if getattr(args, "save_baseline", False):
+        save_baseline(metrics, args.baseline, args.k)
+        print(f"\n已更新 baseline → {args.baseline}")
+
+    return exit_code
+
+
+def _add_common(p):
+    p.add_argument("--sample", type=int, default=20, help="golden 樣本數（即時生成時）")
+    p.add_argument("--k", type=int, default=10, help="top-k")
+    p.add_argument("--recipes", default=None, help="逗號分隔的 recipe；預設常用 5 種")
+    p.add_argument("--group-id", default=None, help="限定取樣與搜尋的 group")
+    p.add_argument("--seed", type=int, default=13, help="取樣亂數種子（可重現）")
+    p.add_argument("--kind", default="node", choices=["node", "edge", "both"], help="golden 目標型別")
+    p.add_argument("--mmr-lambda", type=float, default=None, help="覆寫 mmr_lambda（掃描調參用）")
+    p.add_argument("--sim-min-score", type=float, default=None, help="覆寫 sim_min_score")
+    p.add_argument("--verbose", action="store_true", help="印出每筆 query 與命中情形")
+
+
+def _parse_args(argv):
+    parser = argparse.ArgumentParser(description="命中率評估框架（recipe A/B + regression）")
+    sub = parser.add_subparsers(dest="cmd")
+
+    pb = sub.add_parser("build-golden", help="生成 golden set 並存檔")
+    pb.add_argument("--out", required=True, help="輸出 JSON 路徑")
+    pb.add_argument("--sample", type=int, default=30)
+    pb.add_argument("--group-id", default=None)
+    pb.add_argument("--seed", type=int, default=13)
+    pb.add_argument("--kind", default="node", choices=["node", "edge", "both"])
+
+    pr = sub.add_parser("run", help="評估 recipe（可載入 golden / 對比 baseline）")
+    _add_common(pr)
+    pr.add_argument("--golden", default=None, help="載入持久 golden set（零 LLM）")
+    pr.add_argument("--compare-baseline", action="store_true", help="與 baseline 對比偵測回歸")
+    pr.add_argument("--save-baseline", action="store_true", help="把本次度量存為新 baseline")
+    pr.add_argument("--baseline", default=DEFAULT_BASELINE, help="baseline JSON 路徑")
+    pr.add_argument("--tol", type=float, default=0.05, help="回歸容忍下滑幅度")
+
+    # 向後相容：無子命令 = run（即時生成）
+    _add_common(parser)
+    parser.add_argument("--golden", default=None)
+    parser.add_argument("--compare-baseline", action="store_true")
+    parser.add_argument("--save-baseline", action="store_true")
+    parser.add_argument("--baseline", default=DEFAULT_BASELINE)
+    parser.add_argument("--tol", type=float, default=0.05)
+    return parser.parse_args(argv)
+
+
 async def main():
-    parser = argparse.ArgumentParser(description="命中率評估框架（recipe A/B 對比）")
-    parser.add_argument("--sample", type=int, default=20, help="golden 樣本數")
-    parser.add_argument("--k", type=int, default=10, help="top-k")
-    parser.add_argument("--recipes", default=None, help="逗號分隔的 recipe；預設常用 5 種")
-    parser.add_argument("--group-id", default=None, help="限定取樣與搜尋的 group")
-    parser.add_argument("--seed", type=int, default=13, help="取樣亂數種子（可重現）")
-    parser.add_argument("--mmr-lambda", type=float, default=None, help="覆寫 mmr_lambda（掃描調參用）")
-    parser.add_argument("--sim-min-score", type=float, default=None, help="覆寫 sim_min_score")
-    parser.add_argument("--verbose", action="store_true", help="印出每筆 query 與命中情形")
-    args = parser.parse_args()
+    args = _parse_args(sys.argv[1:])
 
     import graphiti_mcp_server as server
     from src.config import load_config
-    from src.search_eval import compute_metrics, format_comparison_table
 
     server.app_config = load_config()
     graphiti = await server.initialize_graphiti()
-    recipes = (
-        [r.strip() for r in args.recipes.split(",") if r.strip()]
-        if args.recipes else DEFAULT_RECIPES
-    )
-    recipes = [r for r in recipes if r in server.SEARCH_RECIPES]
-
     try:
-        print(f"建立 golden query set（取樣 {args.sample} 個 Entity，生成查詢中）...")
-        golden = await _build_golden(graphiti, args.sample, args.group_id, args.seed)
-        print(f"golden 樣本數: {len(golden)}；評估 recipe: {recipes}\n")
-        if not golden:
-            print("無可取樣的 Entity，請確認圖譜有資料。")
-            return
-
-        all_metrics = []
-        for recipe_name in recipes:
-            config = server.SEARCH_RECIPES[recipe_name].model_copy(deep=True)
-            config.limit = max(args.k, 10)
-            if args.mmr_lambda is not None or args.sim_min_score is not None:
-                server._apply_search_tuning(
-                    config, sim_min_score=args.sim_min_score, mmr_lambda=args.mmr_lambda
-                )
-            results, durations = [], []
-            for item in golden:
-                t0 = time.monotonic()
-                try:
-                    res = await graphiti.search_(
-                        query=item.query, config=config, group_ids=[item.group_id]
-                    )
-                    ranked = [str(n.uuid) for n in (res.nodes or [])]
-                except Exception as e:
-                    ranked = []
-                    if args.verbose:
-                        print(f"  [錯誤] {recipe_name} / {item.query[:30]}: {e}")
-                durations.append(time.monotonic() - t0)
-                results.append((ranked, item.target_uuid))
-                if args.verbose:
-                    hit = item.target_uuid in ranked[: args.k]
-                    print(f"  {recipe_name} | {'✓' if hit else '✗'} | {item.query[:50]}")
-            m = compute_metrics(recipe_name, results, args.k, durations)
-            all_metrics.append(m)
-            print(f"  完成 {recipe_name}: recall@{args.k}={m.recall_at_k:.3f}, MRR={m.mrr:.3f}")
-
-        print("\n" + "=" * 60)
-        print(f"命中率評估結果（n={len(golden)}, k={args.k}）")
-        print("=" * 60)
-        print(format_comparison_table(all_metrics, args.k))
+        if args.cmd == "build-golden":
+            return await cmd_build_golden(args, server, graphiti)
+        return await cmd_run(args, server, graphiti)  # cmd == "run" 或 None
     finally:
-        sess = getattr(getattr(graphiti, "embedder", None), "_session", None)
-        if sess and not sess.closed:
-            await sess.close()
+        await _close_embedder(graphiti)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()) or 0)
