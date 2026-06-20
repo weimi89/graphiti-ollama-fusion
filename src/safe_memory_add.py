@@ -95,6 +95,7 @@ async def safe_add_memory(
         return {
             "success": True,
             "uuid": episode_node.uuid,
+            "searchable": False,  # 僅建立 EpisodicNode，無 Entity/embedding，向量搜尋不會命中
             "message": f"記憶 '{name}' 安全添加成功",
         }
 

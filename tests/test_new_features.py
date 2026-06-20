@@ -209,6 +209,363 @@ class TestSearchRecipes:
         for name, config in SEARCH_RECIPES.items():
             assert isinstance(config, SearchConfig), f"{name} is not a SearchConfig"
 
+    def test_advanced_search_default_recipe_is_rrf(self):
+        """advanced_search 預設 recipe 必須是可運作的 combined_rrf，
+        而非會在無真實 cross_encoder 時失敗的 combined_cross_encoder。"""
+        import inspect
+        from graphiti_mcp_server import advanced_search
+        sig = inspect.signature(advanced_search)
+        assert sig.parameters["search_recipe"].default == "combined_rrf"
+
+
+class TestExcludedEntityTypesKwarg:
+    """回歸測試：excluded_entity_types 須以正確 kwarg 傳給 graphiti-core。
+
+    歷史 bug：誤用 entity_types（需 dict）導致 graphiti-core 的
+    validate_entity_types 拋 AttributeError，被外層 except 靜默降級為
+    safe_mode（只建立不可搜尋的 EpisodicNode），使該記憶 recall=0。
+    """
+
+    def test_excluded_entity_types_uses_correct_kwarg(self):
+        import asyncio
+        import time
+        from unittest.mock import AsyncMock
+        from graphiti_core.nodes import EpisodeType
+        from graphiti_mcp_server import _add_memory_full_mode
+
+        graphiti = AsyncMock()
+        result = asyncio.run(_add_memory_full_mode(
+            graphiti=graphiti,
+            name="t",
+            episode_body="short body",
+            group_id="g",
+            source_description="d",
+            episode_type=EpisodeType.text,
+            episode_uuid=None,
+            source="text",
+            start_time=time.time(),
+            excluded_entity_types=["Preference"],
+        ))
+
+        graphiti.add_episode.assert_awaited_once()
+        kwargs = graphiti.add_episode.await_args.kwargs
+        assert kwargs.get("excluded_entity_types") == ["Preference"]
+        assert "entity_types" not in kwargs
+        assert result["success"] is True
+
+    def test_no_excluded_entity_types_passes_nothing(self):
+        import asyncio
+        import time
+        from unittest.mock import AsyncMock
+        from graphiti_core.nodes import EpisodeType
+        from graphiti_mcp_server import _add_memory_full_mode
+
+        graphiti = AsyncMock()
+        asyncio.run(_add_memory_full_mode(
+            graphiti=graphiti,
+            name="t",
+            episode_body="short body",
+            group_id="g",
+            source_description="d",
+            episode_type=EpisodeType.text,
+            episode_uuid=None,
+            source="text",
+            start_time=time.time(),
+        ))
+        kwargs = graphiti.add_episode.await_args.kwargs
+        assert "excluded_entity_types" not in kwargs
+        assert "entity_types" not in kwargs
+
+
+class TestCrossEncoderClients:
+    """測試可切換的 reranker 實作。"""
+
+    def test_passthrough_keeps_order_and_scores(self):
+        import asyncio
+        from src.cross_encoder_client import PassthroughCrossEncoder
+        out = asyncio.run(PassthroughCrossEncoder().rank("q", ["a", "b", "c"]))
+        assert out == [("a", 1.0), ("b", 1.0), ("c", 1.0)]
+
+    def test_llm_reranker_reorders_by_score(self):
+        import asyncio
+        import json
+        from unittest.mock import AsyncMock, MagicMock
+        from src.cross_encoder_client import LLMRerankerClient
+
+        rr = LLMRerankerClient(model="m", base_url="http://x/v1", api_key="k", top_n=10)
+        payload = {"scores": [
+            {"index": 0, "score": 0.1},
+            {"index": 1, "score": 0.9},
+            {"index": 2, "score": 0.5},
+        ]}
+        msg = MagicMock(); msg.content = json.dumps(payload)
+        choice = MagicMock(); choice.message = msg
+        resp = MagicMock(); resp.choices = [choice]
+        rr._client = MagicMock()
+        rr._client.chat.completions.create = AsyncMock(return_value=resp)
+
+        out = asyncio.run(rr.rank("q", ["p0", "p1", "p2"]))
+        assert [p for p, _ in out] == ["p1", "p2", "p0"]
+
+    def test_llm_reranker_fallback_keeps_order_on_error(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        from src.cross_encoder_client import LLMRerankerClient
+
+        rr = LLMRerankerClient(model="m")
+        rr._client = MagicMock()
+        rr._client.chat.completions.create = AsyncMock(side_effect=RuntimeError("boom"))
+        out = asyncio.run(rr.rank("q", ["a", "b"]))
+        assert [p for p, _ in out] == ["a", "b"]
+
+    def test_llm_reranker_top_n_limits_scoring(self):
+        import asyncio
+        import json
+        from unittest.mock import AsyncMock, MagicMock
+        from src.cross_encoder_client import LLMRerankerClient
+
+        rr = LLMRerankerClient(model="m", top_n=1)
+        payload = {"scores": [{"index": 0, "score": 0.3}]}
+        msg = MagicMock(); msg.content = json.dumps(payload)
+        choice = MagicMock(); choice.message = msg
+        resp = MagicMock(); resp.choices = [choice]
+        rr._client = MagicMock()
+        rr._client.chat.completions.create = AsyncMock(return_value=resp)
+
+        out = asyncio.run(rr.rank("q", ["a", "b", "c"]))
+        # 只有 a 被評分；b、c 未送評分，給 0 分排在後並保持原序
+        assert out[0][0] == "a"
+        assert [p for p, _ in out[1:]] == ["b", "c"]
+
+    def test_llm_reranker_empty(self):
+        import asyncio
+        from src.cross_encoder_client import LLMRerankerClient
+        assert asyncio.run(LLMRerankerClient(model="m").rank("q", [])) == []
+
+    def test_bge_reranker_degrades_when_missing_dep(self):
+        # 環境未安裝 sentence-transformers 時應回 None（降級），不拋錯
+        from src.cross_encoder_client import make_bge_reranker
+        result = make_bge_reranker()
+        assert result is None or result.__class__.__name__ == "BGERerankerClient"
+
+
+class TestCrossEncoderConfig:
+    """測試 CrossEncoderConfig 驗證與載入。"""
+
+    def test_default_provider_is_none(self):
+        from src.config import GraphitiConfig
+        assert GraphitiConfig().cross_encoder.provider == "none"
+
+    def test_invalid_provider_rejected(self):
+        from src.config import CrossEncoderConfig
+        assert CrossEncoderConfig(provider="bad").get_errors()
+        assert not CrossEncoderConfig(provider="llm").get_errors()
+        assert not CrossEncoderConfig(provider="bge").get_errors()
+
+    def test_bounds_validation(self):
+        from src.config import CrossEncoderConfig
+        assert CrossEncoderConfig(top_n=0).get_errors()
+        assert CrossEncoderConfig(min_score=2.0).get_errors()
+
+    def test_env_override(self):
+        import os
+        from src.config import load_config
+        os.environ["CROSS_ENCODER_PROVIDER"] = "llm"
+        os.environ["CROSS_ENCODER_TOP_N"] = "7"
+        try:
+            cfg = load_config()
+            assert cfg.cross_encoder.provider == "llm"
+            assert cfg.cross_encoder.top_n == 7
+        finally:
+            del os.environ["CROSS_ENCODER_PROVIDER"]
+            del os.environ["CROSS_ENCODER_TOP_N"]
+
+
+class TestSearchRecallEnhancements:
+    """測試 Commit 3 召回/精度擴充。"""
+
+    def test_candidate_pool_limit(self):
+        from graphiti_mcp_server import _candidate_pool_limit
+        assert _candidate_pool_limit(10) == 30   # 10*3
+        assert _candidate_pool_limit(1) == 20    # 下限
+        assert _candidate_pool_limit(50) == 100  # 上限
+
+    def test_combined_mmr_lambda_fixed(self):
+        from graphiti_mcp_server import SEARCH_RECIPES
+        mmr = SEARCH_RECIPES["combined_mmr"]
+        for sub in (mmr.node_config, mmr.edge_config, mmr.community_config):
+            if sub is not None:
+                assert sub.mmr_lambda == 0.5
+
+    def test_build_filters_valid_at(self):
+        from graphiti_mcp_server import _build_search_filters
+        sf = _build_search_filters(
+            valid_after="2026-01-01T00:00:00Z", valid_before="2026-12-31T00:00:00Z"
+        )
+        assert sf.valid_at is not None
+        assert len(sf.valid_at[0]) == 2
+
+    def test_apply_search_tuning(self):
+        from graphiti_mcp_server import SEARCH_RECIPES, _apply_search_tuning
+        cfg = SEARCH_RECIPES["node_rrf"].model_copy(deep=True)
+        _apply_search_tuning(cfg, reranker_min_score=0.3, sim_min_score=0.7, mmr_lambda=0.4)
+        assert cfg.reranker_min_score == 0.3
+        assert cfg.node_config.sim_min_score == 0.7
+
+    def test_edge_recipes_whitelist(self):
+        from graphiti_mcp_server import _EDGE_SEARCH_RECIPES
+        assert _EDGE_SEARCH_RECIPES == {
+            "edge_rrf", "edge_mmr", "edge_node_distance",
+            "edge_episode_mentions", "edge_cross_encoder",
+        }
+
+    def test_facts_signature_has_recipe_and_tuning(self):
+        import inspect
+        from graphiti_mcp_server import search_memory_facts
+        params = inspect.signature(search_memory_facts).parameters
+        for p in ("search_recipe", "valid_after", "valid_before",
+                  "reranker_min_score", "sim_min_score", "mmr_lambda"):
+            assert p in params, f"缺少參數 {p}"
+
+    def test_nodes_signature_has_tuning(self):
+        import inspect
+        from graphiti_mcp_server import search_memory_nodes
+        params = inspect.signature(search_memory_nodes).parameters
+        for p in ("reranker_min_score", "sim_min_score", "mmr_lambda"):
+            assert p in params, f"缺少參數 {p}"
+
+
+class TestImportanceBoost:
+    """測試 Commit 4 importance-aware 排序。"""
+
+    def test_get_access_count_from_attributes(self):
+        from types import SimpleNamespace
+        from graphiti_mcp_server import _get_access_count
+        assert _get_access_count(SimpleNamespace(attributes={"access_count": 5})) == 5
+
+    def test_get_access_count_from_attr(self):
+        from types import SimpleNamespace
+        from graphiti_mcp_server import _get_access_count
+        assert _get_access_count(SimpleNamespace(access_count=7, attributes={})) == 7
+
+    def test_get_access_count_default_zero(self):
+        from types import SimpleNamespace
+        from graphiti_mcp_server import _get_access_count
+        assert _get_access_count(SimpleNamespace(attributes={})) == 0
+
+    def test_boost_promotes_high_access(self, monkeypatch):
+        from types import SimpleNamespace
+        import graphiti_mcp_server as s
+        monkeypatch.setattr(
+            s, "app_config",
+            SimpleNamespace(enable_importance_tracking=True, importance_weight=0.1),
+        )
+        items = [
+            SimpleNamespace(attributes={"access_count": 0}),
+            SimpleNamespace(attributes={"access_count": 0}),
+            SimpleNamespace(attributes={"access_count": 100}),  # 100*0.1=10 名提前
+        ]
+        out = s._apply_importance_boost(items)
+        assert out[0].attributes["access_count"] == 100
+
+    def test_boost_stable_when_equal_access(self, monkeypatch):
+        from types import SimpleNamespace
+        import graphiti_mcp_server as s
+        monkeypatch.setattr(
+            s, "app_config",
+            SimpleNamespace(enable_importance_tracking=True, importance_weight=0.1),
+        )
+        items = [SimpleNamespace(name=f"n{i}", attributes={"access_count": 0}) for i in range(4)]
+        out = s._apply_importance_boost(items)
+        assert [i.name for i in out] == ["n0", "n1", "n2", "n3"]  # 同分保留原序
+
+    def test_boost_disabled_returns_unchanged(self, monkeypatch):
+        from types import SimpleNamespace
+        import graphiti_mcp_server as s
+        monkeypatch.setattr(
+            s, "app_config",
+            SimpleNamespace(enable_importance_tracking=False, importance_weight=0.1),
+        )
+        items = [
+            SimpleNamespace(attributes={"access_count": 0}),
+            SimpleNamespace(attributes={"access_count": 100}),
+        ]
+        assert s._apply_importance_boost(items) == items
+
+
+class TestQueryPreprocessing:
+    """測試 Commit 5 query 前處理。"""
+
+    def test_normalize_fullwidth_to_halfwidth(self):
+        from graphiti_mcp_server import _normalize_query
+        assert _normalize_query("ＡＰＩ") == "API"
+        assert _normalize_query("ｈｅｌｌｏ１２３") == "hello123"
+
+    def test_normalize_compress_whitespace(self):
+        from graphiti_mcp_server import _normalize_query
+        assert _normalize_query("  知識   圖譜  ") == "知識 圖譜"
+
+    def test_normalize_fullwidth_space(self):
+        from graphiti_mcp_server import _normalize_query
+        assert _normalize_query("知識　圖譜") == "知識 圖譜"
+
+    def test_normalize_preserves_chinese(self):
+        from graphiti_mcp_server import _normalize_query
+        assert _normalize_query("知識圖譜記憶") == "知識圖譜記憶"
+
+    def test_normalize_empty(self):
+        from graphiti_mcp_server import _normalize_query
+        assert _normalize_query("") == ""
+
+    def test_query_expansion_config_default_off(self):
+        from src.config import GraphitiConfig
+        cfg = GraphitiConfig()
+        assert cfg.enable_query_expansion is False
+        assert cfg.query_expansion_terms == 5
+
+
+class TestSafeModeSearchability:
+    """測試 Commit 6 safe_mode 可搜尋性防護。"""
+
+    def test_add_memory_simple_has_fallback_param(self):
+        import inspect
+        from graphiti_mcp_server import add_memory_simple
+        params = inspect.signature(add_memory_simple).parameters
+        assert "fallback_to_safe" in params
+        assert params["fallback_to_safe"].default is True
+
+    def test_full_mode_marks_searchable_true(self):
+        import asyncio
+        import time
+        from unittest.mock import AsyncMock
+        from graphiti_core.nodes import EpisodeType
+        from graphiti_mcp_server import _add_memory_full_mode
+
+        graphiti = AsyncMock()
+        result = asyncio.run(_add_memory_full_mode(
+            graphiti=graphiti, name="t", episode_body="short body", group_id="g",
+            source_description="d", episode_type=EpisodeType.text,
+            episode_uuid=None, source="text", start_time=time.time(),
+        ))
+        assert result["searchable"] is True
+
+    def test_safe_add_marks_searchable_false(self, monkeypatch):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        import src.safe_memory_add as sma
+
+        # mock EpisodicNode 以避免真實 DB 寫入
+        fake_node = MagicMock()
+        fake_node.uuid = "fake-uuid"
+        fake_node.save = AsyncMock()
+        monkeypatch.setattr(sma, "EpisodicNode", lambda **kw: fake_node)
+
+        g = MagicMock()
+        g.driver = MagicMock()
+        result = asyncio.run(sma.safe_add_memory(g, name="n", content="c", group_id="g"))
+        assert result["success"] is True
+        assert result["searchable"] is False
+
 
 # ============================================================
 # _build_search_filters 測試

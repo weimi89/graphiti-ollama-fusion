@@ -250,10 +250,10 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 - **LLM 提供者**（五選一，透過 `LLM_PROVIDER` 切換）：
   - **Ollama**（`ollama`，預設）：本地 LLM，`http://localhost:11434`
     - LLM 主模型: `qwen2.5:3b`（推薦）、小模型: `qwen2.5:3b`
-    - Embedder: `bge-m3`（1024 維，自動截斷為 768 以相容 Neo4j 索引；中文和 RAG 品質優於 nomic-embed-text）
+    - Embedder: `bge-m3`（原生 1024 維；中文和 RAG 品質優於 nomic-embed-text。graphiti-core 用即時 `vector.similarity.cosine` 計算、無 ANN 索引維度限制，故不需截斷）
   - **GLM**（`glm`）：智谱 AI 雲端，免費 `glm-4-flash` 模型
     - LLM: `glm-4-flash`（免費，穩定，~22s/短文本寫入）
-    - Embedder: `embedding-3`（768 維，需設 `GLM_EMBEDDING_DIMENSIONS=768`）
+    - Embedder: `embedding-3`（1024 維，與 bge-m3 對齊，設 `GLM_EMBEDDING_DIMENSIONS=1024`）
   - **GROQ**（`groq`）：高速雲端推理
     - LLM: `llama-3.3-70b-versatile`（速度快但有 Rate Limit）
     - 不提供 Embedding，自動回退 Ollama `bge-m3`
@@ -285,7 +285,7 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 | `GLM_API_KEY` | 智谱 AI API Key | (GLM 模式必填) |
 | `GLM_MODEL` | GLM LLM 模型 | `glm-4-flash` |
 | `GLM_EMBEDDING_MODEL` | GLM 嵌入模型 | `embedding-3` |
-| `GLM_EMBEDDING_DIMENSIONS` | GLM 嵌入維度（需與 Neo4j 索引一致） | `768` |
+| `GLM_EMBEDDING_DIMENSIONS` | GLM 嵌入維度（與 bge-m3 對齊） | `1024` |
 | `GROQ_API_KEY` | GROQ API Key | (GROQ 模式必填) |
 | `GROQ_MODEL` | GROQ LLM 模型 | `llama-3.3-70b-versatile` |
 | `OPENROUTER_API_KEY` | OpenRouter API Key | (OpenRouter 模式必填) |

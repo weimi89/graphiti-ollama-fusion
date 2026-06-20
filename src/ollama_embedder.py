@@ -21,6 +21,7 @@ Ollama 嵌入器模組
 """
 
 import asyncio
+import hashlib
 import logging
 import math
 import random
@@ -284,11 +285,11 @@ class OllamaEmbedder(EmbedderClient):
                 else:
                     error_text = await response.text()
                     logger.warning(f"Ollama 嵌入錯誤 (狀態 {response.status}): {error_text[:200]}")
-                    return self._create_fallback_embedding()
+                    return self._create_fallback_embedding(text)
 
         except Exception as e:
             logger.warning(f"嵌入請求失敗: {e}")
-            return self._create_fallback_embedding()
+            return self._create_fallback_embedding(text)
 
     def _normalize_embedding(
         self, embedding: List[float], text: str = ""
@@ -374,11 +375,19 @@ class OllamaEmbedder(EmbedderClient):
         """建立隨機嵌入向量。"""
         return [random.uniform(-0.01, 0.01) for _ in range(self.dimensions)]
 
-    def _create_fallback_embedding(self) -> List[float]:
-        """建立備用嵌入向量（確定性哨兵向量，非隨機）。
+    def _create_fallback_embedding(self, text: str = "") -> List[float]:
+        """建立備用嵌入向量（基於文本 hash 的確定性偽隨機單位向量）。
 
-        使用固定的單位向量（第一維為 1.0），確保所有失敗的嵌入
-        都映射到相同位置，不會隨機污染搜尋結果。
+        舊版對所有失敗文本回傳相同的 [1.0, 0, ...]，使它們在向量空間中坍縮成
+        同一點、互為「完美相似」，污染搜尋結果（finding: sentinel-collision）。
+        改用 text 的 SHA-256 作 seed 產生確定性偽隨機單位向量：同一文本恆得同
+        向量（可重現、不影響去重判斷），不同文本得不同向量（避免碰撞）。
         """
-        logger.warning("嵌入請求失敗，使用哨兵向量替代（搜尋結果可能不準確）")
-        return [1.0] + [0.0] * (self.dimensions - 1)
+        logger.warning(f"嵌入請求失敗，使用 hash 哨兵向量替代: '{text[:50]}'")
+        seed = int.from_bytes(hashlib.sha256(text.encode("utf-8")).digest()[:8], "big")
+        rng = random.Random(seed)
+        vec = [rng.uniform(-1.0, 1.0) for _ in range(self.dimensions)]
+        norm = sum(x * x for x in vec) ** 0.5
+        if norm < 1e-10:
+            return [1.0] + [0.0] * (self.dimensions - 1)
+        return [x / norm for x in vec]

@@ -94,7 +94,7 @@ class GlmConfig:
     base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
     model: str = "glm-4-flash"
     embedding_model: str = "embedding-3"
-    embedding_dimensions: int = 768
+    embedding_dimensions: int = 1024
     temperature: float = 0.1
     max_tokens: int = 4096
 
@@ -225,6 +225,54 @@ class DeepSeekConfig:
 
 
 @dataclass
+class CrossEncoderConfig:
+    """
+    Cross-encoder（reranker）重排序配置。
+
+    控制搜尋結果的相關性重排。預設 provider="none"（pass-through，不重排，
+    走 RRF 初篩順序），使用者可切換為：
+        - "llm": 用任意 OpenAI 相容 provider（DeepSeek/GLM/OpenRouter/Ollama）做
+                 相關性評分，不依賴 logprobs，通用性最高
+        - "bge": 本地 BAAI/bge-reranker-v2-m3（需 sentence-transformers），
+                 中文重排品質最佳、無 API 成本
+
+    Attributes:
+        provider: 重排器類型（"none" | "llm" | "bge"）
+        model: LLM 重排所用模型（provider="llm" 時；空字串則沿用主 LLM 模型）
+        base_url: LLM 重排端點（空字串則沿用主 LLM provider 的 base_url）
+        api_key: LLM 重排 API 金鑰（空字串則沿用主 LLM provider 的 key）
+        top_n: 每次最多送入重排的候選數（控制 LLM 成本）
+        min_score: 低於此分數的結果會被過濾（0 表示不過濾）
+    """
+
+    provider: str = "none"
+    model: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    top_n: int = 10
+    min_score: float = 0.0
+
+    def validate(self) -> bool:
+        """驗證配置是否有效。"""
+        return not self.get_errors()
+
+    def get_errors(self) -> list[str]:
+        """返回配置中的具體錯誤列表。"""
+        errors = []
+        if self.provider not in ("none", "llm", "bge"):
+            errors.append(
+                f"cross_encoder.provider 不支援: {self.provider}（支援：none, llm, bge）"
+            )
+        if self.top_n <= 0:
+            errors.append(f"cross_encoder.top_n 必須 > 0: {self.top_n}")
+        if not 0.0 <= self.min_score <= 1.0:
+            errors.append(
+                f"cross_encoder.min_score 超出範圍 (0.0-1.0): {self.min_score}"
+            )
+        return errors
+
+
+@dataclass
 class OllamaEmbedderConfig:
     """
     Ollama 嵌入器配置。
@@ -239,7 +287,7 @@ class OllamaEmbedderConfig:
 
     model: str = "bge-m3"
     base_url: str = "http://localhost:11434"
-    dimensions: int = 768
+    dimensions: int = 1024
     batch_size: int = 10
     timeout: int = 60
 
@@ -465,16 +513,21 @@ class GraphitiConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     memory_performance: MemoryPerformanceConfig = field(default_factory=MemoryPerformanceConfig)
+    cross_encoder: CrossEncoderConfig = field(default_factory=CrossEncoderConfig)
 
     # Graphiti 特定設定
     search_limit: int = 20
     enable_deduplication: bool = True
     pydantic_validation_fixes: bool = True
-    cosine_similarity_threshold: float = 0.8
+    cosine_similarity_threshold: float = 0.9
 
     # 重要性追蹤設定
     enable_importance_tracking: bool = True
     importance_weight: float = 0.1
+
+    # Query 前處理設定（正規化總是啟用；expansion 預設關，避免每次搜尋多一次 LLM 呼叫）
+    enable_query_expansion: bool = False
+    query_expansion_terms: int = 5
 
     # 智慧遺忘設定
     stale_days_threshold: int = 30
@@ -672,6 +725,7 @@ class GraphitiConfig:
             _apply_config_section(config.logging, config_data.get("logging", {}))
             _apply_config_section(config.server, config_data.get("server", {}))
             _apply_config_section(config.memory_performance, config_data.get("memory_performance", {}))
+            _apply_config_section(config.cross_encoder, config_data.get("cross_encoder", {}))
 
             # 載入 Graphiti 特定設定
             for key in [
@@ -681,6 +735,8 @@ class GraphitiConfig:
                 "cosine_similarity_threshold",
                 "enable_importance_tracking",
                 "importance_weight",
+                "enable_query_expansion",
+                "query_expansion_terms",
                 "stale_days_threshold",
                 "stale_min_access_count",
                 "display_timezone",
@@ -727,7 +783,7 @@ class GraphitiConfig:
                 errors.append("使用 GLM embedding 需設定 GLM_API_KEY")
         if self.embedding_provider and self.embedding_provider not in ("ollama", "glm"):
             errors.append(f"不支援的 EMBEDDING_PROVIDER: {self.embedding_provider}（支援：ollama, glm）")
-        for sub in [self.embedder, self.neo4j, self.logging, self.server, self.memory_performance]:
+        for sub in [self.embedder, self.neo4j, self.logging, self.server, self.memory_performance, self.cross_encoder]:
             errors.extend(sub.get_errors())
         return errors
 
@@ -777,6 +833,14 @@ class GraphitiConfig:
                     "max_tokens": self.deepseek.max_tokens,
                     "temperature": self.deepseek.temperature,
                 },
+                "cross_encoder": {
+                    "provider": self.cross_encoder.provider,
+                    "model": self.cross_encoder.model,
+                    "base_url": self.cross_encoder.base_url,
+                    "api_key": "***",
+                    "top_n": self.cross_encoder.top_n,
+                    "min_score": self.cross_encoder.min_score,
+                },
                 "ollama": {
                     "model": self.ollama.model,
                     "small_model": self.ollama.small_model,
@@ -822,6 +886,8 @@ class GraphitiConfig:
                 "cosine_similarity_threshold": self.cosine_similarity_threshold,
                 "enable_importance_tracking": self.enable_importance_tracking,
                 "importance_weight": self.importance_weight,
+                "enable_query_expansion": self.enable_query_expansion,
+                "query_expansion_terms": self.query_expansion_terms,
                 "stale_days_threshold": self.stale_days_threshold,
                 "stale_min_access_count": self.stale_min_access_count,
                 "display_timezone": self.display_timezone,
@@ -1010,6 +1076,7 @@ class GraphitiConfig:
             "importance_tracking": self.enable_importance_tracking,
             "display_timezone": self.display_timezone,
             "server_lang": self.server_lang,
+            "cross_encoder_provider": self.cross_encoder.provider,
         }
 
 
@@ -1081,6 +1148,28 @@ def _load_graphiti_settings(config: GraphitiConfig) -> None:
 
     if os.getenv("STALE_MIN_ACCESS_COUNT"):
         config.stale_min_access_count = int(os.getenv("STALE_MIN_ACCESS_COUNT"))
+
+    # Query 前處理設定
+    if os.getenv("ENABLE_QUERY_EXPANSION"):
+        config.enable_query_expansion = os.getenv("ENABLE_QUERY_EXPANSION").lower() == "true"
+    if os.getenv("QUERY_EXPANSION_TERMS"):
+        config.query_expansion_terms = int(os.getenv("QUERY_EXPANSION_TERMS"))
+
+    # Cross-encoder（reranker）設定
+    config.cross_encoder.provider = os.getenv(
+        "CROSS_ENCODER_PROVIDER", config.cross_encoder.provider
+    )
+    config.cross_encoder.model = os.getenv("CROSS_ENCODER_MODEL", config.cross_encoder.model)
+    config.cross_encoder.base_url = os.getenv(
+        "CROSS_ENCODER_BASE_URL", config.cross_encoder.base_url
+    )
+    config.cross_encoder.api_key = os.getenv(
+        "CROSS_ENCODER_API_KEY", config.cross_encoder.api_key
+    )
+    if os.getenv("CROSS_ENCODER_TOP_N"):
+        config.cross_encoder.top_n = int(os.getenv("CROSS_ENCODER_TOP_N"))
+    if os.getenv("CROSS_ENCODER_MIN_SCORE"):
+        config.cross_encoder.min_score = float(os.getenv("CROSS_ENCODER_MIN_SCORE"))
 
 
 def load_config(config_path: Optional[str] = None) -> GraphitiConfig:

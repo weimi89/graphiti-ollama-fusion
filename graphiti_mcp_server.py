@@ -25,6 +25,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import sys
 import time
 import uuid as uuid_mod
@@ -55,6 +56,11 @@ from src.logging_setup import (
 )
 from src.ollama_graphiti_client import OptimizedOllamaClient
 from src.ollama_embedder import OllamaEmbedder
+from src.cross_encoder_client import (
+    PassthroughCrossEncoder,
+    LLMRerankerClient,
+    make_bge_reranker,
+)
 from src.timezone_utils import configure_timezone, format_timestamp
 from src.task_store import get_task_store, initialize_task_store
 
@@ -92,6 +98,7 @@ from graphiti_core import Graphiti
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType, CommunityNode
+from pydantic import BaseModel
 from graphiti_core.search.search_config import SearchConfig, SearchResults
 from graphiti_core.search.search_config_recipes import (
     NODE_HYBRID_SEARCH_RRF,
@@ -147,6 +154,22 @@ SEARCH_RECIPES: Dict[str, SearchConfig] = {
     "community_rrf": COMMUNITY_HYBRID_SEARCH_RRF,
     "community_mmr": COMMUNITY_HYBRID_SEARCH_MMR,
     "community_cross_encoder": COMMUNITY_HYBRID_SEARCH_CROSS_ENCODER,
+}
+
+# 修正 graphiti-core 的 COMBINED_HYBRID_SEARCH_MMR 把 mmr_lambda 硬設為 1（多樣性
+# 完全失效，退化為純相似度排序）。統一為 0.5，讓 MMR 真正發揮去冗餘作用。
+for _mmr_recipe in (SEARCH_RECIPES["combined_mmr"],):
+    for _sub_cfg in (_mmr_recipe.node_config, _mmr_recipe.edge_config, _mmr_recipe.community_config):
+        if _sub_cfg is not None and getattr(_sub_cfg, "mmr_lambda", None) == 1:
+            _sub_cfg.mmr_lambda = 0.5
+
+# search_memory_facts 僅允許 edge_* 系列 recipe（其餘 recipe 不會產生 edges 結果）
+_EDGE_SEARCH_RECIPES = {
+    "edge_rrf",
+    "edge_mmr",
+    "edge_node_distance",
+    "edge_episode_mentions",
+    "edge_cross_encoder",
 }
 
 # 載入環境變數（明確指定 .env 路徑，避免 PM2/MCP 啟動時 cwd 不在專案根目錄）
@@ -299,6 +322,7 @@ async def initialize_graphiti() -> Graphiti:
                 password=app_config.neo4j.password,
                 llm_client=llm_client,
                 embedder=embedder,
+                cross_encoder=_create_cross_encoder(),
                 max_coroutines=max_coroutines,
             )
 
@@ -352,6 +376,75 @@ def _create_llm_client():
     except Exception as e:
         glog.warning(f"LLM 客戶端初始化失敗 (provider={provider})，使用 None: {e}")
         return None
+
+
+def _resolve_reranker_llm_target(ce_cfg):
+    """
+    決定 LLM reranker 的 (model, base_url, api_key)。
+
+    cross_encoder.* 明確設定優先，否則沿用當前 LLM_PROVIDER 的設定，
+    讓「用現有 provider 做重排」開箱即用。
+    """
+    provider = app_config.llm_provider
+    provider_cfg = {
+        "glm": app_config.glm,
+        "groq": getattr(app_config, "groq", None),
+        "openrouter": app_config.openrouter,
+        "deepseek": app_config.deepseek,
+        "ollama": app_config.ollama,
+    }.get(provider)
+
+    model = ce_cfg.model or getattr(provider_cfg, "model", None)
+    base_url = ce_cfg.base_url or getattr(provider_cfg, "base_url", None)
+    api_key = ce_cfg.api_key or getattr(provider_cfg, "api_key", None)
+
+    # Ollama 的 base_url（http://host:11434）需補 /v1 才是 OpenAI 相容端點
+    if provider == "ollama" and base_url and not base_url.rstrip("/").endswith("/v1"):
+        base_url = base_url.rstrip("/") + "/v1"
+
+    return model, base_url, api_key
+
+
+def _create_cross_encoder():
+    """
+    建立 cross-encoder（reranker）客戶端並注入 Graphiti。
+
+    依 CROSS_ENCODER_PROVIDER（config.cross_encoder.provider）路由：
+      - "llm": LLMRerankerClient，沿用或覆寫主 LLM provider 的 model/base_url/api_key
+      - "bge": 本地 BAAI/bge-reranker-v2-m3（需 sentence-transformers）
+      - "none"（預設）或任何初始化失敗：PassthroughCrossEncoder（no-op，永不拋錯）
+
+    若不注入，graphiti-core 會 fallback 為 OpenAIRerankerClient(model='gpt-4.1-nano')
+    並打向本機 Ollama，因模型不存在且不支援 logprobs 而在 rank() 時拋錯、搜尋失敗。
+    """
+    glog = logging.getLogger("graphiti")
+    ce_cfg = getattr(app_config, "cross_encoder", None)
+    provider = getattr(ce_cfg, "provider", "none") if ce_cfg else "none"
+
+    try:
+        if provider == "bge":
+            client = make_bge_reranker()
+            if client is not None:
+                glog.info("Cross-encoder: 使用本地 BGE reranker (BAAI/bge-reranker-v2-m3)")
+                return client
+            glog.warning("Cross-encoder: BGE 不可用，降級為 Passthrough（搜尋走 RRF）")
+            return PassthroughCrossEncoder()
+
+        if provider == "llm":
+            model, base_url, api_key = _resolve_reranker_llm_target(ce_cfg)
+            if not model:
+                glog.warning("Cross-encoder: 無法決定 LLM 重排模型，降級為 Passthrough")
+                return PassthroughCrossEncoder()
+            glog.info(f"Cross-encoder: 使用 LLM reranker (model={model}, base_url={base_url})")
+            return LLMRerankerClient(
+                model=model, base_url=base_url, api_key=api_key, top_n=ce_cfg.top_n
+            )
+    except Exception as e:
+        glog.warning(f"Cross-encoder 初始化失敗，降級為 Passthrough: {e}")
+        return PassthroughCrossEncoder()
+
+    # provider == "none" 或未知 → 安全 no-op
+    return PassthroughCrossEncoder()
 
 
 def _create_ollama_client(glog) -> Optional[OptimizedOllamaClient]:
@@ -495,12 +588,150 @@ def _create_deepseek_client(glog):
 # ============================================================================
 
 
+# 候選池放大：搜尋時抓取比 max_results 更多的候選供 reranker 重排，回傳前再截斷。
+# graphiti-core 各 sub-search 實際抓取 2×config.limit，故放大 config.limit 即放大候選池。
+_CANDIDATE_POOL_MULTIPLIER = 3
+_CANDIDATE_POOL_MIN = 20
+_CANDIDATE_POOL_CAP = 100
+
+
+def _candidate_pool_limit(max_results: int) -> int:
+    """計算放大後的候選池大小（供 reranker 重排），上限 _CANDIDATE_POOL_CAP。"""
+    return min(
+        max(max_results * _CANDIDATE_POOL_MULTIPLIER, _CANDIDATE_POOL_MIN),
+        _CANDIDATE_POOL_CAP,
+    )
+
+
+def _apply_search_tuning(
+    config: SearchConfig,
+    reranker_min_score: Optional[float] = None,
+    sim_min_score: Optional[float] = None,
+    mmr_lambda: Optional[float] = None,
+) -> SearchConfig:
+    """將可選的搜尋調參套用到 SearchConfig 及其各 sub-config（None 表不覆寫）。"""
+    if reranker_min_score is not None:
+        config.reranker_min_score = reranker_min_score
+    for sub in (
+        config.node_config,
+        config.edge_config,
+        config.episode_config,
+        config.community_config,
+    ):
+        if sub is None:
+            continue
+        if sim_min_score is not None and hasattr(sub, "sim_min_score"):
+            sub.sim_min_score = sim_min_score
+        if mmr_lambda is not None and hasattr(sub, "mmr_lambda"):
+            sub.mmr_lambda = mmr_lambda
+    return config
+
+
+def _get_access_count(item: Any) -> int:
+    """從節點/邊物件取 access_count（可能位於屬性或 attributes dict）。"""
+    ac = getattr(item, "access_count", None)
+    if ac is None:
+        ac = (getattr(item, "attributes", {}) or {}).get("access_count", 0)
+    try:
+        return int(ac or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _apply_importance_boost(items: list) -> list:
+    """依 access_count 對搜尋結果做穩定的重要性加權微調。
+
+    以初篩/重排名次為主序，高存取次數的項目微幅提前（幅度由 importance_weight
+    控制）。enable_importance_tracking 關閉或 importance_weight<=0 時不調整。
+    這讓既有的存取追蹤資料（過去只寫不讀）實際回饋到搜尋排序。
+    """
+    if not items or not app_config or not app_config.enable_importance_tracking:
+        return items
+    weight = getattr(app_config, "importance_weight", 0) or 0
+    if weight <= 0:
+        return items
+    indexed = list(enumerate(items))
+    # 名次越小越前；access_count 越高，扣分越多 → 越往前。stable sort 保留同分原序。
+    indexed.sort(key=lambda pair: pair[0] - _get_access_count(pair[1]) * weight)
+    return [item for _, item in indexed]
+
+
+def _normalize_query(query: str) -> str:
+    """輕量 query 正規化（不改變語義）：全形 ASCII 轉半形、壓縮多餘空白。
+
+    讓「ＡＰＩ」與 "API"、中英間多餘空白等表面差異不影響召回。零成本、總是啟用。
+    """
+    if not query:
+        return query
+    chars = []
+    for ch in query:
+        code = ord(ch)
+        if code == 0x3000:  # 全形空格
+            chars.append(" ")
+        elif 0xFF01 <= code <= 0xFF5E:  # 全形 ASCII → 半形
+            chars.append(chr(code - 0xFEE0))
+        else:
+            chars.append(ch)
+    return re.sub(r"\s+", " ", "".join(chars)).strip()
+
+
+class _QueryExpansion(BaseModel):
+    keywords: List[str]
+
+
+async def _expand_query(query: str, graphiti: Graphiti) -> str:
+    """用 LLM 產生語義相關的補充關鍵詞（同義詞、中英對照），附加到原 query 提升召回。
+
+    預設關閉（enable_query_expansion）。單次 LLM 呼叫，失敗時退回原 query，不影響搜尋。
+    """
+    if not query or not (app_config and getattr(app_config, "enable_query_expansion", False)):
+        return query
+    llm = getattr(graphiti, "llm_client", None)
+    if llm is None:
+        return query
+    try:
+        from graphiti_core.prompts.models import Message
+
+        n = getattr(app_config, "query_expansion_terms", 5) or 5
+        messages = [
+            Message(
+                role="system",
+                content=(
+                    "You expand search queries for a knowledge-graph retrieval system. "
+                    "Produce semantically related keywords (synonyms, English/Chinese "
+                    "equivalents, closely related terms) that improve recall. Keep them "
+                    "tightly relevant; do not drift to unrelated topics."
+                ),
+            ),
+            Message(
+                role="user",
+                content=(
+                    f"Query: {query}\n"
+                    f"Return up to {n} additional keywords or short phrases as a JSON "
+                    'object: {"keywords": [...]}.'
+                ),
+            ),
+        ]
+        result = await llm.generate_response(messages, response_model=_QueryExpansion)
+        kws = result.get("keywords", []) if isinstance(result, dict) else []
+        kws = [k.strip() for k in kws if isinstance(k, str) and k.strip()][:n]
+        if kws:
+            expanded = f"{query} {' '.join(kws)}"
+            logger.debug(f"query expansion: '{query}' -> '{expanded}'")
+            return expanded
+    except Exception as e:
+        logger.warning(f"query expansion 失敗，使用原 query：{e}")
+    return query
+
+
 def _build_search_filters(
     node_labels: Optional[List[str]] = None,
     edge_types: Optional[List[str]] = None,
     created_after: Optional[str] = None,
     created_before: Optional[str] = None,
     only_valid: bool = False,
+    valid_after: Optional[str] = None,
+    valid_before: Optional[str] = None,
 ) -> SearchFilters:
     """
     建構 SearchFilters 物件。
@@ -513,28 +744,30 @@ def _build_search_filters(
         created_after: ISO datetime，只搜尋此時間之後建立的
         created_before: ISO datetime，只搜尋此時間之前建立的
         only_valid: 僅搜尋未失效的事實
+        valid_after: ISO datetime，只搜尋事實生效時間於此之後的
+        valid_before: ISO datetime，只搜尋事實生效時間於此之前的
 
     Returns:
         SearchFilters: 建構好的過濾器
     """
-    created_at_filters = None
-    invalid_at_filters = None
 
-    if created_after or created_before:
-        date_conditions = []
-        if created_after:
-            dt = datetime.fromisoformat(created_after.replace("Z", "+00:00"))
-            date_conditions.append(DateFilter(
+    def _range_filters(after: Optional[str], before: Optional[str]):
+        conditions = []
+        if after:
+            dt = datetime.fromisoformat(after.replace("Z", "+00:00"))
+            conditions.append(DateFilter(
                 date=dt, comparison_operator=ComparisonOperator.greater_than_equal
             ))
-        if created_before:
-            dt = datetime.fromisoformat(created_before.replace("Z", "+00:00"))
-            date_conditions.append(DateFilter(
+        if before:
+            dt = datetime.fromisoformat(before.replace("Z", "+00:00"))
+            conditions.append(DateFilter(
                 date=dt, comparison_operator=ComparisonOperator.less_than_equal
             ))
-        if date_conditions:
-            created_at_filters = [date_conditions]
+        return [conditions] if conditions else None
 
+    created_at_filters = _range_filters(created_after, created_before)
+    valid_at_filters = _range_filters(valid_after, valid_before)
+    invalid_at_filters = None
     if only_valid:
         invalid_at_filters = [[DateFilter(
             date=None, comparison_operator=ComparisonOperator.is_null
@@ -544,6 +777,7 @@ def _build_search_filters(
         node_labels=node_labels,
         edge_types=edge_types,
         created_at=created_at_filters,
+        valid_at=valid_at_filters,
         invalid_at=invalid_at_filters,
     )
 
@@ -595,6 +829,7 @@ async def add_memory_simple(
     background: bool = False,
     excluded_entity_types: Optional[List[str]] = None,
     force: bool = False,
+    fallback_to_safe: bool = True,
 ) -> dict:
     """
     添加記憶到知識圖譜。
@@ -619,6 +854,8 @@ async def add_memory_simple(
         background: 是否在背景非同步處理（立刻返回 task_id）
         excluded_entity_types: 排除的實體類型列表，減少不需要的實體提取
         force: 跳過去重檢查，強制添加
+        fallback_to_safe: 完整模式失敗時是否自動降級為 safe 模式（預設 True）。
+            設為 False 則寧可回報失敗，也不寫出不可搜尋的記憶（避免靜默 recall 損失）
 
     Returns:
         dict: 包含操作結果的字典
@@ -674,6 +911,7 @@ async def add_memory_simple(
             _background_add_memory(
                 task, name, episode_body, group_id, source_description,
                 source, episode_uuid, use_safe_mode, excluded_entity_types,
+                fallback_to_safe,
             )
         )
 
@@ -689,6 +927,7 @@ async def add_memory_simple(
     return await _sync_add_memory(
         name, episode_body, group_id, source_description,
         source, episode_uuid, use_safe_mode, excluded_entity_types,
+        fallback_to_safe,
     )
 
 
@@ -701,6 +940,7 @@ async def _sync_add_memory(
     episode_uuid: Optional[str],
     use_safe_mode: bool,
     excluded_entity_types: Optional[List[str]],
+    fallback_to_safe: bool = True,
 ) -> dict:
     """同步執行記憶添加。"""
     start_time = time.time()
@@ -724,16 +964,25 @@ async def _sync_add_memory(
             except Exception as full_err:
                 import traceback
                 logger.warning(
-                    f"完整模式失敗，自動降級到安全模式: {str(full_err)[:200]}"
+                    f"完整模式失敗: {str(full_err)[:200]}"
                 )
                 logger.warning(f"完整模式 traceback:\n{traceback.format_exc()}")
+                if not fallback_to_safe:
+                    # 呼叫端要求寧可失敗也不接受不可搜尋的降級結果
+                    duration = time.time() - start_time
+                    log_operation_error("add_memory", full_err, duration=duration)
+                    return create_error_response(
+                        CommonErrors.operation_failed("add_memory", str(full_err)),
+                        f"完整模式失敗且已停用 safe 降級（fallback_to_safe=False），未寫入: {full_err}",
+                    )
                 safe_result = await _add_memory_safe_mode(
                     graphiti, name, episode_body, group_id,
                     source_description, source, start_time
                 )
                 safe_result["mode_used"] = "safe"
                 safe_result["fallback_reason"] = str(full_err)[:200]
-                safe_result["note"] = "完整模式失敗，已自動降級到安全模式保底"
+                safe_result["searchable"] = False
+                safe_result["note"] = "完整模式失敗，已自動降級到安全模式保底（此記憶不可被向量搜尋，可用 tools/reindex_episodic.py 補建）"
                 return safe_result
 
     except Exception as e:
@@ -755,6 +1004,7 @@ async def _background_add_memory(
     episode_uuid: Optional[str],
     use_safe_mode: bool,
     excluded_entity_types: Optional[List[str]],
+    fallback_to_safe: bool = True,
 ) -> None:
     """背景執行記憶添加任務。"""
     task.status = "processing"
@@ -762,6 +1012,7 @@ async def _background_add_memory(
         result = await _sync_add_memory(
             name, episode_body, group_id, source_description,
             source, episode_uuid, use_safe_mode, excluded_entity_types,
+            fallback_to_safe,
         )
         task.result = result
         task.status = "completed" if result.get("success") else "failed"
@@ -838,6 +1089,7 @@ async def _add_memory_safe_mode(
             "source": source,
             "processing_time": f"{duration:.2f}s",
             "method": "safe_direct_node_creation",
+            "searchable": False,
             "note": t("memory.note_safe_mode", _srv_lang()),
         }
     else:
@@ -883,7 +1135,10 @@ async def _add_memory_full_mode(
     # 準備 add_episode 的額外參數
     add_episode_kwargs: dict[str, Any] = {}
     if excluded_entity_types:
-        add_episode_kwargs["entity_types"] = excluded_entity_types
+        # graphiti-core add_episode 的參數名為 excluded_entity_types（list[str]）；
+        # 誤用 entity_types（需 dict）會在 validate_entity_types 觸發 AttributeError
+        # 並被外層 except 靜默降級為 safe_mode（寫出不可搜尋的 EpisodicNode）。
+        add_episode_kwargs["excluded_entity_types"] = excluded_entity_types
 
     # 取得切分配置
     chunk_threshold = 800
@@ -919,6 +1174,7 @@ async def _add_memory_full_mode(
             "source": source,
             "processing_time": f"{duration:.2f}s",
             "method": "full_entity_extraction",
+            "searchable": True,
             "note": t("memory.note_full_mode", _srv_lang()),
         }
 
@@ -956,6 +1212,7 @@ async def _add_memory_full_mode(
         "processing_time": f"{duration:.2f}s",
         "method": "full_entity_extraction_chunked_bulk",
         "chunks": total_chunks,
+        "searchable": True,
         "note": t("memory.note_chunked", _srv_lang(), count=total_chunks),
     }
 
@@ -997,6 +1254,9 @@ async def search_memory_nodes(
     search_recipe: Optional[str] = None,
     created_after: Optional[str] = None,
     created_before: Optional[str] = None,
+    reranker_min_score: Optional[float] = None,
+    sim_min_score: Optional[float] = None,
+    mmr_lambda: Optional[float] = None,
 ) -> dict:
     """
     搜索記憶節點（實體）。
@@ -1014,6 +1274,9 @@ async def search_memory_nodes(
             node_episode_mentions, node_cross_encoder
         created_after: ISO datetime，只搜尋此時間之後建立的節點
         created_before: ISO datetime，只搜尋此時間之前建立的節點
+        reranker_min_score: 重排分數下限（0-1），低於此分數的結果被過濾
+        sim_min_score: 向量相似度下限（0-1），調高可提升 precision
+        mmr_lambda: MMR 多樣性係數（0-1，僅 *_mmr recipe 生效；越低越多樣）
 
     Returns:
         dict: 包含搜索結果的字典
@@ -1028,6 +1291,10 @@ async def search_memory_nodes(
     try:
         graphiti = await initialize_graphiti()
 
+        # query 前處理：正規化（總是）+ 可選 LLM 展開
+        query = _normalize_query(query)
+        query = await _expand_query(query, graphiti)
+
         # 建立搜索過濾器
         search_filters = _build_search_filters(
             node_labels=entity_types,
@@ -1040,7 +1307,10 @@ async def search_memory_nodes(
             search_config = SEARCH_RECIPES[search_recipe].model_copy(deep=True)
         else:
             search_config = NODE_HYBRID_SEARCH_RRF.model_copy(deep=True)
-        search_config.limit = min(max_nodes, 50)
+        # 放大候選池供 reranker 重排，回傳前再截斷至 max_nodes
+        top_k = min(max_nodes, 50)
+        search_config.limit = _candidate_pool_limit(top_k)
+        _apply_search_tuning(search_config, reranker_min_score, sim_min_score, mmr_lambda)
 
         # 執行搜索
         search_results = await graphiti.search_(
@@ -1050,7 +1320,8 @@ async def search_memory_nodes(
             search_filter=search_filters,
         )
 
-        nodes = search_results.nodes if search_results.nodes else []
+        # 候選池先依重要性（access_count）加權微調，再截斷至 top_k
+        nodes = _apply_importance_boost(search_results.nodes or [])[:top_k]
         duration = time.time() - start_time
         log_operation_success("search_nodes", duration, result_count=len(nodes))
 
@@ -1112,6 +1383,12 @@ async def search_memory_facts(
     created_after: Optional[str] = None,
     created_before: Optional[str] = None,
     only_valid: bool = False,
+    search_recipe: Optional[str] = None,
+    valid_after: Optional[str] = None,
+    valid_before: Optional[str] = None,
+    reranker_min_score: Optional[float] = None,
+    sim_min_score: Optional[float] = None,
+    mmr_lambda: Optional[float] = None,
 ) -> dict:
     """
     搜索記憶事實（實體間的關係）。
@@ -1127,6 +1404,13 @@ async def search_memory_facts(
         created_after: ISO datetime，只搜尋此時間之後建立的事實
         created_before: ISO datetime，只搜尋此時間之前建立的事實
         only_valid: 僅搜尋未失效（invalid_at 為空）的事實
+        search_recipe: 邊搜尋策略（僅 edge_* 系列）；edge_node_distance 需配
+            center_node_uuid。未指定時用 edge_rrf
+        valid_after: ISO datetime，只搜尋生效時間於此之後的事實
+        valid_before: ISO datetime，只搜尋生效時間於此之前的事實
+        reranker_min_score: 重排分數下限（0-1）
+        sim_min_score: 向量相似度下限（0-1）
+        mmr_lambda: MMR 多樣性係數（0-1，僅 edge_mmr 生效）
 
     Returns:
         dict: 包含搜索結果的字典
@@ -1148,17 +1432,42 @@ async def search_memory_facts(
 
         graphiti = await initialize_graphiti()
 
+        # query 前處理：正規化（總是）+ 可選 LLM 展開
+        query = _normalize_query(query)
+        query = await _expand_query(query, graphiti)
+
+        # recipe 選擇（僅允許 edge_* 系列）
+        if search_recipe:
+            if search_recipe not in _EDGE_SEARCH_RECIPES:
+                return create_error_response(
+                    ValueError(
+                        f"search_memory_facts 僅支援 edge_* 策略: {sorted(_EDGE_SEARCH_RECIPES)}"
+                    ),
+                    "參數錯誤: 不支援的 search_recipe",
+                )
+            if search_recipe == "edge_node_distance" and not center_node_uuid:
+                return create_error_response(
+                    ValueError("edge_node_distance 需提供 center_node_uuid 作為距離基準點"),
+                    "參數錯誤: edge_node_distance 缺少 center_node_uuid",
+                )
+            search_config = SEARCH_RECIPES[search_recipe].model_copy(deep=True)
+        else:
+            search_config = EDGE_HYBRID_SEARCH_RRF.model_copy(deep=True)
+
         # 建構過濾器
         search_filters = _build_search_filters(
             edge_types=edge_types,
             created_after=created_after,
             created_before=created_before,
             only_valid=only_valid,
+            valid_after=valid_after,
+            valid_before=valid_before,
         )
 
-        # 使用新版 search_() API
-        search_config = EDGE_HYBRID_SEARCH_RRF.model_copy(deep=True)
-        search_config.limit = min(max_facts, 50)
+        # 放大候選池供 reranker 重排，回傳前再截斷至 max_facts
+        top_k = min(max_facts, 50)
+        search_config.limit = _candidate_pool_limit(top_k)
+        _apply_search_tuning(search_config, reranker_min_score, sim_min_score, mmr_lambda)
 
         search_results = await graphiti.search_(
             query=query,
@@ -1168,7 +1477,8 @@ async def search_memory_facts(
             search_filter=search_filters,
         )
 
-        edges = search_results.edges if search_results.edges else []
+        # 候選池先依重要性（access_count）加權微調，再截斷至 top_k
+        edges = _apply_importance_boost(search_results.edges or [])[:top_k]
         duration = time.time() - start_time
         log_operation_success("search_facts", duration, result_count=len(edges))
 
@@ -1190,6 +1500,7 @@ async def search_memory_facts(
                 "center_node_uuid": center_node_uuid,
                 "edge_types": edge_types,
                 "only_valid": only_valid,
+                "search_recipe": search_recipe or "edge_rrf",
             },
             "duration": round(duration, 2),
         }
@@ -1531,10 +1842,13 @@ async def build_communities(
 @mcp.tool()
 async def advanced_search(
     query: str,
-    search_recipe: str = "combined_cross_encoder",
+    search_recipe: str = "combined_rrf",
     max_results: int = 10,
     group_ids: Optional[List[str]] = None,
     center_node_uuid: Optional[str] = None,
+    reranker_min_score: Optional[float] = None,
+    sim_min_score: Optional[float] = None,
+    mmr_lambda: Optional[float] = None,
 ) -> dict:
     """
     使用進階搜尋策略搜索知識圖譜。
@@ -1552,6 +1866,9 @@ async def advanced_search(
         max_results: 每類結果的最大數量（上限 50）
         group_ids: 分組 ID 列表
         center_node_uuid: 中心節點 UUID
+        reranker_min_score: 重排分數下限（0-1）
+        sim_min_score: 向量相似度下限（0-1）
+        mmr_lambda: MMR 多樣性係數（0-1，僅 *_mmr recipe 生效）
 
     Returns:
         dict: 包含 nodes, edges, episodes, communities 的完整搜尋結果
@@ -1562,6 +1879,10 @@ async def advanced_search(
     try:
         graphiti = await initialize_graphiti()
 
+        # query 前處理：正規化（總是）+ 可選 LLM 展開
+        query = _normalize_query(query)
+        query = await _expand_query(query, graphiti)
+
         # 取得搜尋配置
         if search_recipe not in SEARCH_RECIPES:
             return {
@@ -1571,7 +1892,9 @@ async def advanced_search(
             }
 
         search_config = SEARCH_RECIPES[search_recipe].model_copy(deep=True)
-        search_config.limit = min(max_results, 50)
+        top_k = min(max_results, 50)
+        search_config.limit = _candidate_pool_limit(top_k)
+        _apply_search_tuning(search_config, reranker_min_score, sim_min_score, mmr_lambda)
 
         # 執行搜索
         results = await graphiti.search_(
@@ -1583,6 +1906,9 @@ async def advanced_search(
 
         duration = time.time() - start_time
         simplified = _simplify_search_results(results)
+        # 候選池放大後，回傳前截斷每類至 max_results
+        for _cat in ("nodes", "edges", "episodes", "communities"):
+            simplified[_cat] = simplified[_cat][:top_k]
 
         total = (
             len(simplified["nodes"])
