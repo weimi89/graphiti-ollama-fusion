@@ -13,7 +13,7 @@ Dezvoltat ca extensie a [getzep/graphiti](https://github.com/getzep/graphiti), s
 - **Decuplare Embedding și LLM** — puteți specifica independent încorporatorul prin `EMBEDDING_PROVIDER`, iar LLM-urile din cloud revin automat la `bge-m3` local
 - **Distribuție pe două modele** — în modul Ollama, sarcinile complexe folosesc modelul principal, iar cele simple comută automat la modelul mic pentru a îmbunătăți performanța
 - **Segmentare inteligentă a conținutului** — textele lungi sunt procesate automat pe segmente, reducând încărcarea LLM-ului (prag configurabil)
-- **Procesare a memoriei în fundal** — adăugarea memoriei poate rula în fundal, iar apelul MCP revine imediat
+- **Procesare a memoriei în fundal** — adăugarea memoriei poate rula în fundal, iar apelul MCP revine imediat; starea sarcinilor este persistată în SQLite, iar sarcinile neterminate sunt restaurate automat după repornire
 - **Deduplicarea memoriei** — detectează automat memoriile existente foarte similare, evitând stocarea redundantă
 - **Detectarea conflictelor** — detectează fapte contradictorii între două entități, identificând informațiile invalidate și pe cele valide
 - **Detectarea comunităților** — grupează automat entitățile înrudite pe baza algoritmului Label Propagation
@@ -21,8 +21,8 @@ Dezvoltat ca extensie a [getzep/graphiti](https://github.com/getzep/graphiti), s
 - **Uitare inteligentă** — identifică și curăță memoriile învechite, cu acces redus, păstrând graful concis
 - **Import în masă** — trimite mai multe memorii odată, potrivit pentru migrarea unor volume mari de date
 - **Triplete structurate** — adăugați direct „subiect-relație-obiect", omițând extracția prin LLM, finalizat în secunde
-- **Interfață de administrare Web** — tablou de bord, navigare, căutare, vizualizarea grafului de cunoștințe, Q&A AI și navigarea comunităților integrate
-- **Internaționalizare (i18n)** — mesajele de răspuns suportă peste 30 de locale (inclusiv zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr etc.); instrumentele MCP urmează `SERVER_LANG`, iar REST API negociază automat după `Accept-Language` din HTTP
+- **Interfață de administrare Web** — tablou de bord, navigare, căutare, vizualizarea grafului de cunoștințe, Q&A AI, navigarea comunităților, întreținerea calității, import în masă și setări la rulare integrate
+- **Internaționalizare (i18n)** — mesajele de răspuns suportă 33 de limbi (inclusiv zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr etc.; zh-TW/en/zh-CN/ja scrise manual, restul furnizate de stratul generat); instrumentele MCP urmează `SERVER_LANG`, iar REST API negociază automat după `Accept-Language` din HTTP
 - **Teme întunecate/luminoase** — interfața Web suportă comutarea temei
 - **Mod sigur** — adăugare rapidă a memoriei cu posibilitatea de a omite extracția entităților
 - **Suport Docker** — Dockerfile integrat, suportă implementarea în containere
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Punctul de intrare principal — definirea instrumentelor MCP (19 instrumente)
 ├── src/
 │   ├── config.py                 # Gestionarea configurației (GraphitiConfig, suportă suprapunerea JSON/.env)
-│   ├── web_api.py                # REST API pentru interfața de administrare Web (peste 20 de puncte de acces)
+│   ├── web_api.py                # REST API pentru interfața de administrare Web (30+ puncte de acces)
 │   ├── ollama_graphiti_client.py  # Clientul LLM Ollama (distribuție pe două modele)
-│   ├── glm_client.py             # Clientul LLM GLM (Zhipu AI) (API compatibil OpenAI)
-│   ├── openrouter_client.py      # Clientul LLM OpenRouter (agregator de modele de la diverși furnizori)
-│   ├── deepseek_client.py        # Clientul LLM DeepSeek (json_object + protecție de siguranță json)
+│   ├── openai_compat_client.py   # Clasă de bază LLM compatibilă OpenAI (json_object + schema simplificat + protecție json)
+│   ├── glm_client.py             # Clientul LLM GLM (Zhipu AI) (moștenește OpenAICompatClient)
+│   ├── openrouter_client.py      # Clientul LLM OpenRouter (moștenește OpenAICompatClient)
+│   ├── deepseek_client.py        # Clientul LLM DeepSeek (moștenește OpenAICompatClient)
 │   ├── ollama_embedder.py        # Adaptorul modelului de încorporare Ollama
 │   ├── content_preprocessor.py   # Segmentare inteligentă a conținutului (segmentare automată a textului lung)
 │   ├── deduplication.py          # Deduplicarea memoriei (comparare prin similaritate cosinus)
 │   ├── importance.py             # Urmărirea importanței și uitarea inteligentă
 │   ├── safe_memory_add.py        # Adăugare sigură a memoriei (omiterea extracției entităților)
+│   ├── task_store.py             # Persistența SQLite a sarcinilor din fundal (TaskStore)
 │   ├── timezone_utils.py         # Conversia fusului orar (afișare UTC→fus orar local)
 │   ├── i18n.py                   # Internaționalizarea în backend (REST după Accept-Language, MCP după SERVER_LANG)
+│   ├── i18n_generated.py         # Acoperiri de limbă generate automat (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Gestionare structurată a excepțiilor (12 categorii de excepții)
 │   └── logging_setup.py          # Sistem de jurnalizare (rotație temporală + monitorizarea performanței)
 ├── web/                          # Frontend-ul interfeței de administrare Web (SPA, fără build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # Încapsularea REST API
 │       ├── components.js         # Randarea componentelor UI (include pagina comunităților)
 │       └── app.js                # Rutarea SPA, gestionarea stării
-├── tests/                        # Suita de teste (183 de teste)
+├── tests/                        # Suita de teste (203 de teste)
 │   ├── test_content_preprocessor.py  # Teste pentru logica de segmentare (17)
 │   ├── test_new_features.py      # Teste pentru funcționalitățile noi (32)
-│   ├── test_i18n.py             # Teste de internaționalizare (37)
+│   ├── test_i18n.py             # Teste de internaționalizare (57)
 │   ├── test_unit.py              # Teste unitare
 │   ├── test_web_api.py           # Teste Web API
 │   ├── test_web_ui_features.py   # Teste pentru funcționalitățile Web UI
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Validarea configurației
 │   ├── performance_diagnose.py   # Diagnosticarea performanței
 │   ├── inspect_schema.py         # Verificarea structurii Neo4j
-│   └── batch_reprocess.py        # Reprocesare în masă
+│   ├── batch_reprocess.py        # Reprocesare în masă
+│   └── migrate_embeddings.py     # Migrarea modelului de Embedding
 ├── docs/                         # Documentație
 ├── logs/                         # Jurnale (rotație temporală, păstrate implicit 30 de zile)
 ├── Dockerfile                    # Implementarea containerizată Docker
@@ -483,7 +487,9 @@ Potrivit pentru clienți care necesită pornirea directă a procesului, precum C
 - Gestionarea grupurilor — filtrare după grup, ștergere în masă
 - Vizualizarea grafului de cunoștințe — prezentarea grafică a relațiilor dintre noduri
 - Q&A AI — întrebări și răspunsuri inteligente bazate pe graful de cunoștințe
-- Analiza calității — analiza calității și a acoperirii memoriei
+- Întreținerea calității — indicatori de calitate a memoriei și instrumente de curățare
+- Import în masă — importul a mai multor fragmente de memorie deodată (JSON, limită 500 per cerere)
+- Setări la rulare — vizualizarea setărilor active și ajustarea unor parametri fără repornire
 - Comutarea temei — temă întunecată/luminoasă
 
 **REST API:**
@@ -492,20 +498,33 @@ Potrivit pentru clienți care necesită pornirea directă a procesului, precum C
 |------|------|------|
 | `/api/stats` | GET | Statistici pentru tabloul de bord |
 | `/api/groups` | GET | Obține toate group_id-urile |
+| `/api/groups/stats` | GET | Statistici noduri/fapte/fragmente per grup |
 | `/api/nodes` | GET | Navigarea nodurilor de entități (paginat) |
 | `/api/facts` | GET | Navigarea faptelor (paginat) |
 | `/api/episodes` | GET | Navigarea fragmentelor de memorie (paginat) |
+| `/api/nodes/{uuid}/relations` | GET | Obține relațiile de muchii de intrare/ieșire ale unui nod |
 | `/api/search/nodes` | GET | Căutare vectorială de noduri |
 | `/api/search/facts` | GET | Căutare vectorială de fapte |
+| `/api/search/episodes` | GET | Căutare fragmente de memorie |
 | `/api/search/advanced` | GET | Căutare avansată (16 strategii) |
 | `/api/communities` | GET | Navigarea nodurilor de comunități (paginat) |
 | `/api/communities/build` | POST | Declanșează construirea comunităților |
+| `/api/memory/add` | POST | Adaugă o singură memorie |
 | `/api/memory/add-bulk` | POST | Adăugare în masă a memoriei |
 | `/api/memory/add-triplet` | POST | Adăugare de triplet |
+| `/api/import/episodes` | POST | Import în masă de fragmente de memorie (JSON, limită 500 per cerere) |
 | `/api/memory/tasks` | GET | Listează sarcinile din fundal (suportă filtrare după stare) |
 | `/api/memory/tasks/{id}` | GET | Interoghează starea unei singure sarcini |
+| `/api/timeline` | GET | Navigare pe axa timpului |
+| `/api/graph/subgraph` | GET | Obține subgraful (vizualizare) |
+| `/api/graph/all` | GET | Obține graful complet (vizualizare) |
+| `/api/ask` | GET | Q&A AI (bazat pe regăsire din graf) |
+| `/api/analytics/top-nodes` | GET | Noduri cu conectivitate/acces ridicat |
+| `/api/analytics/quality` | GET | Indicatori de calitate ai grafului de cunoștințe |
 | `/api/analytics/stale` | GET | Interoghează memoriile învechite |
 | `/api/analytics/cleanup` | POST | Curăță memoriile învechite |
+| `/api/config` | GET | Obține setările active (fără cheile API) |
+| `/api/config` | PATCH | Actualizare la rulare a setărilor modificabile (valabilă doar în procesul curent, resetată la repornire) |
 | `/api/nodes/{uuid}` | DELETE | Șterge un nod |
 | `/api/episodes/{uuid}` | DELETE | Șterge un fragment de memorie |
 | `/api/facts/{uuid}` | DELETE | Șterge un fapt |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # pragul numărului de caractere care decla
 GRAPHITI_MAX_CHUNK_SIZE=600          # numărul maxim de caractere per segment
 GRAPHITI_MAX_COROUTINES=10            # numărul maxim de corutine concurente
 GRAPHITI_DEFAULT_BACKGROUND=false    # dacă procesarea în fundal este implicită
+TASK_DB_PATH=data/tasks.db           # calea de persistență SQLite pentru sarcinile din fundal
 
 # === Urmărirea importanței și uitarea inteligentă (opțional) ===
 ENABLE_IMPORTANCE_TRACKING=true      # activează urmărirea accesului
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Testare
 
 ```bash
-# Execută toate testele (183, aproximativ 1 secundă)
+# Execută toate testele (203, aproximativ 1 secundă)
 uv run python -m pytest tests/
 
 # Ieșire detaliată

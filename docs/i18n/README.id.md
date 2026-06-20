@@ -13,7 +13,7 @@ Dikembangkan sebagai perluasan dari [getzep/graphiti](https://github.com/getzep/
 - **Embedding terpisah dari LLM** — dapat menentukan embedder secara independen dengan `EMBEDDING_PROVIDER`, LLM cloud otomatis kembali ke `bge-m3` lokal
 - **Pemisahan dua model** — dalam mode Ollama, tugas kompleks menggunakan model utama, sedangkan tugas sederhana otomatis beralih ke model kecil untuk meningkatkan kinerja
 - **Pemotongan konten cerdas** — teks panjang otomatis dipecah menjadi segmen untuk mengurangi beban LLM (ambang batas dapat dikonfigurasi)
-- **Pemrosesan memori di latar belakang** — penambahan memori dapat dijalankan di latar belakang, panggilan MCP langsung mengembalikan hasil
+- **Pemrosesan memori di latar belakang** — penambahan memori dapat dijalankan di latar belakang, panggilan MCP langsung mengembalikan hasil; status tugas disimpan secara persisten di SQLite, tugas yang belum selesai otomatis dipulihkan setelah restart
 - **Deduplikasi memori** — otomatis mendeteksi memori yang sudah ada dan sangat mirip untuk menghindari penyimpanan ganda
 - **Deteksi konflik** — mendeteksi fakta yang bertentangan antara dua entitas, mengidentifikasi informasi yang sudah tidak berlaku dan yang masih berlaku
 - **Deteksi komunitas** — otomatis mengelompokkan entitas terkait berdasarkan algoritma Label Propagation
@@ -21,8 +21,8 @@ Dikembangkan sebagai perluasan dari [getzep/graphiti](https://github.com/getzep/
 - **Pelupaan cerdas** — mengidentifikasi dan membersihkan memori yang usang dan jarang diakses untuk menjaga graf tetap ramping
 - **Impor massal** — mengirimkan beberapa memori sekaligus, cocok untuk migrasi data dalam jumlah besar
 - **Triplet terstruktur** — langsung menambahkan "subjek-relasi-objek", melewati ekstraksi LLM, selesai dalam sekejap
-- **Antarmuka manajemen Web** — dilengkapi dasbor, penjelajahan, pencarian, visualisasi graf pengetahuan, tanya jawab AI, dan penjelajahan komunitas
-- **Multibahasa (i18n)** — pesan respons mendukung 30+ locale (termasuk zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr dan lainnya); tool MCP mengikuti `SERVER_LANG`, REST API otomatis bernegosiasi berdasarkan HTTP `Accept-Language`
+- **Antarmuka manajemen Web** — dilengkapi dasbor, penjelajahan, pencarian, visualisasi graf pengetahuan, tanya jawab AI, penjelajahan komunitas, pemeliharaan kualitas, impor massal, dan pengaturan runtime
+- **Multibahasa (i18n)** — pesan respons mendukung 33 bahasa (termasuk zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr dan lainnya; zh-TW/en/zh-CN/ja ditulis secara manual, sisanya disediakan oleh lapisan generated); tool MCP mengikuti `SERVER_LANG`, REST API otomatis bernegosiasi berdasarkan HTTP `Accept-Language`
 - **Tema gelap/terang** — antarmuka Web mendukung peralihan tema
 - **Mode aman** — opsi penambahan memori cepat yang melewati ekstraksi entitas
 - **Dukungan Docker** — dilengkapi Dockerfile, mendukung penerapan dalam kontainer
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Titik masuk utama — definisi tool MCP (19 tool)
 ├── src/
 │   ├── config.py                 # Manajemen konfigurasi (GraphitiConfig, mendukung penumpukan JSON/.env)
-│   ├── web_api.py                # REST API antarmuka manajemen Web (20+ endpoint)
+│   ├── web_api.py                # REST API antarmuka manajemen Web (30+ endpoint)
 │   ├── ollama_graphiti_client.py  # Klien LLM Ollama (pemisahan dua model)
-│   ├── glm_client.py             # Klien LLM GLM (Zhipu AI) (API kompatibel OpenAI)
-│   ├── openrouter_client.py      # Klien LLM OpenRouter (agregat berbagai model)
-│   ├── deepseek_client.py        # Klien LLM DeepSeek (json_object + perlindungan json cadangan)
+│   ├── openai_compat_client.py   # Kelas dasar LLM kompatibel OpenAI (json_object + schema sederhana + perlindungan json cadangan)
+│   ├── glm_client.py             # Klien LLM GLM (Zhipu AI) (mewarisi OpenAICompatClient)
+│   ├── openrouter_client.py      # Klien LLM OpenRouter (mewarisi OpenAICompatClient)
+│   ├── deepseek_client.py        # Klien LLM DeepSeek (mewarisi OpenAICompatClient)
 │   ├── ollama_embedder.py        # Adaptor model embedding Ollama
 │   ├── content_preprocessor.py   # Pemotongan konten cerdas (teks panjang otomatis dipecah)
 │   ├── deduplication.py          # Deduplikasi memori (perbandingan kemiripan kosinus)
 │   ├── importance.py             # Pelacakan kepentingan dan pelupaan cerdas
 │   ├── safe_memory_add.py        # Penambahan memori aman (melewati ekstraksi entitas)
+│   ├── task_store.py             # Persistensi tugas latar belakang SQLite (TaskStore)
 │   ├── timezone_utils.py         # Konversi zona waktu (UTC→tampilan zona waktu lokal)
 │   ├── i18n.py                   # Multibahasa backend (REST mengikuti Accept-Language, MCP mengikuti SERVER_LANG)
+│   ├── i18n_generated.py         # Lapisan bahasa yang dihasilkan secara otomatis (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Penanganan pengecualian terstruktur (12 kategori pengecualian)
 │   └── logging_setup.py          # Sistem log (rotasi waktu + pemantauan kinerja)
 ├── web/                          # Frontend antarmuka manajemen Web (SPA, tanpa build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # Pembungkus REST API
 │       ├── components.js         # Render komponen UI (termasuk halaman komunitas)
 │       └── app.js                # Routing SPA, manajemen status
-├── tests/                        # Rangkaian pengujian (183 pengujian)
+├── tests/                        # Rangkaian pengujian (203 pengujian)
 │   ├── test_content_preprocessor.py  # Pengujian logika pemotongan (17 pengujian)
 │   ├── test_new_features.py      # Pengujian fitur baru (32 pengujian)
-│   ├── test_i18n.py             # Pengujian multibahasa (37 pengujian)
+│   ├── test_i18n.py             # Pengujian multibahasa (57 pengujian)
 │   ├── test_unit.py              # Pengujian unit
 │   ├── test_web_api.py           # Pengujian Web API
 │   ├── test_web_ui_features.py   # Pengujian fitur Web UI
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Validasi konfigurasi
 │   ├── performance_diagnose.py   # Diagnosis kinerja
 │   ├── inspect_schema.py         # Pemeriksaan struktur Neo4j
-│   └── batch_reprocess.py        # Pemrosesan ulang batch
+│   ├── batch_reprocess.py        # Pemrosesan ulang batch
+│   └── migrate_embeddings.py     # Migrasi model Embedding
 ├── docs/                         # Dokumentasi
 ├── logs/                         # Log (rotasi waktu, default disimpan 30 hari)
 ├── Dockerfile                    # Penerapan kontainer Docker
@@ -483,7 +487,9 @@ Dalam mode HTTP, akses `http://localhost:8000/` untuk menggunakannya.
 - Manajemen Group — penyaringan berdasarkan grup, penghapusan batch
 - Visualisasi graf pengetahuan — penyajian grafis relasi node
 - Tanya jawab AI — tanya jawab cerdas berbasis graf pengetahuan
-- Analisis kualitas — analisis kualitas dan cakupan memori
+- Pemeliharaan kualitas — metrik kualitas memori dan tool pembersihan
+- Impor massal — mengimpor beberapa episode memori sekaligus (JSON, batas 500 per sekali impor)
+- Pengaturan runtime — melihat konfigurasi yang berlaku saat ini, dan menyesuaikan beberapa parameter tanpa restart
 - Peralihan tema — tema gelap/terang
 
 **REST API:**
@@ -492,20 +498,33 @@ Dalam mode HTTP, akses `http://localhost:8000/` untuk menggunakannya.
 |------|------|------|
 | `/api/stats` | GET | Statistik dasbor |
 | `/api/groups` | GET | Mendapatkan semua group_id |
+| `/api/groups/stats` | GET | Statistik node/fakta/episode per group |
 | `/api/nodes` | GET | Menjelajahi node entitas (paginasi) |
 | `/api/facts` | GET | Menjelajahi fakta (paginasi) |
 | `/api/episodes` | GET | Menjelajahi episode memori (paginasi) |
+| `/api/nodes/{uuid}/relations` | GET | Mendapatkan relasi edge masuk/keluar node |
 | `/api/search/nodes` | GET | Pencarian vektor node |
 | `/api/search/facts` | GET | Pencarian vektor fakta |
+| `/api/search/episodes` | GET | Pencarian episode memori |
 | `/api/search/advanced` | GET | Pencarian lanjutan (16 strategi) |
 | `/api/communities` | GET | Menjelajahi node komunitas (paginasi) |
 | `/api/communities/build` | POST | Memicu pembangunan komunitas |
+| `/api/memory/add` | POST | Menambahkan satu memori |
 | `/api/memory/add-bulk` | POST | Menambahkan memori secara massal |
 | `/api/memory/add-triplet` | POST | Menambahkan triplet |
+| `/api/import/episodes` | POST | Impor massal episode memori (JSON, batas 500 per sekali) |
 | `/api/memory/tasks` | GET | Menampilkan daftar tugas latar belakang (mendukung penyaringan status) |
 | `/api/memory/tasks/{id}` | GET | Menanyakan status tugas tunggal |
+| `/api/timeline` | GET | Penjelajahan garis waktu |
+| `/api/graph/subgraph` | GET | Mendapatkan subgraf (visualisasi) |
+| `/api/graph/all` | GET | Mendapatkan graf lengkap (visualisasi) |
+| `/api/ask` | GET | Tanya jawab AI (berbasis pencarian graf) |
+| `/api/analytics/top-nodes` | GET | Node dengan konektivitas/akses tertinggi |
+| `/api/analytics/quality` | GET | Metrik kualitas graf pengetahuan |
 | `/api/analytics/stale` | GET | Menanyakan memori usang |
 | `/api/analytics/cleanup` | POST | Membersihkan memori usang |
+| `/api/config` | GET | Mendapatkan konfigurasi yang berlaku saat ini (tidak termasuk API key) |
+| `/api/config` | PATCH | Memperbarui konfigurasi yang dapat diubah secara runtime (hanya berlaku untuk proses ini, reset saat restart) |
 | `/api/nodes/{uuid}` | DELETE | Menghapus node |
 | `/api/episodes/{uuid}` | DELETE | Menghapus episode memori |
 | `/api/facts/{uuid}` | DELETE | Menghapus fakta |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # Ambang batas jumlah karakter yang memicu 
 GRAPHITI_MAX_CHUNK_SIZE=600          # Jumlah karakter maksimum per segmen
 GRAPHITI_MAX_COROUTINES=10            # Jumlah maksimum koroutin paralel
 GRAPHITI_DEFAULT_BACKGROUND=false    # Apakah default pemrosesan latar belakang
+TASK_DB_PATH=data/tasks.db           # Path persistensi SQLite tugas latar belakang
 
 # === Pelacakan kepentingan dan pelupaan cerdas (opsional) ===
 ENABLE_IMPORTANCE_TRACKING=true      # Mengaktifkan pelacakan akses
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Pengujian
 
 ```bash
-# Menjalankan semua pengujian (183 pengujian, sekitar 1 detik)
+# Menjalankan semua pengujian (203 pengujian, sekitar 1 detik)
 uv run python -m pytest tests/
 
 # Keluaran terperinci

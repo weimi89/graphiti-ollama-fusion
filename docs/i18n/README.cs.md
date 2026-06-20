@@ -13,7 +13,7 @@ Vyvinuto jako rozšíření [getzep/graphiti](https://github.com/getzep/graphiti
 - **Oddělení Embeddingu a LLM** — embedder lze nezávisle určit pomocí `EMBEDDING_PROVIDER`, cloudové LLM automaticky přejdou na lokální `bge-m3`
 - **Rozdělení mezi dva modely** — v režimu Ollama používají složité úlohy hlavní model, jednoduché úlohy automaticky přepnou na malý model pro zvýšení výkonu
 - **Inteligentní dělení obsahu** — dlouhé texty se automaticky rozdělují na segmenty, čímž se snižuje zátěž LLM (konfigurovatelný práh)
-- **Zpracování paměti na pozadí** — přidávání paměti může běžet na pozadí, volání MCP se vrací okamžitě
+- **Zpracování paměti na pozadí** — přidávání paměti může běžet na pozadí, volání MCP se vrací okamžitě; stav úloh je trvale uložen v SQLite, po restartu se automaticky obnoví nedokončené úlohy
 - **Deduplikace paměti** — automatické rozpoznání vysoce podobných existujících pamětí, zamezení duplicitnímu ukládání
 - **Detekce konfliktů** — rozpoznání rozporných faktů mezi dvěma entitami, identifikace neplatných a platných informací
 - **Detekce komunit** — automatické shlukování souvisejících entit pomocí algoritmu Label Propagation
@@ -21,8 +21,8 @@ Vyvinuto jako rozšíření [getzep/graphiti](https://github.com/getzep/graphiti
 - **Inteligentní zapomínání** — identifikace a vyčištění zastaralých pamětí s nízkou frekvencí přístupu, udržení grafu kompaktního
 - **Hromadný import** — odeslání více pamětí najednou, vhodné pro migraci velkého množství dat
 - **Strukturované trojice** — přímé přidání „subjekt-vztah-objekt“, přeskočení extrakce LLM, dokončení během sekundy
-- **Web UI pro správu** — vestavěný dashboard, prohlížení, vyhledávání, vizualizace znalostního grafu, AI dotazy, prohlížení komunit
-- **Vícejazyčnost (i18n)** — zprávy odpovědí podporují 30+ locale (včetně zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr atd.); MCP nástroje podle `SERVER_LANG`, REST API automaticky vyjednává podle HTTP `Accept-Language`
+- **Web UI pro správu** — vestavěný dashboard, prohlížení, vyhledávání, vizualizace znalostního grafu, AI dotazy, prohlížení komunit, správa kvality, hromadný import, nastavení za běhu
+- **Vícejazyčnost (i18n)** — zprávy odpovědí podporují 33 jazyků (včetně zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr atd.; zh-TW/en/zh-CN/ja jsou ručně psané, ostatní poskytuje generovaná vrstva); MCP nástroje podle `SERVER_LANG`, REST API automaticky vyjednává podle HTTP `Accept-Language`
 - **Tmavý/světlý motiv** — Web UI podporuje přepínání motivů
 - **Bezpečný režim** — volitelné rychlé přidání paměti s přeskočením extrakce entit
 - **Podpora Docker** — vestavěný Dockerfile, podpora nasazení v kontejneru
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Hlavní vstupní bod — definice MCP nástrojů (19 nástrojů)
 ├── src/
 │   ├── config.py                 # Správa konfigurace (GraphitiConfig, podpora vrstvení JSON/.env)
-│   ├── web_api.py                # REST API Web UI pro správu (20+ koncových bodů)
+│   ├── web_api.py                # REST API Web UI pro správu (30+ koncových bodů)
 │   ├── ollama_graphiti_client.py  # Klient Ollama LLM (rozdělení mezi dva modely)
-│   ├── glm_client.py             # Klient GLM (Zhipu AI) LLM (API kompatibilní s OpenAI)
-│   ├── openrouter_client.py      # Klient OpenRouter LLM (agregace modelů různých výrobců)
-│   ├── deepseek_client.py        # Klient DeepSeek LLM (json_object + záložní ochrana json)
+│   ├── openai_compat_client.py   # Základní třída OpenAI kompatibilního LLM (json_object + zjednodušené schéma + záložní ochrana json)
+│   ├── glm_client.py             # Klient GLM (Zhipu AI) LLM (dědí OpenAICompatClient)
+│   ├── openrouter_client.py      # Klient OpenRouter LLM (dědí OpenAICompatClient)
+│   ├── deepseek_client.py        # Klient DeepSeek LLM (dědí OpenAICompatClient)
 │   ├── ollama_embedder.py        # Adaptér modelu embeddingu Ollama
 │   ├── content_preprocessor.py   # Inteligentní dělení obsahu (automatické segmentování dlouhého textu)
 │   ├── deduplication.py          # Deduplikace paměti (porovnání kosinové podobnosti)
 │   ├── importance.py             # Sledování důležitosti a inteligentní zapomínání
 │   ├── safe_memory_add.py        # Bezpečné přidání paměti (přeskočení extrakce entit)
+│   ├── task_store.py             # Trvalé ukládání úloh na pozadí v SQLite (TaskStore)
 │   ├── timezone_utils.py         # Převod časového pásma (zobrazení UTC→lokální časové pásmo)
 │   ├── i18n.py                   # Backendová vícejazyčnost (REST podle Accept-Language, MCP podle SERVER_LANG)
+│   ├── i18n_generated.py         # Automaticky generované jazykové přepisy (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Strukturované zpracování výjimek (12 typů tříd výjimek)
 │   └── logging_setup.py          # Systém protokolování (časová rotace + monitorování výkonu)
 ├── web/                          # Frontend Web UI pro správu (SPA, bez buildu)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # Obal REST API
 │       ├── components.js         # Vykreslování UI komponent (včetně stránky komunit)
 │       └── app.js                # Routování SPA, správa stavu
-├── tests/                        # Testovací sada (183 testů)
+├── tests/                        # Testovací sada (203 testů)
 │   ├── test_content_preprocessor.py  # Testy logiky dělení (17 testů)
 │   ├── test_new_features.py      # Testy nových funkcí (32 testů)
-│   ├── test_i18n.py             # Testy vícejazyčnosti (37 testů)
+│   ├── test_i18n.py             # Testy vícejazyčnosti (57 testů)
 │   ├── test_unit.py              # Jednotkové testy
 │   ├── test_web_api.py           # Testy Web API
 │   ├── test_web_ui_features.py   # Testy funkcí Web UI
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Validace konfigurace
 │   ├── performance_diagnose.py   # Diagnostika výkonu
 │   ├── inspect_schema.py         # Kontrola struktury Neo4j
-│   └── batch_reprocess.py        # Dávkové opětovné zpracování
+│   ├── batch_reprocess.py        # Dávkové opětovné zpracování
+│   └── migrate_embeddings.py     # Migrace modelu Embedding (opětovné generování vektorů po změně modelu)
 ├── docs/                         # Dokumentace
 ├── logs/                         # Protokoly (časová rotace, výchozí uchování 30 dní)
 ├── Dockerfile                    # Nasazení v kontejneru Docker
@@ -483,7 +487,9 @@ V režimu HTTP přistupte na `http://localhost:8000/` a můžete jej používat.
 - Správa Group — filtrování podle skupiny, dávkové mazání
 - Vizualizace znalostního grafu — grafické zobrazení vztahů uzlů
 - AI dotazy — inteligentní dotazování založené na znalostním grafu
-- Analýza kvality — analýza kvality paměti a pokrytí
+- Správa kvality — metriky kvality paměti a nástroje pro čištění
+- Hromadný import — import více paměťových epizod najednou (JSON, max. 500 položek)
+- Nastavení za běhu — zobrazení aktuálně platné konfigurace, úprava vybraných parametrů bez restartu
 - Přepínání motivu — tmavý/světlý motiv
 
 **REST API:**
@@ -492,20 +498,33 @@ V režimu HTTP přistupte na `http://localhost:8000/` a můžete jej používat.
 |------|------|------|
 | `/api/stats` | GET | Statistiky dashboardu |
 | `/api/groups` | GET | Získání všech group_id |
+| `/api/groups/stats` | GET | Statistiky uzlů/faktů/epizod pro každou group |
 | `/api/nodes` | GET | Prohlížení entitních uzlů (stránkování) |
 | `/api/facts` | GET | Prohlížení faktů (stránkování) |
 | `/api/episodes` | GET | Prohlížení paměťových epizod (stránkování) |
+| `/api/nodes/{uuid}/relations` | GET | Získání příchozích/odchozích vztahů uzlu |
 | `/api/search/nodes` | GET | Vektorové vyhledávání uzlů |
 | `/api/search/facts` | GET | Vektorové vyhledávání faktů |
+| `/api/search/episodes` | GET | Vyhledávání paměťových epizod |
 | `/api/search/advanced` | GET | Pokročilé vyhledávání (16 strategií) |
 | `/api/communities` | GET | Prohlížení uzlů komunit (stránkování) |
 | `/api/communities/build` | POST | Spuštění tvorby komunit |
+| `/api/memory/add` | POST | Přidání jedné paměti |
 | `/api/memory/add-bulk` | POST | Hromadné přidání paměti |
 | `/api/memory/add-triplet` | POST | Přidání trojice |
+| `/api/import/episodes` | POST | Hromadný import paměťových epizod (JSON, max. 500 položek) |
 | `/api/memory/tasks` | GET | Výpis úloh na pozadí (podpora filtrování podle stavu) |
 | `/api/memory/tasks/{id}` | GET | Dotaz na stav jedné úlohy |
+| `/api/timeline` | GET | Prohlížení časové osy |
+| `/api/graph/subgraph` | GET | Získání podgrafu (vizualizace) |
+| `/api/graph/all` | GET | Získání celého grafu (vizualizace) |
+| `/api/ask` | GET | AI dotaz (vyhledávání v grafu) |
+| `/api/analytics/top-nodes` | GET | Uzly s vysokou konektivitou/přístupností |
+| `/api/analytics/quality` | GET | Metriky kvality znalostního grafu |
 | `/api/analytics/stale` | GET | Dotaz na zastaralé paměti |
 | `/api/analytics/cleanup` | POST | Vyčištění zastaralých pamětí |
+| `/api/config` | GET | Získání aktuálně platné konfigurace (bez API klíčů) |
+| `/api/config` | PATCH | Aktualizace upravitelných nastavení za běhu (platí pouze pro aktuální proces, po restartu se obnoví) |
 | `/api/nodes/{uuid}` | DELETE | Smazání uzlu |
 | `/api/episodes/{uuid}` | DELETE | Smazání paměťové epizody |
 | `/api/facts/{uuid}` | DELETE | Smazání faktu |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # práh počtu znaků pro spuštění intel
 GRAPHITI_MAX_CHUNK_SIZE=600          # maximální počet znaků na segment
 GRAPHITI_MAX_COROUTINES=10            # maximální počet souběžných korutin
 GRAPHITI_DEFAULT_BACKGROUND=false    # zda zpracovávat na pozadí ve výchozím nastavení
+TASK_DB_PATH=data/tasks.db           # cesta k trvalému úložišti úloh na pozadí v SQLite
 
 # === Sledování důležitosti a inteligentní zapomínání (volitelné) ===
 ENABLE_IMPORTANCE_TRACKING=true      # zapnutí sledování přístupů
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Testování
 
 ```bash
-# Spuštění všech testů (183 testů, přibližně 1 sekunda)
+# Spuštění všech testů (203 testů, přibližně 1 sekunda)
 uv run python -m pytest tests/
 
 # Podrobný výstup

@@ -13,7 +13,7 @@ Utviklet som en utvidelse basert på [getzep/graphiti](https://github.com/getzep
 - **Embedding frikoblet fra LLM** — kan angi innebyggingsmotor uavhengig med `EMBEDDING_PROVIDER`, sky-LLM faller automatisk tilbake til lokal `bge-m3`
 - **Tomodellsfordeling** — i Ollama-modus bruker komplekse oppgaver hovedmodellen, mens enkle oppgaver automatisk veksler til en liten modell for bedre ytelse
 - **Intelligent innholdsoppdeling** — lange tekster behandles automatisk i segmenter, noe som reduserer LLM-belastningen (konfigurerbar terskel)
-- **Bakgrunnsbehandling av minne** — minneinnlegging kan kjøres i bakgrunnen, MCP-kallet returnerer umiddelbart
+- **Bakgrunnsbehandling av minne** — minneinnlegging kan kjøres i bakgrunnen, MCP-kallet returnerer umiddelbart; oppgavestatus lagres i SQLite og uferdige oppgaver gjenopprettes automatisk etter omstart
 - **Minne-deduplisering** — oppdager automatisk svært likt eksisterende minne for å unngå dobbeltlagring
 - **Konfliktdeteksjon** — oppdager motstridende fakta mellom to entiteter og identifiserer utdatert og gyldig informasjon
 - **Fellesskapsdeteksjon** — grupperer automatisk relaterte entiteter basert på Label Propagation-algoritmen
@@ -21,8 +21,8 @@ Utviklet som en utvidelse basert på [getzep/graphiti](https://github.com/getzep
 - **Intelligent glemming** — identifiserer og rydder opp i utdatert minne med lav tilgangsfrekvens for å holde grafen kompakt
 - **Bulk-import** — sender inn flere minner samtidig, egnet for migrering av store datamengder
 - **Strukturerte tripler** — legg til «subjekt-relasjon-objekt» direkte, hopp over LLM-ekstraksjon og fullfør på sekunder
-- **Web-administrasjonsgrensesnitt** — innebygd dashbord, bla gjennom, søk, visualisering av kunnskapsgraf, AI-spørsmål og svar, fellesskapsvisning
-- **Flerspråklighet (i18n)** — svarmeldinger støtter 30+ locale (inkludert zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr osv.); MCP-verktøy følger `SERVER_LANG`, REST API forhandler automatisk etter HTTP `Accept-Language`
+- **Web-administrasjonsgrensesnitt** — innebygd dashbord, bla gjennom, søk, visualisering av kunnskapsgraf, AI-spørsmål og svar, fellesskapsvisning, kvalitetsvedlikehold, bulk-import, kjøretidsinnstillinger
+- **Flerspråklighet (i18n)** — svarmeldinger støtter 33 språk (inkludert zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr osv.; zh-TW/en/zh-CN/ja er håndskrevne, de øvrige leveres av generated-laget); MCP-verktøy følger `SERVER_LANG`, REST API forhandler automatisk etter HTTP `Accept-Language`
 - **Mørkt/lyst tema** — Web-grensesnittet støtter temaveksling
 - **Sikker modus** — valgfri rask minneinnlegging som hopper over entitetsekstraksjon
 - **Docker-støtte** — innebygd Dockerfile, støtter containerisert distribusjon
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Hovedinngang — MCP-verktøydefinisjoner (19 verktøy)
 ├── src/
 │   ├── config.py                 # Konfigurasjonshåndtering (GraphitiConfig, støtter JSON/.env-lagdeling)
-│   ├── web_api.py                # Web-administrasjonsgrensesnitt REST API (20+ endepunkter)
+│   ├── web_api.py                # Web-administrasjonsgrensesnitt REST API (30+ endepunkter)
 │   ├── ollama_graphiti_client.py  # Ollama LLM-klient (tomodellsfordeling)
-│   ├── glm_client.py             # GLM (Zhipu AI) LLM-klient (OpenAI-kompatibel API)
-│   ├── openrouter_client.py      # OpenRouter LLM-klient (aggregerer modeller fra ulike leverandører)
-│   ├── deepseek_client.py        # DeepSeek LLM-klient (json_object + reserve-json-beskyttelse)
+│   ├── openai_compat_client.py   # OpenAI-kompatibel LLM-basisklasse (json_object + forenklet schema + json-sikkerhetsbeskyttelse)
+│   ├── glm_client.py             # GLM (Zhipu AI) LLM-klient (arver OpenAICompatClient)
+│   ├── openrouter_client.py      # OpenRouter LLM-klient (arver OpenAICompatClient)
+│   ├── deepseek_client.py        # DeepSeek LLM-klient (arver OpenAICompatClient)
 │   ├── ollama_embedder.py        # Ollama innebyggingsmodell-adapter
 │   ├── content_preprocessor.py   # Intelligent innholdsoppdeling (automatisk segmentering av lang tekst)
 │   ├── deduplication.py          # Minne-deduplisering (sammenligning av kosinuslikhet)
 │   ├── importance.py             # Viktighetssporing og intelligent glemming
 │   ├── safe_memory_add.py        # Sikker minneinnlegging (hopper over entitetsekstraksjon)
+│   ├── task_store.py             # SQLite-persistens for bakgrunnsoppgaver (TaskStore)
 │   ├── timezone_utils.py         # Tidssonekonvertering (UTC→visning i lokal tidssone)
 │   ├── i18n.py                   # Backend-flerspråklighet (REST følger Accept-Language, MCP følger SERVER_LANG)
+│   ├── i18n_generated.py         # Automatisk genererte språkoverstyrelser (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Strukturert unntakshåndtering (12 unntaksklasser)
 │   └── logging_setup.py          # Loggsystem (tidsrotasjon + ytelsesovervåking)
 ├── web/                          # Web-administrasjonsgrensesnitt frontend (SPA, ingen build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API-innpakning
 │       ├── components.js         # UI-komponentrendering (inkludert fellesskapsside)
 │       └── app.js                # SPA-ruting, tilstandshåndtering
-├── tests/                        # Testpakke (183 tester)
+├── tests/                        # Testpakke (203 tester)
 │   ├── test_content_preprocessor.py  # Oppdelingslogikktester (17 stk.)
 │   ├── test_new_features.py      # Tester for nye funksjoner (32 stk.)
-│   ├── test_i18n.py             # Flerspråklighetstester (37 stk.)
+│   ├── test_i18n.py             # Flerspråklighetstester (57 stk.)
 │   ├── test_unit.py              # Enhetstester
 │   ├── test_web_api.py           # Web API-tester
 │   ├── test_web_ui_features.py   # Web UI-funksjonstester
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Konfigurasjonsvalidering
 │   ├── performance_diagnose.py   # Ytelsesdiagnose
 │   ├── inspect_schema.py         # Neo4j-strukturkontroll
-│   └── batch_reprocess.py        # Batch-reprosessering
+│   ├── batch_reprocess.py        # Batch-reprosessering
+│   └── migrate_embeddings.py     # Migrering av Embedding-modell
 ├── docs/                         # Dokumentasjon
 ├── logs/                         # Logger (tidsrotasjon, beholdes i 30 dager som standard)
 ├── Dockerfile                    # Docker-containerisert distribusjon
@@ -483,7 +487,9 @@ I HTTP-modus kan du bruke det ved å besøke `http://localhost:8000/`.
 - Gruppehåndtering — filtrer etter gruppe, batch-sletting
 - Visualisering av kunnskapsgraf — grafisk fremstilling av noderelasjoner
 - AI-spørsmål og svar — intelligente spørsmål og svar basert på kunnskapsgrafen
-- Kvalitetsanalyse — analyse av minnekvalitet og dekning
+- Kvalitetsvedlikehold — kvalitetsmålinger for minner og opprydningsverktøy
+- Bulk-import — importer flere minneepisoder på én gang (JSON, maks 500 per gang)
+- Kjøretidsinnstillinger — vis gjeldende innstillinger og juster utvalgte parametere uten omstart
 - Temaveksling — mørkt/lyst tema
 
 **REST API:**
@@ -492,20 +498,33 @@ I HTTP-modus kan du bruke det ved å besøke `http://localhost:8000/`.
 |------|------|------|
 | `/api/stats` | GET | Dashbordstatistikk |
 | `/api/groups` | GET | Hent alle group_id |
+| `/api/groups/stats` | GET | Statistikk for noder/fakta/episoder per gruppe |
 | `/api/nodes` | GET | Bla gjennom entitetsnoder (paginering) |
 | `/api/facts` | GET | Bla gjennom fakta (paginering) |
 | `/api/episodes` | GET | Bla gjennom minneepisoder (paginering) |
+| `/api/nodes/{uuid}/relations` | GET | Hent inn- og utgående relasjoner for en node |
 | `/api/search/nodes` | GET | Vektorsøk i noder |
 | `/api/search/facts` | GET | Vektorsøk i fakta |
+| `/api/search/episodes` | GET | Søk i minneepisoder |
 | `/api/search/advanced` | GET | Avansert søk (16 strategier) |
 | `/api/communities` | GET | Bla gjennom fellesskapsnoder (paginering) |
 | `/api/communities/build` | POST | Utløs fellesskapsbygging |
+| `/api/memory/add` | POST | Legg til ett enkelt minne |
 | `/api/memory/add-bulk` | POST | Legg til minner i bulk |
 | `/api/memory/add-triplet` | POST | Legg til tripel |
+| `/api/import/episodes` | POST | Bulk-import av minneepisoder (JSON, maks 500 per gang) |
 | `/api/memory/tasks` | GET | List opp bakgrunnsoppgaver (støtter statusfiltrering) |
 | `/api/memory/tasks/{id}` | GET | Spør etter status for én enkelt oppgave |
+| `/api/timeline` | GET | Tidslinjebrowsing |
+| `/api/graph/subgraph` | GET | Hent subgraf (visualisering) |
+| `/api/graph/all` | GET | Hent fullstendig graf (visualisering) |
+| `/api/ask` | GET | AI-spørsmål og svar (basert på grafoppslag) |
+| `/api/analytics/top-nodes` | GET | Noder med høy tilkoblingsgrad/tilgangsfrekvens |
+| `/api/analytics/quality` | GET | Kvalitetsmålinger for kunnskapsgrafen |
 | `/api/analytics/stale` | GET | Spør etter utdatert minne |
 | `/api/analytics/cleanup` | POST | Rydd opp i utdatert minne |
+| `/api/config` | GET | Hent gjeldende innstillinger (uten API-nøkler) |
+| `/api/config` | PATCH | Oppdater justerbare innstillinger ved kjøretid (kun gjeldende prosess, tilbakestilles ved omstart) |
 | `/api/nodes/{uuid}` | DELETE | Slett node |
 | `/api/episodes/{uuid}` | DELETE | Slett minneepisode |
 | `/api/facts/{uuid}` | DELETE | Slett faktum |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # tegnterskel som utløser intelligent oppd
 GRAPHITI_MAX_CHUNK_SIZE=600          # maksimalt antall tegn per segment
 GRAPHITI_MAX_COROUTINES=10            # maksimalt antall samtidige koroutiner
 GRAPHITI_DEFAULT_BACKGROUND=false    # om bakgrunnsbehandling skal være standard
+TASK_DB_PATH=data/tasks.db           # SQLite-persistenssti for bakgrunnsoppgaver
 
 # === Viktighetssporing og intelligent glemming (valgfritt) ===
 ENABLE_IMPORTANCE_TRACKING=true      # aktiver tilgangssporing
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Testing
 
 ```bash
-# Kjør alle tester (183 stk., ca. 1 sekund)
+# Kjør alle tester (203 stk., ca. 1 sekund)
 uv run python -m pytest tests/
 
 # Detaljert utdata

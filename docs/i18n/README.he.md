@@ -13,7 +13,7 @@
 - **ניתוק Embedding מ‑LLM** — ניתן לציין את מנוע ההטמעה באופן עצמאי באמצעות `EMBEDDING_PROVIDER`, ו‑LLM ענני נסוג אוטומטית ל‑`bge-m3` מקומי
 - **חלוקת מודל כפולה** — במצב Ollama משימות מורכבות משתמשות במודל הראשי, ומשימות פשוטות עוברות אוטומטית למודל קטן לשיפור הביצועים
 - **חלוקה חכמה של תוכן** — טקסט ארוך מעובד אוטומטית בקטעים, מה שמפחית את העומס על ה‑LLM ‏(סף ניתן להגדרה)
-- **עיבוד זיכרון ברקע** — הוספת זיכרון יכולה לרוץ ברקע, וקריאת ה‑MCP חוזרת מיד
+- **עיבוד זיכרון ברקע** — הוספת זיכרון יכולה לרוץ ברקע, וקריאת ה‑MCP חוזרת מיד; מצב המשימות נשמר ב‑SQLite, ומשימות שלא הושלמו משוחזרות אוטומטית לאחר הפעלה מחדש
 - **הסרת כפילויות בזיכרון** — מזהה אוטומטית זיכרונות קיימים דומים מאוד, נמנע מאחסון כפול
 - **זיהוי קונפליקטים** — מזהה עובדות סותרות בין שתי ישויות, ומבחין בין מידע שפג תוקפו לבין מידע תקף
 - **זיהוי קהילות** — אשכול אוטומטי של ישויות קשורות מבוסס אלגוריתם Label Propagation
@@ -21,8 +21,8 @@
 - **שכחה חכמה** — זיהוי וניקוי של זיכרונות מיושנים בעלי גישה נמוכה, לשמירת גרף תמציתי
 - **ייבוא בכמות גדולה** — הגשת מספר זיכרונות בבת אחת, מתאים להעברת נתונים בכמות גדולה
 - **שלשות מובנות** — הוספה ישירה של "נושא-יחס-מושא", מדלגת על חילוץ ה‑LLM ומסתיימת בשנייה
-- **ממשק ניהול Web** — לוח מחוונים מובנה, עיון, חיפוש, הדמיית גרף ידע, שאלות ותשובות מבוססות AI, ועיון בקהילות
-- **רב‑לשוניות ‏(i18n)** — הודעות התגובה תומכות ביותר מ‑30 locale ‏(כולל zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr ועוד); כלי MCP לפי `SERVER_LANG`, ו‑REST API מנהל משא ומתן אוטומטי לפי כותרת HTTP‏ `Accept-Language`
+- **ממשק ניהול Web** — לוח מחוונים מובנה, עיון, חיפוש, הדמיית גרף ידע, שאלות ותשובות מבוססות AI, עיון בקהילות, תחזוקת איכות, ייבוא בכמות גדולה, הגדרות בזמן ריצה
+- **רב‑לשוניות ‏(i18n)** — הודעות התגובה תומכות ב‑33 שפות (כולל zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr ועוד; zh-TW/en/zh-CN/ja נכתבו ידנית, השאר מסופקים על ידי שכבת generated); כלי MCP לפי `SERVER_LANG`, ו‑REST API מנהל משא ומתן אוטומטי לפי כותרת HTTP‏ `Accept-Language`
 - **ערכת נושא כהה/בהירה** — ממשק ה‑Web תומך במעבר בין ערכות נושא
 - **מצב בטוח** — אפשרות להוספת זיכרון מהירה המדלגת על חילוץ ישויות
 - **תמיכה ב‑Docker** — Dockerfile מובנה, תומך בפריסה מבוססת קונטיינרים
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # נקודת כניסה ראשית — הגדרת כלי MCP (19 כלים)
 ├── src/
 │   ├── config.py                 # ניהול תצורה (GraphitiConfig, תומך בערימה JSON/.env)
-│   ├── web_api.py                # REST API של ממשק ניהול Web (20+ נקודות קצה)
+│   ├── web_api.py                # REST API של ממשק ניהול Web (30+ נקודות קצה)
 │   ├── ollama_graphiti_client.py  # לקוח LLM של Ollama (חלוקת מודל כפולה)
-│   ├── glm_client.py             # לקוח LLM של GLM (智谱 AI) (API תואם OpenAI)
-│   ├── openrouter_client.py      # לקוח LLM של OpenRouter (אגרגציה של מודלים מספקים שונים)
-│   ├── deepseek_client.py        # לקוח LLM של DeepSeek (json_object + הגנת json כברירת מחדל)
+│   ├── openai_compat_client.py   # מחלקת בסיס LLM תואמת OpenAI (json_object + schema פשוט + הגנת json)
+│   ├── glm_client.py             # לקוח LLM של GLM (智谱 AI) (יורש OpenAICompatClient)
+│   ├── openrouter_client.py      # לקוח LLM של OpenRouter (יורש OpenAICompatClient)
+│   ├── deepseek_client.py        # לקוח LLM של DeepSeek (יורש OpenAICompatClient)
 │   ├── ollama_embedder.py        # מתאם מודל הטמעה של Ollama
 │   ├── content_preprocessor.py   # חלוקה חכמה של תוכן (חלוקה אוטומטית של טקסט ארוך)
 │   ├── deduplication.py          # הסרת כפילויות זיכרון (השוואת דמיון קוסינוס)
 │   ├── importance.py             # מעקב חשיבות ושכחה חכמה
 │   ├── safe_memory_add.py        # הוספת זיכרון בטוחה (מדלגת על חילוץ ישויות)
+│   ├── task_store.py             # שמירת משימות ברקע ב‑SQLite (TaskStore)
 │   ├── timezone_utils.py         # המרת אזור זמן (UTC→תצוגת אזור זמן מקומי)
 │   ├── i18n.py                   # רב‑לשוניות בצד השרת (REST לפי Accept-Language, MCP לפי SERVER_LANG)
+│   ├── i18n_generated.py         # כיסויי שפה שנוצרו אוטומטית (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # טיפול מובנה בחריגות (12 מחלקות חריגה)
 │   └── logging_setup.py          # מערכת לוגים (סבב לפי זמן + ניטור ביצועים)
 ├── web/                          # צד הלקוח של ממשק ניהול Web (SPA, ללא build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # עטיפת REST API
 │       ├── components.js         # רינדור רכיבי UI (כולל דף קהילות)
 │       └── app.js                # ניתוב SPA, ניהול מצב
-├── tests/                        # ערכת בדיקות (183 בדיקות)
+├── tests/                        # ערכת בדיקות (203 בדיקות)
 │   ├── test_content_preprocessor.py  # בדיקת לוגיקת חלוקה (17 בדיקות)
 │   ├── test_new_features.py      # בדיקת תכונות חדשות (32 בדיקות)
-│   ├── test_i18n.py             # בדיקת רב‑לשוניות (37 בדיקות)
+│   ├── test_i18n.py             # בדיקת רב‑לשוניות (57 בדיקות)
 │   ├── test_unit.py              # בדיקות יחידה
 │   ├── test_web_api.py           # בדיקות Web API
 │   ├── test_web_ui_features.py   # בדיקות תכונות Web UI
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # אימות תצורה
 │   ├── performance_diagnose.py   # אבחון ביצועים
 │   ├── inspect_schema.py         # בדיקת מבנה Neo4j
-│   └── batch_reprocess.py        # עיבוד מחדש באצווה
+│   ├── batch_reprocess.py        # עיבוד מחדש באצווה
+│   └── migrate_embeddings.py     # העברת מודל Embedding (יצירה מחדש של וקטורים לאחר החלפת מודל)
 ├── docs/                         # תיעוד
 ├── logs/                         # לוגים (סבב לפי זמן, ברירת מחדל לשמירה 30 ימים)
 ├── Dockerfile                    # פריסת קונטיינר Docker
@@ -483,7 +487,9 @@ graphiti/
 - ניהול Group — סינון לפי קבוצה, מחיקה באצווה
 - הדמיית גרף ידע — הצגה גרפית של יחסי צמתים
 - שאלות ותשובות AI — מענה חכם מבוסס גרף ידע
-- ניתוח איכות — ניתוח איכות וכיסוי זיכרון
+- תחזוקת איכות — מדדי איכות זיכרון וכלי ניקוי
+- ייבוא בכמות גדולה — ייבוא מספר קטעי זיכרון בבת אחת (JSON, עד 500 פריטים בבקשה אחת)
+- הגדרות בזמן ריצה — צפייה בהגדרות הפעילות כעת, עם אפשרות לשנות חלק מהפרמטרים ללא הפעלה מחדש
 - מעבר ערכת נושא — ערכת נושא כהה/בהירה
 
 **REST API:**
@@ -492,20 +498,33 @@ graphiti/
 |------|------|------|
 | `/api/stats` | GET | סטטיסטיקות לוח מחוונים |
 | `/api/groups` | GET | קבלת כל ה‑group_id |
+| `/api/groups/stats` | GET | סטטיסטיקות צמתים/עובדות/קטעים לכל group |
 | `/api/nodes` | GET | עיון בצמתי ישויות (עמודים) |
 | `/api/facts` | GET | עיון בעובדות (עמודים) |
 | `/api/episodes` | GET | עיון בקטעי זיכרון (עמודים) |
+| `/api/nodes/{uuid}/relations` | GET | קבלת קשתות נכנסות/יוצאות של צומת |
 | `/api/search/nodes` | GET | חיפוש וקטורי של צמתים |
 | `/api/search/facts` | GET | חיפוש וקטורי של עובדות |
+| `/api/search/episodes` | GET | חיפוש קטעי זיכרון |
 | `/api/search/advanced` | GET | חיפוש מתקדם (16 אסטרטגיות) |
 | `/api/communities` | GET | עיון בצמתי קהילה (עמודים) |
 | `/api/communities/build` | POST | הפעלת בניית קהילות |
+| `/api/memory/add` | POST | הוספת זיכרון בודד |
 | `/api/memory/add-bulk` | POST | הוספת זיכרונות באצווה |
 | `/api/memory/add-triplet` | POST | הוספת שלשה |
+| `/api/import/episodes` | POST | ייבוא קטעי זיכרון בכמות גדולה (JSON, עד 500 פריטים בבקשה אחת) |
 | `/api/memory/tasks` | GET | רשימת משימות רקע (תומך בסינון לפי מצב) |
 | `/api/memory/tasks/{id}` | GET | שאילתת מצב משימה בודדת |
+| `/api/timeline` | GET | עיון לפי ציר זמן |
+| `/api/graph/subgraph` | GET | קבלת תת‑גרף (להדמיה) |
+| `/api/graph/all` | GET | קבלת הגרף המלא (להדמיה) |
+| `/api/ask` | GET | שאלות ותשובות AI (מבוסס אחזור מהגרף) |
+| `/api/analytics/top-nodes` | GET | צמתים בעלי קישוריות/גישה גבוהה |
+| `/api/analytics/quality` | GET | מדדי איכות גרף הידע |
 | `/api/analytics/stale` | GET | שאילתת זיכרונות מיושנים |
 | `/api/analytics/cleanup` | POST | ניקוי זיכרונות מיושנים |
+| `/api/config` | GET | קבלת ההגדרות הפעילות כעת (ללא מפתחות API) |
+| `/api/config` | PATCH | עדכון הגדרות ניתנות לשינוי בזמן ריצה (בתוקף לתהליך הנוכחי בלבד, מתאפס בהפעלה מחדש) |
 | `/api/nodes/{uuid}` | DELETE | מחיקת צומת |
 | `/api/episodes/{uuid}` | DELETE | מחיקת קטע זיכרון |
 | `/api/facts/{uuid}` | DELETE | מחיקת עובדה |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # סף מספר תווים להפעלת ח�
 GRAPHITI_MAX_CHUNK_SIZE=600          # מספר תווים מרבי בכל קטע
 GRAPHITI_MAX_COROUTINES=10            # מספר מרבי של קורוטינות מקבילות
 GRAPHITI_DEFAULT_BACKGROUND=false    # האם לעבד ברקע כברירת מחדל
+TASK_DB_PATH=data/tasks.db           # נתיב שמירת משימות ברקע ב‑SQLite
 
 # === מעקב חשיבות ושכחה חכמה (אופציונלי) ===
 ENABLE_IMPORTANCE_TRACKING=true      # הפעלת מעקב גישה
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## בדיקות
 
 ```bash
-# הרצת כל הבדיקות (183, כשנייה אחת)
+# הרצת כל הבדיקות (203, כשנייה אחת)
 uv run python -m pytest tests/
 
 # פלט מפורט

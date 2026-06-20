@@ -13,7 +13,7 @@ A [getzep/graphiti](https://github.com/getzep/graphiti) alapján továbbfejleszt
 - **Az Embedding és az LLM szétválasztása** — az `EMBEDDING_PROVIDER` változóval önállóan megadható a beágyazó, a felhős LLM automatikusan visszavált a helyi `bge-m3`-ra
 - **Kétmodelles elosztás** — Ollama módban az összetett feladatok a fő modellt használják, az egyszerű feladatok automatikusan a kis modellre váltanak a teljesítmény javítása érdekében
 - **Intelligens tartalomdarabolás** — a hosszú szövegek automatikusan szakaszokra bomlanak, csökkentve az LLM terhelését (a küszöb beállítható)
-- **Háttérben futó memóriafeldolgozás** — a memóriahozzáadás futhat a háttérben, az MCP-hívás azonnal visszatér
+- **Háttérben futó memóriafeldolgozás** — a memóriahozzáadás futhat a háttérben, az MCP-hívás azonnal visszatér; a feladatállapot SQLite-ban perzisztálódik, újraindítás után a befejezetlen feladatok automatikusan visszaállnak
 - **Memóriaduplikáció kiszűrése** — automatikusan felismeri a meglévő, nagyon hasonló memóriákat, elkerülve az ismétlődő tárolást
 - **Konfliktusészlelés** — felismeri a két entitás közötti ellentmondó tényeket, megkülönböztetve az érvénytelenné vált és az érvényes információkat
 - **Közösségfelismerés** — a Label Propagation algoritmus alapján automatikusan klaszterezi a kapcsolódó entitásokat
@@ -21,8 +21,8 @@ A [getzep/graphiti](https://github.com/getzep/graphiti) alapján továbbfejleszt
 - **Intelligens felejtés** — felismeri és eltávolítja az elavult, ritkán használt memóriákat, így a gráf tömör marad
 - **Tömeges importálás** — egyszerre több memória beküldése, ideális nagy mennyiségű adat migrálásához
 - **Strukturált hármasok** — közvetlen „alany-kapcsolat-tárgy" hozzáadás, az LLM-kinyerés kihagyásával, másodpercek alatt
-- **Webes felügyeleti felület** — beépített műszerfal, böngészés, keresés, tudásgráf-vizualizáció, AI kérdés-válasz, közösségböngészés
-- **Többnyelvűség (i18n)** — a válaszüzenetek 30+ locale-t támogatnak (köztük zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr stb.); az MCP-eszközök a `SERVER_LANG` szerint, a REST API a HTTP `Accept-Language` szerint automatikusan egyeztet
+- **Webes felügyeleti felület** — beépített műszerfal, böngészés, keresés, tudásgráf-vizualizáció, AI kérdés-válasz, közösségböngészés, minőségkarbantartás, tömeges importálás, futásidejű beállítások
+- **Többnyelvűség (i18n)** — a válaszüzenetek 33 nyelvet támogatnak (köztük zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr stb.; zh-TW/en/zh-CN/ja kézzel írva, a többi a generated rétegtől kapja); az MCP-eszközök a `SERVER_LANG` szerint, a REST API a HTTP `Accept-Language` szerint automatikusan egyeztet
 - **Sötét/világos téma** — a webes felület támogatja a témaváltást
 - **Biztonságos mód** — opcionálisan kihagyható az entitáskinyerés a gyors memóriahozzáadáshoz
 - **Docker-támogatás** — beépített Dockerfile, konténeres telepítés támogatása
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Fő belépési pont — MCP-eszközdefiníciók (19 eszköz)
 ├── src/
 │   ├── config.py                 # Konfigurációkezelés (GraphitiConfig, JSON/.env rétegezést támogat)
-│   ├── web_api.py                # Webes felügyeleti felület REST API (20+ végpont)
+│   ├── web_api.py                # Webes felügyeleti felület REST API (30+ végpont)
 │   ├── ollama_graphiti_client.py  # Ollama LLM-kliens (kétmodelles elosztás)
-│   ├── glm_client.py             # GLM (Zhipu AI) LLM-kliens (OpenAI-kompatibilis API)
-│   ├── openrouter_client.py      # OpenRouter LLM-kliens (több szolgáltató modelljeit összesíti)
-│   ├── deepseek_client.py        # DeepSeek LLM-kliens (json_object + tartalék json védelem)
+│   ├── openai_compat_client.py   # OpenAI-kompatibilis LLM alap (json_object + egyszerűsített schema + json biztonsági védelem)
+│   ├── glm_client.py             # GLM (Zhipu AI) LLM-kliens (OpenAICompatClient leszármazottja)
+│   ├── openrouter_client.py      # OpenRouter LLM-kliens (OpenAICompatClient leszármazottja)
+│   ├── deepseek_client.py        # DeepSeek LLM-kliens (OpenAICompatClient leszármazottja)
 │   ├── ollama_embedder.py        # Ollama beágyazási modell adapter
 │   ├── content_preprocessor.py   # Intelligens tartalomdarabolás (hosszú szöveg automatikus szakaszolása)
 │   ├── deduplication.py          # Memóriaduplikáció kiszűrése (koszinusz-hasonlóság összevetése)
 │   ├── importance.py             # Fontosság követése és intelligens felejtés
 │   ├── safe_memory_add.py        # Biztonságos memóriahozzáadás (entitáskinyerés kihagyása)
+│   ├── task_store.py             # Háttérfeladatok SQLite-perzisztenciája (TaskStore)
 │   ├── timezone_utils.py         # Időzóna-átalakítás (UTC→helyi időzóna megjelenítése)
 │   ├── i18n.py                   # Backend többnyelvűség (REST az Accept-Language, MCP a SERVER_LANG szerint)
+│   ├── i18n_generated.py         # Automatikusan generált nyelvi felülírások (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Strukturált kivételkezelés (12 kivételkategória)
 │   └── logging_setup.py          # Naplózási rendszer (időalapú rotáció + teljesítményfigyelés)
 ├── web/                          # Webes felügyeleti felület frontend (SPA, build nélkül)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API csomagolás
 │       ├── components.js         # UI-komponensek renderelése (a közösségoldallal együtt)
 │       └── app.js                # SPA-útválasztás, állapotkezelés
-├── tests/                        # Tesztcsomag (183 teszt)
+├── tests/                        # Tesztcsomag (203 teszt)
 │   ├── test_content_preprocessor.py  # Darabolási logika tesztje (17 db)
 │   ├── test_new_features.py      # Új funkciók tesztje (32 db)
-│   ├── test_i18n.py             # Többnyelvűségi teszt (37 db)
+│   ├── test_i18n.py             # Többnyelvűségi teszt (57 db)
 │   ├── test_unit.py              # Egységtesztek
 │   ├── test_web_api.py           # Web API tesztek
 │   ├── test_web_ui_features.py   # Web UI funkciótesztek
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Konfigurációvalidálás
 │   ├── performance_diagnose.py   # Teljesítménydiagnosztika
 │   ├── inspect_schema.py         # Neo4j struktúraellenőrzés
-│   └── batch_reprocess.py        # Kötegelt újrafeldolgozás
+│   ├── batch_reprocess.py        # Kötegelt újrafeldolgozás
+│   └── migrate_embeddings.py     # Embedding-modell migrálása
 ├── docs/                         # Dokumentáció
 ├── logs/                         # Naplók (időalapú rotáció, alapértelmezetten 30 napig megőrzött)
 ├── Dockerfile                    # Docker konténeres telepítés
@@ -483,7 +487,9 @@ HTTP módban a `http://localhost:8000/` címen érhető el.
 - Csoportkezelés — szűrés csoport szerint, kötegelt törlés
 - Tudásgráf-vizualizáció — csomópontkapcsolatok grafikus megjelenítése
 - AI kérdés-válasz — tudásgráfon alapuló intelligens kérdés-válasz
-- Minőségelemzés — memória minőségének és lefedettségének elemzése
+- Minőségkarbantartás — memória minőségi mutatói és tisztítóeszközök
+- Tömeges importálás — több memóriaepizód egyszerre történő importálása (JSON, egyszeri limit: 500 db)
+- Futásidejű beállítások — az aktuálisan érvényes beállítások megtekintése, egyes paraméterek újraindítás nélkül módosíthatók
 - Témaváltás — sötét/világos téma
 
 **REST API:**
@@ -492,20 +498,33 @@ HTTP módban a `http://localhost:8000/` címen érhető el.
 |------|------|------|
 | `/api/stats` | GET | Műszerfal-statisztikák |
 | `/api/groups` | GET | Az összes group_id lekérése |
+| `/api/groups/stats` | GET | Csoportonkénti csomópont/tény/epizód statisztikák |
 | `/api/nodes` | GET | Entitáscsomópontok böngészése (lapozással) |
 | `/api/facts` | GET | Tények böngészése (lapozással) |
 | `/api/episodes` | GET | Memóriaepizódok böngészése (lapozással) |
+| `/api/nodes/{uuid}/relations` | GET | Csomópont bejövő/kimenő éleinek lekérése |
 | `/api/search/nodes` | GET | Csomópontok vektoros keresése |
 | `/api/search/facts` | GET | Tények vektoros keresése |
+| `/api/search/episodes` | GET | Memóriaepizódok keresése |
 | `/api/search/advanced` | GET | Haladó keresés (16 stratégia) |
 | `/api/communities` | GET | Közösségcsomópontok böngészése (lapozással) |
 | `/api/communities/build` | POST | Közösségépítés indítása |
+| `/api/memory/add` | POST | Egyetlen memória hozzáadása |
 | `/api/memory/add-bulk` | POST | Memóriák tömeges hozzáadása |
 | `/api/memory/add-triplet` | POST | Hármas hozzáadása |
+| `/api/import/episodes` | POST | Memóriaepizódok tömeges importálása (JSON, egyszeri limit: 500 db) |
 | `/api/memory/tasks` | GET | Háttérfeladatok listázása (állapotszűrést támogat) |
 | `/api/memory/tasks/{id}` | GET | Egyetlen feladat állapotának lekérdezése |
+| `/api/timeline` | GET | Idővonal-böngészés |
+| `/api/graph/subgraph` | GET | Részgráf lekérése (vizualizációhoz) |
+| `/api/graph/all` | GET | Teljes gráf lekérése (vizualizációhoz) |
+| `/api/ask` | GET | AI kérdés-válasz (gráfalapú lekérés) |
+| `/api/analytics/top-nodes` | GET | Magas csatlakozottságú/hozzáférésű csomópontok |
+| `/api/analytics/quality` | GET | Tudásgráf minőségi mutatói |
 | `/api/analytics/stale` | GET | Elavult memóriák lekérdezése |
 | `/api/analytics/cleanup` | POST | Elavult memóriák tisztítása |
+| `/api/config` | GET | Az aktuálisan érvényes beállítások lekérése (API-kulcs nélkül) |
+| `/api/config` | PATCH | Futásidejű beállításfrissítés (csak az aktuális folyamatra érvényes, újraindításkor visszaáll) |
 | `/api/nodes/{uuid}` | DELETE | Csomópont törlése |
 | `/api/episodes/{uuid}` | DELETE | Memóriaepizód törlése |
 | `/api/facts/{uuid}` | DELETE | Tény törlése |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # Az intelligens darabolást kiváltó kara
 GRAPHITI_MAX_CHUNK_SIZE=600          # Szakaszonkénti maximális karakterszám
 GRAPHITI_MAX_COROUTINES=10            # Konkurens korutinok maximális száma
 GRAPHITI_DEFAULT_BACKGROUND=false    # Alapértelmezett-e a háttérfeldolgozás
+TASK_DB_PATH=data/tasks.db           # Háttérfeladatok SQLite-perzisztenciájának elérési útja
 
 # === Fontosság követése és intelligens felejtés (opcionális) ===
 ENABLE_IMPORTANCE_TRACKING=true      # Hozzáférés-követés engedélyezése
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Tesztelés
 
 ```bash
-# Az összes teszt futtatása (183 db, kb. 1 másodperc)
+# Az összes teszt futtatása (203 db, kb. 1 másodperc)
 uv run python -m pytest tests/
 
 # Részletes kimenet

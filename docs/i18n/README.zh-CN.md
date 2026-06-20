@@ -13,7 +13,7 @@
 - **Embedding 与 LLM 解耦** — 可用 `EMBEDDING_PROVIDER` 独立指定嵌入器，云端 LLM 自动回退本地 `bge-m3`
 - **双模型分流** — Ollama 模式下复杂任务使用主模型，简单任务自动切换小模型以提升性能
 - **智能内容切分** — 长文本自动分段处理，降低 LLM 负载（可配置阈值）
-- **后台记忆处理** — 记忆添加可在后台执行，MCP 调用立即返回
+- **后台记忆处理** — 记忆添加可在后台执行，MCP 调用立即返回；任务状态以 SQLite 持久化，重启后自动还原未完成任务
 - **记忆去重** — 自动检测高度相似的既有记忆，避免重复存储
 - **冲突检测** — 检测两实体间的矛盾事实，识别已失效与有效的信息
 - **社群检测** — 基于 Label Propagation 算法自动聚类相关实体
@@ -21,8 +21,8 @@
 - **智能遗忘** — 识别并清理过时、低访问量的记忆，保持图谱精简
 - **批量导入** — 一次提交多笔记忆，适合大量数据迁移
 - **结构化三元组** — 直接添加“主体-关系-客体”，跳过 LLM 提取，秒速完成
-- **Web 管理界面** — 内置仪表板、浏览、搜索、知识图谱可视化、AI 问答、社群浏览
-- **多国语系（i18n）** — 响应消息支持 30+ locale（含 zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr 等）；MCP 工具依 `SERVER_LANG`、REST API 依 HTTP `Accept-Language` 自动协商
+- **Web 管理界面** — 内置仪表板、浏览、搜索、知识图谱可视化、AI 问答、社群浏览、质量维护、批量导入、运行时设置
+- **多国语系（i18n）** — 响应消息支持 33 种语言（含 zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr 等；zh-TW/en/zh-CN/ja 手写，其余由 generated 层提供）；MCP 工具依 `SERVER_LANG`、REST API 依 HTTP `Accept-Language` 自动协商
 - **深色/浅色主题** — Web 界面支持主题切换
 - **安全模式** — 可选择跳过实体提取的快速记忆添加
 - **Docker 支持** — 内置 Dockerfile，支持容器化部署
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # 主入口 — MCP 工具定义（19 个工具）
 ├── src/
 │   ├── config.py                 # 配置管理（GraphitiConfig，支持 JSON/.env 层叠）
-│   ├── web_api.py                # Web 管理界面 REST API（20+ 端点）
+│   ├── web_api.py                # Web 管理界面 REST API（30+ 端点）
 │   ├── ollama_graphiti_client.py  # Ollama LLM 客户端（双模型分流）
-│   ├── glm_client.py             # GLM（智谱 AI）LLM 客户端（OpenAI 兼容 API）
-│   ├── openrouter_client.py      # OpenRouter LLM 客户端（聚合各家模型）
-│   ├── deepseek_client.py        # DeepSeek LLM 客户端（json_object + 保底 json 防护）
+│   ├── openai_compat_client.py   # OpenAI 兼容 LLM 基类（json_object + 简化 schema + json 保底防护）
+│   ├── glm_client.py             # GLM（智谱 AI）LLM 客户端（继承 OpenAICompatClient）
+│   ├── openrouter_client.py      # OpenRouter LLM 客户端（继承 OpenAICompatClient）
+│   ├── deepseek_client.py        # DeepSeek LLM 客户端（继承 OpenAICompatClient）
 │   ├── ollama_embedder.py        # Ollama 嵌入模型适配器
 │   ├── content_preprocessor.py   # 智能内容切分（长文本自动分段）
 │   ├── deduplication.py          # 记忆去重（余弦相似度比对）
 │   ├── importance.py             # 重要性追踪与智能遗忘
 │   ├── safe_memory_add.py        # 安全记忆添加（跳过实体提取）
+│   ├── task_store.py             # 后台任务 SQLite 持久化（TaskStore）
 │   ├── timezone_utils.py         # 时区转换（UTC→本地时区显示）
 │   ├── i18n.py                   # 后端多国语系（REST 依 Accept-Language、MCP 依 SERVER_LANG）
+│   ├── i18n_generated.py         # 自动生成的语系覆盖（GENERATED_MESSAGE_OVERRIDES）
 │   ├── exceptions.py             # 结构化异常处理（12 种异常类别）
 │   └── logging_setup.py          # 日志系统（时间轮转 + 性能监控）
 ├── web/                          # Web 管理界面前端（SPA，无 build）
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API 封装
 │       ├── components.js         # UI 组件渲染（含社群页面）
 │       └── app.js                # SPA 路由、状态管理
-├── tests/                        # 测试套件（183 个测试）
+├── tests/                        # 测试套件（203 个测试）
 │   ├── test_content_preprocessor.py  # 切分逻辑测试（17 个）
 │   ├── test_new_features.py      # 新功能测试（32 个）
-│   ├── test_i18n.py             # 多国语系测试（37 个）
+│   ├── test_i18n.py             # 多国语系测试（57 个）
 │   ├── test_unit.py              # 单元测试
 │   ├── test_web_api.py           # Web API 测试
 │   ├── test_web_ui_features.py   # Web UI 功能测试
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # 配置验证
 │   ├── performance_diagnose.py   # 性能诊断
 │   ├── inspect_schema.py         # Neo4j 结构检查
-│   └── batch_reprocess.py        # 批次重新处理
+│   ├── batch_reprocess.py        # 批次重新处理
+│   └── migrate_embeddings.py     # Embedding 模型迁移
 ├── docs/                         # 文档
 ├── logs/                         # 日志（时间轮转，默认保留 30 天）
 ├── Dockerfile                    # Docker 容器化部署
@@ -483,7 +487,9 @@ HTTP 模式下访问 `http://localhost:8000/` 即可使用。
 - Group 管理 — 按分组过滤、批次删除
 - 知识图谱可视化 — 节点关系图形化展示
 - AI 问答 — 基于知识图谱的智能问答
-- 质量分析 — 记忆质量与覆盖度分析
+- 质量维护 — 记忆质量指标与清理工具
+- 批量导入 — 一次导入多笔记忆片段（JSON，单次上限 500 条）
+- 运行时设置 — 查看当前生效配置，并可在不重启的情况下调整部分参数
 - 主题切换 — 深色/浅色主题
 
 **REST API：**
@@ -492,20 +498,33 @@ HTTP 模式下访问 `http://localhost:8000/` 即可使用。
 |------|------|------|
 | `/api/stats` | GET | 仪表板统计 |
 | `/api/groups` | GET | 取得所有 group_id |
+| `/api/groups/stats` | GET | 各 group 的节点/事实/片段统计 |
 | `/api/nodes` | GET | 浏览实体节点（分页） |
 | `/api/facts` | GET | 浏览事实（分页） |
 | `/api/episodes` | GET | 浏览记忆片段（分页） |
+| `/api/nodes/{uuid}/relations` | GET | 取得节点的入边/出边关系 |
 | `/api/search/nodes` | GET | 向量搜索节点 |
 | `/api/search/facts` | GET | 向量搜索事实 |
+| `/api/search/episodes` | GET | 搜索记忆片段 |
 | `/api/search/advanced` | GET | 高级搜索（16 种策略） |
 | `/api/communities` | GET | 浏览社群节点（分页） |
 | `/api/communities/build` | POST | 触发社群构建 |
+| `/api/memory/add` | POST | 添加单笔记忆 |
 | `/api/memory/add-bulk` | POST | 批量添加记忆 |
 | `/api/memory/add-triplet` | POST | 添加三元组 |
+| `/api/import/episodes` | POST | 批量导入记忆片段（JSON，单次上限 500 条） |
 | `/api/memory/tasks` | GET | 列出后台任务（支持状态筛选） |
 | `/api/memory/tasks/{id}` | GET | 查询单一任务状态 |
+| `/api/timeline` | GET | 时间轴浏览 |
+| `/api/graph/subgraph` | GET | 取得子图（可视化） |
+| `/api/graph/all` | GET | 取得完整图（可视化） |
+| `/api/ask` | GET | AI 问答（基于图谱检索） |
+| `/api/analytics/top-nodes` | GET | 高连接度/高访问节点 |
+| `/api/analytics/quality` | GET | 知识图谱质量指标 |
 | `/api/analytics/stale` | GET | 查询过时记忆 |
 | `/api/analytics/cleanup` | POST | 清理过时记忆 |
+| `/api/config` | GET | 取得当前生效配置（不含 API key） |
+| `/api/config` | PATCH | 运行时更新可修改配置（仅本进程生效，重启还原） |
 | `/api/nodes/{uuid}` | DELETE | 删除节点 |
 | `/api/episodes/{uuid}` | DELETE | 删除记忆片段 |
 | `/api/facts/{uuid}` | DELETE | 删除事实 |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # 触发智能切分的字符数阈值
 GRAPHITI_MAX_CHUNK_SIZE=600          # 每段最大字符数
 GRAPHITI_MAX_COROUTINES=10            # 最大并行协程数
 GRAPHITI_DEFAULT_BACKGROUND=false    # 是否默认后台处理
+TASK_DB_PATH=data/tasks.db           # 后台任务 SQLite 持久化路径
 
 # === 重要性追踪与智能遗忘（可选） ===
 ENABLE_IMPORTANCE_TRACKING=true      # 启用访问追踪
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## 测试
 
 ```bash
-# 执行所有测试（183 个，约 1 秒）
+# 执行所有测试（203 个，约 1 秒）
 uv run python -m pytest tests/
 
 # 详细输出

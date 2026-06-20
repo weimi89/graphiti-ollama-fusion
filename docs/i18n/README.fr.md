@@ -13,7 +13,7 @@ Développé comme une extension de [getzep/graphiti](https://github.com/getzep/g
 - **Découplage de l'Embedding et du LLM** — Vous pouvez spécifier l'embedder indépendamment avec `EMBEDDING_PROVIDER` ; les LLM cloud se replient automatiquement sur le `bge-m3` local
 - **Répartition entre deux modèles** — En mode Ollama, les tâches complexes utilisent le modèle principal et les tâches simples basculent automatiquement vers un petit modèle pour améliorer les performances
 - **Découpage intelligent du contenu** — Les textes longs sont automatiquement segmentés pour réduire la charge du LLM (seuil configurable)
-- **Traitement de la mémoire en arrière-plan** — L'ajout de mémoire peut s'exécuter en arrière-plan, et l'appel MCP retourne immédiatement
+- **Traitement de la mémoire en arrière-plan** — L'ajout de mémoire peut s'exécuter en arrière-plan, et l'appel MCP retourne immédiatement ; l'état des tâches est persisté dans SQLite et les tâches inachevées sont automatiquement restaurées après redémarrage
 - **Déduplication de la mémoire** — Détecte automatiquement les mémoires existantes très similaires pour éviter les stockages redondants
 - **Détection de conflits** — Détecte les faits contradictoires entre deux entités et identifie les informations devenues invalides et valides
 - **Détection de communautés** — Regroupe automatiquement les entités liées à l'aide de l'algorithme de propagation d'étiquettes (Label Propagation)
@@ -21,8 +21,8 @@ Développé comme une extension de [getzep/graphiti](https://github.com/getzep/g
 - **Oubli intelligent** — Identifie et nettoie les mémoires obsolètes à faible taux d'accès pour garder le graphe concis
 - **Import en masse** — Soumet plusieurs mémoires en une fois, adapté aux migrations de grandes quantités de données
 - **Triplets structurés** — Ajoute directement « sujet-relation-objet », en sautant l'extraction par LLM, pour un résultat instantané
-- **Interface d'administration Web** — Tableau de bord intégré, navigation, recherche, visualisation du graphe de connaissances, questions-réponses par IA, navigation des communautés
-- **Multilingue (i18n)** — Les messages de réponse prennent en charge plus de 30 locales (dont zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr, etc.) ; les outils MCP suivent `SERVER_LANG`, et la REST API négocie automatiquement selon l'en-tête HTTP `Accept-Language`
+- **Interface d'administration Web** — Tableau de bord intégré, navigation, recherche, visualisation du graphe de connaissances, questions-réponses par IA, navigation des communautés, maintenance de la qualité, import en masse, paramètres à l'exécution
+- **Multilingue (i18n)** — Les messages de réponse prennent en charge 33 langues (dont zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr, etc. ; zh-TW/en/zh-CN/ja écrits à la main, les autres fournis par la couche generated) ; les outils MCP suivent `SERVER_LANG`, et la REST API négocie automatiquement selon l'en-tête HTTP `Accept-Language`
 - **Thème sombre/clair** — L'interface Web prend en charge le changement de thème
 - **Mode sûr** — Ajout rapide de mémoire pouvant ignorer l'extraction d'entités
 - **Prise en charge de Docker** — Dockerfile intégré, prenant en charge le déploiement conteneurisé
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Point d'entrée principal — définition des outils MCP (19 outils)
 ├── src/
 │   ├── config.py                 # Gestion de la configuration (GraphitiConfig, prise en charge de la superposition JSON/.env)
-│   ├── web_api.py                # REST API de l'interface d'administration Web (20+ points de terminaison)
+│   ├── web_api.py                # REST API de l'interface d'administration Web (30+ points de terminaison)
 │   ├── ollama_graphiti_client.py  # Client LLM Ollama (répartition entre deux modèles)
-│   ├── glm_client.py             # Client LLM GLM (Zhipu AI) (API compatible OpenAI)
-│   ├── openrouter_client.py      # Client LLM OpenRouter (agrégation de modèles de divers fournisseurs)
-│   ├── deepseek_client.py        # Client LLM DeepSeek (json_object + protection de secours json)
+│   ├── openai_compat_client.py   # Classe de base LLM compatible OpenAI (json_object + schema simplifié + protection json de secours)
+│   ├── glm_client.py             # Client LLM GLM (Zhipu AI) (hérite de OpenAICompatClient)
+│   ├── openrouter_client.py      # Client LLM OpenRouter (hérite de OpenAICompatClient)
+│   ├── deepseek_client.py        # Client LLM DeepSeek (hérite de OpenAICompatClient)
 │   ├── ollama_embedder.py        # Adaptateur de modèle d'embedding Ollama
 │   ├── content_preprocessor.py   # Découpage intelligent du contenu (segmentation automatique des textes longs)
 │   ├── deduplication.py          # Déduplication de la mémoire (comparaison par similarité cosinus)
 │   ├── importance.py             # Suivi de l'importance et oubli intelligent
 │   ├── safe_memory_add.py        # Ajout sûr de mémoire (saut de l'extraction d'entités)
+│   ├── task_store.py             # Persistance SQLite des tâches en arrière-plan (TaskStore)
 │   ├── timezone_utils.py         # Conversion de fuseau horaire (affichage UTC→fuseau local)
 │   ├── i18n.py                   # Multilingue backend (REST selon Accept-Language, MCP selon SERVER_LANG)
+│   ├── i18n_generated.py         # Surcharges de langues générées automatiquement (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Gestion structurée des exceptions (12 catégories d'exceptions)
 │   └── logging_setup.py          # Système de journalisation (rotation temporelle + surveillance des performances)
 ├── web/                          # Frontend de l'interface d'administration Web (SPA, sans build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # Encapsulation de la REST API
 │       ├── components.js         # Rendu des composants UI (incluant la page des communautés)
 │       └── app.js                # Routage SPA, gestion de l'état
-├── tests/                        # Suite de tests (183 tests)
+├── tests/                        # Suite de tests (203 tests)
 │   ├── test_content_preprocessor.py  # Tests de la logique de découpage (17)
 │   ├── test_new_features.py      # Tests des nouvelles fonctionnalités (32)
-│   ├── test_i18n.py             # Tests multilingues (37)
+│   ├── test_i18n.py             # Tests multilingues (57)
 │   ├── test_unit.py              # Tests unitaires
 │   ├── test_web_api.py           # Tests de la Web API
 │   ├── test_web_ui_features.py   # Tests des fonctionnalités de la Web UI
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Validation de la configuration
 │   ├── performance_diagnose.py   # Diagnostic de performance
 │   ├── inspect_schema.py         # Inspection de la structure Neo4j
-│   └── batch_reprocess.py        # Retraitement par lots
+│   ├── batch_reprocess.py        # Retraitement par lots
+│   └── migrate_embeddings.py     # Migration du modèle d'Embedding
 ├── docs/                         # Documentation
 ├── logs/                         # Journaux (rotation temporelle, conservés 30 jours par défaut)
 ├── Dockerfile                    # Déploiement conteneurisé Docker
@@ -483,7 +487,9 @@ En mode HTTP, accédez à `http://localhost:8000/` pour l'utiliser.
 - Gestion des groupes — filtrage par groupe, suppression par lots
 - Visualisation du graphe de connaissances — présentation graphique des relations entre nœuds
 - Questions-réponses par IA — questions-réponses intelligentes basées sur le graphe de connaissances
-- Analyse de qualité — analyse de la qualité et de la couverture de la mémoire
+- Maintenance de la qualité — indicateurs de qualité de la mémoire et outils de nettoyage
+- Import en masse — importer plusieurs épisodes de mémoire en une fois (JSON, limite de 500 par requête)
+- Paramètres à l'exécution — consulter la configuration actuelle et ajuster certains paramètres sans redémarrage
 - Changement de thème — thème sombre/clair
 
 **REST API :**
@@ -492,20 +498,33 @@ En mode HTTP, accédez à `http://localhost:8000/` pour l'utiliser.
 |------|------|------|
 | `/api/stats` | GET | Statistiques du tableau de bord |
 | `/api/groups` | GET | Récupère tous les group_id |
+| `/api/groups/stats` | GET | Statistiques nœuds/faits/épisodes par groupe |
 | `/api/nodes` | GET | Parcourt les nœuds d'entité (paginé) |
 | `/api/facts` | GET | Parcourt les faits (paginé) |
 | `/api/episodes` | GET | Parcourt les épisodes de mémoire (paginé) |
+| `/api/nodes/{uuid}/relations` | GET | Récupère les arêtes entrantes/sortantes d'un nœud |
 | `/api/search/nodes` | GET | Recherche vectorielle de nœuds |
 | `/api/search/facts` | GET | Recherche vectorielle de faits |
+| `/api/search/episodes` | GET | Recherche d'épisodes de mémoire |
 | `/api/search/advanced` | GET | Recherche avancée (16 stratégies) |
 | `/api/communities` | GET | Parcourt les nœuds de communauté (paginé) |
 | `/api/communities/build` | POST | Déclenche la construction de communautés |
+| `/api/memory/add` | POST | Ajoute une mémoire unique |
 | `/api/memory/add-bulk` | POST | Ajoute des mémoires en masse |
 | `/api/memory/add-triplet` | POST | Ajoute un triplet |
+| `/api/import/episodes` | POST | Import en masse d'épisodes de mémoire (JSON, limite 500 par requête) |
 | `/api/memory/tasks` | GET | Liste les tâches en arrière-plan (prend en charge le filtrage par état) |
 | `/api/memory/tasks/{id}` | GET | Interroge l'état d'une tâche unique |
+| `/api/timeline` | GET | Navigation chronologique |
+| `/api/graph/subgraph` | GET | Récupère un sous-graphe (visualisation) |
+| `/api/graph/all` | GET | Récupère le graphe complet (visualisation) |
+| `/api/ask` | GET | Questions-réponses par IA (basé sur la recherche dans le graphe) |
+| `/api/analytics/top-nodes` | GET | Nœuds à haute connectivité/fort taux d'accès |
+| `/api/analytics/quality` | GET | Indicateurs de qualité du graphe de connaissances |
 | `/api/analytics/stale` | GET | Interroge les mémoires obsolètes |
 | `/api/analytics/cleanup` | POST | Nettoie les mémoires obsolètes |
+| `/api/config` | GET | Récupère la configuration actuelle (sans les clés API) |
+| `/api/config` | PATCH | Met à jour les paramètres modifiables à l'exécution (effet limité au processus courant, réinitialisé au redémarrage) |
 | `/api/nodes/{uuid}` | DELETE | Supprime un nœud |
 | `/api/episodes/{uuid}` | DELETE | Supprime un épisode de mémoire |
 | `/api/facts/{uuid}` | DELETE | Supprime un fait |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # seuil de nombre de caractères déclencha
 GRAPHITI_MAX_CHUNK_SIZE=600          # nombre maximal de caractères par segment
 GRAPHITI_MAX_COROUTINES=10            # nombre maximal de coroutines parallèles
 GRAPHITI_DEFAULT_BACKGROUND=false    # traitement en arrière-plan par défaut
+TASK_DB_PATH=data/tasks.db           # chemin de persistance SQLite des tâches en arrière-plan
 
 # === Suivi de l'importance et oubli intelligent (optionnel) ===
 ENABLE_IMPORTANCE_TRACKING=true      # active le suivi des accès
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Tests
 
 ```bash
-# Exécuter tous les tests (183, environ 1 seconde)
+# Exécuter tous les tests (203, environ 1 seconde)
 uv run python -m pytest tests/
 
 # Sortie détaillée

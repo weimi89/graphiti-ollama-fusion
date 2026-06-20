@@ -71,16 +71,18 @@ uv run python tools/migrate_embeddings.py      # Embedding 模型遷移
 graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 MCP 工具（19 個）
 ├── src/
 │   ├── config.py                # 配置管理（GraphitiConfig）支援 JSON/.env 層疊載入
-│   ├── web_api.py               # Web 管理介面 REST API 路由（20+ 端點）
+│   ├── web_api.py               # Web 管理介面 REST API 路由（30+ 端點）
 │   ├── ollama_graphiti_client.py # Ollama LLM 客戶端適配器（支援雙模型分流）
-│   ├── glm_client.py            # GLM（智谱 AI）LLM 客戶端（OpenAI 相容，簡化 schema 注入）
-│   ├── openrouter_client.py     # OpenRouter LLM 客戶端（OpenAI 相容，聚合多家模型）
-│   ├── deepseek_client.py       # DeepSeek LLM 客戶端（OpenAI 相容，json_object 模式 + 保底 json 防護）
+│   ├── openai_compat_client.py  # OpenAI 相容 LLM 客戶端基類（json_object 模式 + 簡化 schema 注入 + json 保底防護，GLM/OpenRouter/DeepSeek 共用）
+│   ├── glm_client.py            # GLM（智谱 AI）LLM 客戶端（繼承 OpenAICompatClient）
+│   ├── openrouter_client.py     # OpenRouter LLM 客戶端（繼承 OpenAICompatClient，聚合多家模型）
+│   ├── deepseek_client.py       # DeepSeek LLM 客戶端（繼承 OpenAICompatClient）
 │   ├── ollama_embedder.py       # Ollama 嵌入模型適配器（支援 bge-m3，並發 batch）
 │   ├── content_preprocessor.py  # 智慧內容切分（長文本自動分段處理）
 │   ├── deduplication.py         # 記憶去重（餘弦相似度比對）
 │   ├── importance.py            # 重要性追蹤與智慧遺忘
 │   ├── safe_memory_add.py       # 安全記憶添加（跳過實體提取）
+│   ├── task_store.py            # 背景任務 SQLite 持久化（TaskStore，in-memory dict + SQLite，啟動還原未完成任務）
 │   ├── timezone_utils.py        # 時區轉換工具（UTC→本地時區顯示轉換）
 │   ├── i18n.py                  # 後端多國語系（REST 依 Accept-Language、MCP 依 SERVER_LANG；33 語言，zh-TW/en/zh-CN/ja 手寫基準 + 其餘 generated）
 │   ├── i18n_generated.py        # 自動生成的 29 種語言訊息覆蓋（GENERATED_MESSAGE_OVERRIDES，以 en 為底套用）
@@ -120,15 +122,15 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **配置層級**：JSON 配置檔為基礎 + 環境變數覆蓋（支援 Docker 部署場景）。主要配置類為 `GraphitiConfig`，支援 `get_errors()` 返回具體驗證錯誤。重要子配置：`OllamaConfig`（含 `small_model`）、`GroqConfig`、`GlmConfig`、`OpenRouterConfig`、`DeepSeekConfig`、`OllamaEmbedderConfig`、`MemoryPerformanceConfig`（切分閾值、並行度）。`GraphitiConfig.get_active_model()` 集中各提供者的模型對應，供啟動日誌、狀態回報、`test_connection` 共用，避免多處 if/elif 鏈遺漏新提供者。
 
-**多 LLM 提供者架構**：透過 `LLM_PROVIDER` 環境變數切換提供者（`ollama` / `groq` / `glm` / `openrouter` / `deepseek`）。`_create_llm_client()` 根據設定路由到對應工廠函數（`_create_ollama_client` / `_create_glm_client` / `_create_groq_client` / `_create_openrouter_client` / `_create_deepseek_client`）。`openrouter`、`deepseek` 與 `glm` 皆透過 OpenAI 相容 SDK 連接，差別在 base_url 與 schema 注入策略。
+**多 LLM 提供者架構**：透過 `LLM_PROVIDER` 環境變數切換提供者（`ollama` / `groq` / `glm` / `openrouter` / `deepseek`）。`_create_llm_client()` 根據設定路由到對應工廠函數（`_create_ollama_client` / `_create_glm_client` / `_create_groq_client` / `_create_openrouter_client` / `_create_deepseek_client`）。`openrouter`、`deepseek` 與 `glm` 皆透過 OpenAI 相容 SDK 連接，差別在 base_url 與 schema 注入策略。三者共同的 `json_object` 模式、簡化 schema 注入與 json 保底防護已抽到基類 `src/openai_compat_client.py` 的 `OpenAICompatClient`，各 client 僅覆寫 provider 專屬差異。
 
 **Embedding 與 LLM 解耦**：`EMBEDDING_PROVIDER` 環境變數獨立指定嵌入器（`ollama` / `glm`），未設定時 `GraphitiConfig.get_embedding_provider()` 回退為 `llm_provider`。實際選擇邏輯：只有 embedding provider 為 `glm` 時使用 GLM Embedding（`embedding-3`），其餘一律使用 Ollama 嵌入器（預設 `bge-m3`，中文和 RAG 品質優異）。因此 `groq` / `openrouter` / `deepseek` 等不提供 Embedding 的雲端 LLM，會自動落到 Ollama `bge-m3`。`OllamaEmbedder.create_batch()` 使用 `asyncio.gather` 並發請求，非串行。
 
-**GLM 客戶端**：`src/glm_client.py` 繼承 `LLMClient`，透過 OpenAI 相容 API 連接智谱 AI。覆寫 `generate_response` 以簡化 schema 注入（只注入字段名稱列表，避免 GLM 將完整 `$defs` JSON Schema 當資料回傳）。強制使用 `json_object` 模式（GLM 不支援 `json_schema`）。
+**GLM 客戶端**：`src/glm_client.py` 繼承 `OpenAICompatClient`，透過 OpenAI 相容 API 連接智谱 AI。基類已負責簡化 schema 注入（只注入字段名稱列表，避免 GLM 將完整 `$defs` JSON Schema 當資料回傳）與強制 `json_object` 模式（GLM 不支援 `json_schema`）；client 只補 base_url 與模型差異。
 
-**OpenRouter 客戶端**：`src/openrouter_client.py` 繼承 `LLMClient`，透過 OpenAI 相容 API（`https://openrouter.ai/api/v1`）聚合各家模型（如 `stepfun/step-3.5-flash:free`）。schema 注入策略與 GLM 一致。不提供 Embedding。
+**OpenRouter 客戶端**：`src/openrouter_client.py` 繼承 `OpenAICompatClient`，透過 OpenAI 相容 API（`https://openrouter.ai/api/v1`）聚合各家模型（如 `stepfun/step-3.5-flash:free`）。schema 注入與 json 防護沿用基類。不提供 Embedding。
 
-**DeepSeek 客戶端**：`src/deepseek_client.py` 繼承 `LLMClient`，透過 OpenAI 相容 API（`https://api.deepseek.com`）連接深度求索模型（`deepseek-chat` / `deepseek-v4-flash` / `deepseek-v4-pro`）。與 GLM 共用簡化 schema 注入。關鍵差異：DeepSeek 嚴格遵循 OpenAI 規範，使用 `json_object` 模式時**強制要求送出的 messages 內容必須包含 "json" 字串**，否則 API 直接回 `Prompt must contain the word 'json'`。因此 `_generate_response` 在設定 `response_format` 前有保底防護：若所有訊息皆不含 "json"（不分大小寫），自動在最後一則補上 JSON 指示，涵蓋 `response_model=None` 等所有呼叫路徑。`glm_client.py` 同結構亦加上此防護以預防換 endpoint 復發。不提供 Embedding。
+**DeepSeek 客戶端**：`src/deepseek_client.py` 繼承 `OpenAICompatClient`，透過 OpenAI 相容 API（`https://api.deepseek.com`）連接深度求索模型（`deepseek-chat` / `deepseek-v4-flash` / `deepseek-v4-pro`）。與 GLM/OpenRouter 共用基類的簡化 schema 注入。關鍵差異：DeepSeek 嚴格遵循 OpenAI 規範，使用 `json_object` 模式時**強制要求送出的 messages 內容必須包含 "json" 字串**，否則 API 直接回 `Prompt must contain the word 'json'`。因此基類 `OpenAICompatClient._generate_response` 在設定 `response_format` 前有保底防護：若所有訊息皆不含 "json"（不分大小寫），自動在最後一則補上 JSON 指示，涵蓋 `response_model=None` 等所有呼叫路徑；GLM/OpenRouter 共用基類自動受惠，避免換 endpoint 復發。不提供 Embedding。
 
 **並發安全**：使用 `asyncio.Lock` 保護 Graphiti 初始化，防止並發競態。`clear_graph` 後自動重建 Neo4j 索引。
 
@@ -136,7 +138,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 **智慧內容切分**：`src/content_preprocessor.py` 提供 `smart_chunk()` 函數，長文本（>800 字元）自動按段落分割，短段落合併，保持語意完整。`add_memory_simple` 自動整合切分邏輯。切分後使用 `add_episode_bulk()` 批量並發處理（非逐段串行），多段寫入加速約 33%。
 
-**背景處理模式**：`add_memory_simple(background=True)` 立即返回 `task_id`，後台 `asyncio.Task` 處理。用 `get_memory_task_status(task_id)` 查詢進度。全域 `_memory_tasks` 字典追蹤狀態。
+**背景處理模式**：`add_memory_simple(background=True)` 立即返回 `task_id`，後台 `asyncio.Task` 處理。用 `get_memory_task_status(task_id)` 查詢進度。全域 `_memory_tasks` 由 `src/task_store.py` 的 `TaskStore`（`get_task_store()`）提供，採 SQLite 持久化（預設 `data/tasks.db`，可用 `TASK_DB_PATH` 覆寫）：同時維護 in-memory dict 供快速讀取，寫入時同步落盤，進程啟動時從 SQLite 還原未完成任務，避免重啟後遺失進度。
 
 **傳輸模式**：
 - `http` — HTTP Streamable（推薦），支援 MCP 端點（`/mcp`）、Web 管理介面（`/`）、REST API（`/api/*`）、健康檢查（`/health`、`/health/ready`）
@@ -198,7 +200,7 @@ graphiti_mcp_server.py           # 主入口 — FastMCP 應用，定義所有 M
 
 HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 
-**功能**：儀表板統計、實體節點/事實/記憶片段瀏覽與搜尋、社群瀏覽與建構、三元組表單、group 篩選與刪除、深色/淺色主題、節點/事實/片段刪除操作、資料匯出、知識圖譜視覺化、AI 問答、品質分析。
+**功能**：儀表板統計、實體節點/事實/記憶片段瀏覽與搜尋、社群瀏覽與建構、三元組表單、group 篩選與刪除、深色/淺色主題、節點/事實/片段刪除操作、資料匯出與批量匯入、知識圖譜視覺化、AI 問答、品質維護分析、運行時設定檢視/調整。
 
 **REST API**：
 
@@ -206,20 +208,33 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 |------|------|
 | `GET /api/stats` | 儀表板統計 |
 | `GET /api/groups` | 取得所有 group_id |
+| `GET /api/groups/stats` | 各 group 的節點/事實/片段統計 |
 | `GET /api/nodes` | 瀏覽實體節點（分頁） |
 | `GET /api/facts` | 瀏覽事實（分頁） |
 | `GET /api/episodes` | 瀏覽記憶片段（分頁） |
+| `GET /api/nodes/{uuid}/relations` | 取得節點的入邊/出邊關係 |
 | `GET /api/search/nodes` | 向量搜尋節點 |
 | `GET /api/search/facts` | 向量搜尋事實 |
+| `GET /api/search/episodes` | 搜尋記憶片段 |
 | `GET /api/search/advanced` | 進階搜尋（16 種策略） |
 | `GET /api/communities` | 瀏覽社群節點（分頁） |
 | `POST /api/communities/build` | 觸發社群建構 |
+| `POST /api/memory/add` | 添加單筆記憶 |
 | `POST /api/memory/add-bulk` | 批量添加記憶 |
 | `POST /api/memory/add-triplet` | 添加三元組 |
+| `POST /api/import/episodes` | 批量匯入記憶片段（JSON，單次上限 500 筆） |
 | `GET /api/memory/tasks` | 列出背景記憶處理任務 |
 | `GET /api/memory/tasks/{id}` | 查詢單一任務狀態 |
+| `GET /api/timeline` | 時間軸瀏覽 |
+| `GET /api/graph/subgraph` | 取得子圖（視覺化） |
+| `GET /api/graph/all` | 取得完整圖（視覺化） |
+| `GET /api/ask` | AI 問答（基於圖譜檢索） |
+| `GET /api/analytics/top-nodes` | 高連結度/高存取節點 |
+| `GET /api/analytics/quality` | 知識圖譜品質指標 |
 | `GET /api/analytics/stale` | 查詢過時記憶 |
 | `POST /api/analytics/cleanup` | 清理過時記憶 |
+| `GET /api/config` | 取得目前生效設定（不含 API key） |
+| `PATCH /api/config` | 運行時更新可修改設定（僅本進程生效，重啟還原） |
 | `DELETE /api/nodes/{uuid}` | 刪除節點 |
 | `DELETE /api/episodes/{uuid}` | 刪除記憶片段 |
 | `DELETE /api/facts/{uuid}` | 刪除事實 |
@@ -283,6 +298,7 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 | `GRAPHITI_MAX_CHUNK_SIZE` | 切分後每段最大字元數 | `600` |
 | `GRAPHITI_MAX_COROUTINES` | 最大並行協程數 | `10` |
 | `GRAPHITI_DEFAULT_BACKGROUND` | 預設背景處理 | `false` |
+| `TASK_DB_PATH` | 背景任務 SQLite 持久化路徑 | `data/tasks.db` |
 | `ENABLE_IMPORTANCE_TRACKING` | 啟用存取追蹤 | `true` |
 | `IMPORTANCE_WEIGHT` | 重要性權重 | `0.1` |
 | `STALE_DAYS_THRESHOLD` | 過時天數閾值 | `30` |
@@ -298,4 +314,4 @@ HTTP 模式下自動啟用，訪問 `http://localhost:8000/` 即可使用。
 
 ## Upstream Reference
 
-本專案基於 [getzep/graphiti/mcp_server](https://github.com/getzep/graphiti/tree/main/mcp_server) 擴充開發。本地新增功能包括：多 LLM 提供者架構（Ollama / GLM / GROQ / OpenRouter / DeepSeek 動態切換）、Embedding 與 LLM 解耦（`EMBEDDING_PROVIDER`）、Ollama 深度適配（含雙模型分流）、GLM / OpenRouter / DeepSeek 客戶端（簡化 schema 注入、DeepSeek json_object 保底防護）、Web 管理介面（含社群瀏覽、三元組表單）、19 個 MCP 工具（含進階搜尋、衝突偵測、去重、重要性追蹤、智慧遺忘）、安全模式（Safe Mode）、智慧內容切分、背景記憶處理、完整異常/日誌系統。上游使用 graphiti-core 最新版，本地依賴 >=0.24.3。
+本專案基於 [getzep/graphiti/mcp_server](https://github.com/getzep/graphiti/tree/main/mcp_server) 擴充開發。本地新增功能包括：多 LLM 提供者架構（Ollama / GLM / GROQ / OpenRouter / DeepSeek 動態切換）、Embedding 與 LLM 解耦（`EMBEDDING_PROVIDER`）、Ollama 深度適配（含雙模型分流）、OpenAICompatClient 基類（GLM / OpenRouter / DeepSeek 共用簡化 schema 注入與 DeepSeek json_object 保底防護）、Web 管理介面（含社群瀏覽、三元組表單、批量匯入、運行時設定）、19 個 MCP 工具（含進階搜尋、衝突偵測、去重、重要性追蹤、智慧遺忘）、安全模式（Safe Mode）、智慧內容切分、背景記憶處理（TaskStore SQLite 持久化）、運行時 Config API、33 語言 i18n、完整異常/日誌系統。上游使用 graphiti-core 最新版，本地依賴 >=0.24.3。

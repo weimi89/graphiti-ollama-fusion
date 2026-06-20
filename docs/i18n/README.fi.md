@@ -13,7 +13,7 @@ Kehitetty laajentamalla projektia [getzep/graphiti](https://github.com/getzep/gr
 - **Embedding irrotettu LLM:stä** — upotin voidaan määrittää erikseen muuttujalla `EMBEDDING_PROVIDER`, pilvipohjaiset LLM:t palaavat automaattisesti paikalliseen `bge-m3`:een
 - **Kaksoismallin jako** — Ollama-tilassa monimutkaiset tehtävät käyttävät päämallia, yksinkertaiset tehtävät vaihtavat automaattisesti pieneen malliin suorituskyvyn parantamiseksi
 - **Älykäs sisällön paloittelu** — pitkä teksti käsitellään automaattisesti osissa, mikä vähentää LLM:n kuormaa (konfiguroitava kynnysarvo)
-- **Taustamuistin käsittely** — muistin lisäys voidaan suorittaa taustalla, MCP-kutsu palaa välittömästi
+- **Taustamuistin käsittely** — muistin lisäys voidaan suorittaa taustalla, MCP-kutsu palaa välittömästi; tehtävien tila tallennetaan pysyvästi SQLite-tietokantaan ja keskeytyneet tehtävät palautetaan automaattisesti uudelleenkäynnistyksen jälkeen
 - **Muistin kaksoiskappaleiden poisto** — havaitsee automaattisesti erittäin samankaltaiset olemassa olevat muistit ja välttää päällekkäisen tallennuksen
 - **Ristiriitojen havaitseminen** — havaitsee kahden entiteetin väliset ristiriitaiset faktat ja tunnistaa vanhentuneet ja voimassa olevat tiedot
 - **Yhteisöjen havaitseminen** — ryhmittelee automaattisesti toisiinsa liittyvät entiteetit Label Propagation -algoritmin avulla
@@ -21,8 +21,8 @@ Kehitetty laajentamalla projektia [getzep/graphiti](https://github.com/getzep/gr
 - **Älykäs unohtaminen** — tunnistaa ja siivoaa vanhentuneet, vähän käytetyt muistit pitäen graafin tiiviinä
 - **Joukkotuonti** — lähetä useita muisteja kerralla, sopii suurten datamäärien siirtoon
 - **Rakenteiset kolmikot** — lisää suoraan "kohde-suhde-objekti", ohittaa LLM-poiminnan, valmis sekunneissa
-- **Web-hallintakäyttöliittymä** — sisäänrakennettu kojelauta, selaus, haku, tietämysgraafin visualisointi, AI-kysymys ja -vastaus sekä yhteisöjen selaus
-- **Monikielisyys (i18n)** — vastausviestit tukevat yli 30 lokaalia (mukaan lukien zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr jne.); MCP-työkalut käyttävät muuttujaa `SERVER_LANG`, REST API neuvottelee automaattisesti HTTP `Accept-Language` -otsakkeen perusteella
+- **Web-hallintakäyttöliittymä** — sisäänrakennettu kojelauta, selaus, haku, tietämysgraafin visualisointi, AI-kysymys ja -vastaus, yhteisöjen selaus, laadun ylläpito, joukkotuonti ja ajonaikainen konfiguraatio
+- **Monikielisyys (i18n)** — vastausviestit tukevat 33 kieltä (mukaan lukien zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr jne.; zh-TW/en/zh-CN/ja käsinkirjoitettu, muut tarjoaa generated-kerros); MCP-työkalut käyttävät muuttujaa `SERVER_LANG`, REST API neuvottelee automaattisesti HTTP `Accept-Language` -otsakkeen perusteella
 - **Tumma/vaalea teema** — Web-käyttöliittymä tukee teeman vaihtoa
 - **Turvallinen tila** — valinnainen nopea muistin lisäys, joka ohittaa entiteettien poiminnan
 - **Docker-tuki** — sisäänrakennettu Dockerfile, tukee säiliöllistettyä käyttöönottoa
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Pääsisääntulo — MCP-työkalujen määrittely (19 työkalua)
 ├── src/
 │   ├── config.py                 # Konfiguraationhallinta (GraphitiConfig, tukee JSON/.env-kerrostusta)
-│   ├── web_api.py                # Web-hallintakäyttöliittymän REST API (20+ päätepistettä)
+│   ├── web_api.py                # Web-hallintakäyttöliittymän REST API (30+ päätepistettä)
 │   ├── ollama_graphiti_client.py  # Ollama LLM -asiakas (kaksoismallin jako)
-│   ├── glm_client.py             # GLM (Zhipu AI) LLM -asiakas (OpenAI-yhteensopiva API)
-│   ├── openrouter_client.py      # OpenRouter LLM -asiakas (yhdistää useiden tarjoajien mallit)
-│   ├── deepseek_client.py        # DeepSeek LLM -asiakas (json_object + varmistava json-suojaus)
+│   ├── openai_compat_client.py   # OpenAI-yhteensopiva LLM-kantaluokka (json_object + yksinkertaistettu schema + json-varmistus)
+│   ├── glm_client.py             # GLM (Zhipu AI) LLM -asiakas (perii OpenAICompatClientin)
+│   ├── openrouter_client.py      # OpenRouter LLM -asiakas (perii OpenAICompatClientin)
+│   ├── deepseek_client.py        # DeepSeek LLM -asiakas (perii OpenAICompatClientin)
 │   ├── ollama_embedder.py        # Ollaman upotusmallin adapteri
 │   ├── content_preprocessor.py   # Älykäs sisällön paloittelu (pitkän tekstin automaattinen segmentointi)
 │   ├── deduplication.py          # Muistin kaksoiskappaleiden poisto (kosinisamankaltaisuusvertailu)
 │   ├── importance.py             # Tärkeyden seuranta ja älykäs unohtaminen
 │   ├── safe_memory_add.py        # Turvallinen muistin lisäys (ohittaa entiteettien poiminnan)
+│   ├── task_store.py             # Taustatehtävien SQLite-pysyvyys (TaskStore)
 │   ├── timezone_utils.py         # Aikavyöhykemuunnos (UTC→paikallinen aikavyöhyke näytössä)
 │   ├── i18n.py                   # Taustajärjestelmän monikielisyys (REST käyttää Accept-Languagea, MCP käyttää SERVER_LANGia)
+│   ├── i18n_generated.py         # Automaattisesti luotu kielipeite (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Rakenteinen poikkeuskäsittely (12 poikkeusluokkaa)
 │   └── logging_setup.py          # Lokijärjestelmä (aikapohjainen kierto + suorituskyvyn seuranta)
 ├── web/                          # Web-hallintakäyttöliittymän frontend (SPA, ei build-vaihetta)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API -kapselointi
 │       ├── components.js         # UI-komponenttien renderöinti (sisältää yhteisösivun)
 │       └── app.js                # SPA-reititys, tilanhallinta
-├── tests/                        # Testikokoelma (183 testiä)
+├── tests/                        # Testikokoelma (203 testiä)
 │   ├── test_content_preprocessor.py  # Paloittelulogiikan testit (17 kpl)
 │   ├── test_new_features.py      # Uusien ominaisuuksien testit (32 kpl)
-│   ├── test_i18n.py             # Monikielisyystestit (37 kpl)
+│   ├── test_i18n.py             # Monikielisyystestit (57 kpl)
 │   ├── test_unit.py              # Yksikkötestit
 │   ├── test_web_api.py           # Web API -testit
 │   ├── test_web_ui_features.py   # Web UI -ominaisuustestit
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Konfiguraation validointi
 │   ├── performance_diagnose.py   # Suorituskyvyn diagnostiikka
 │   ├── inspect_schema.py         # Neo4j-rakenteen tarkistus
-│   └── batch_reprocess.py        # Eräuudelleenkäsittely
+│   ├── batch_reprocess.py        # Eräuudelleenkäsittely
+│   └── migrate_embeddings.py     # Embedding-mallin migraatio (vektorien uudelleenluonti mallin vaihdon jälkeen)
 ├── docs/                         # Dokumentaatio
 ├── logs/                         # Lokit (aikapohjainen kierto, oletuksena säilytys 30 päivää)
 ├── Dockerfile                    # Docker-säiliöllistetty käyttöönotto
@@ -483,7 +487,9 @@ HTTP-tilassa pääset käyttämään sitä siirtymällä osoitteeseen `http://lo
 - Group-hallinta — suodatus ryhmittäin, eräpoisto
 - Tietämysgraafin visualisointi — solmusuhteiden graafinen esitys
 - AI-kysymys ja -vastaus — tietämysgraafiin perustuva älykäs kysely
-- Laatuanalyysi — muistin laadun ja kattavuuden analyysi
+- Laadun ylläpito — muistilaadun mittarit ja siivoustyökalut
+- Joukkotuonti — tuo useita muistijaksoja kerralla (JSON, enintään 500 kpl kerralla)
+- Ajonaikainen konfiguraatio — tarkastele voimassa olevia asetuksia ja säädä osaa parametreista ilman uudelleenkäynnistystä
 - Teeman vaihto — tumma/vaalea teema
 
 **REST API:**
@@ -492,20 +498,33 @@ HTTP-tilassa pääset käyttämään sitä siirtymällä osoitteeseen `http://lo
 |------|------|------|
 | `/api/stats` | GET | Kojelaudan tilastot |
 | `/api/groups` | GET | Hae kaikki group_id:t |
+| `/api/groups/stats` | GET | Solmujen/faktojen/jaksojen tilastot ryhmittäin |
 | `/api/nodes` | GET | Selaa entiteettisolmuja (sivutus) |
 | `/api/facts` | GET | Selaa faktoja (sivutus) |
 | `/api/episodes` | GET | Selaa muistijaksoja (sivutus) |
+| `/api/nodes/{uuid}/relations` | GET | Hae solmun tulo- ja lähtöreunat |
 | `/api/search/nodes` | GET | Vektorihaku solmuille |
 | `/api/search/facts` | GET | Vektorihaku faktoille |
+| `/api/search/episodes` | GET | Hae muistijaksoja |
 | `/api/search/advanced` | GET | Edistynyt haku (16 strategiaa) |
 | `/api/communities` | GET | Selaa yhteisösolmuja (sivutus) |
 | `/api/communities/build` | POST | Käynnistä yhteisön rakentaminen |
+| `/api/memory/add` | POST | Lisää yksittäinen muisti |
 | `/api/memory/add-bulk` | POST | Lisää muisteja joukkona |
 | `/api/memory/add-triplet` | POST | Lisää kolmikko |
+| `/api/import/episodes` | POST | Tuo muistijaksoja joukkona (JSON, enintään 500 kpl) |
 | `/api/memory/tasks` | GET | Listaa taustatehtävät (tukee tilan suodatusta) |
 | `/api/memory/tasks/{id}` | GET | Kysele yksittäisen tehtävän tila |
+| `/api/timeline` | GET | Aikajananäkymä |
+| `/api/graph/subgraph` | GET | Hae aligraafi (visualisointi) |
+| `/api/graph/all` | GET | Hae koko graafi (visualisointi) |
+| `/api/ask` | GET | AI-kysymys ja -vastaus (graafipohjainen haku) |
+| `/api/analytics/top-nodes` | GET | Korkeasti yhdistetyt / paljon käytetyt solmut |
+| `/api/analytics/quality` | GET | Tietämysgraafin laatumittarit |
 | `/api/analytics/stale` | GET | Hae vanhentuneet muistit |
 | `/api/analytics/cleanup` | POST | Siivoa vanhentuneet muistit |
+| `/api/config` | GET | Hae voimassa olevat asetukset (ilman API-avaimia) |
+| `/api/config` | PATCH | Päivitä muutettavissa olevia asetuksia ajonaikaisesti (voimassa vain nykyisessä prosessissa, nollautuu uudelleenkäynnistyksessä) |
 | `/api/nodes/{uuid}` | DELETE | Poista solmu |
 | `/api/episodes/{uuid}` | DELETE | Poista muistijakso |
 | `/api/facts/{uuid}` | DELETE | Poista fakta |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # Älykkään paloittelun laukaiseva merkki
 GRAPHITI_MAX_CHUNK_SIZE=600          # Kunkin osan enimmäismerkkimäärä
 GRAPHITI_MAX_COROUTINES=10            # Rinnakkaisten korutiinien enimmäismäärä
 GRAPHITI_DEFAULT_BACKGROUND=false    # Käytetäänkö taustakäsittelyä oletuksena
+TASK_DB_PATH=data/tasks.db           # Taustatehtävien SQLite-pysyvyyspolku
 
 # === Tärkeyden seuranta ja älykäs unohtaminen (valinnainen) ===
 ENABLE_IMPORTANCE_TRACKING=true      # Ota käyttöseuranta käyttöön
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Testaus
 
 ```bash
-# Suorita kaikki testit (183 kpl, noin 1 sekunti)
+# Suorita kaikki testit (203 kpl, noin 1 sekunti)
 uv run python -m pytest tests/
 
 # Yksityiskohtainen tuloste

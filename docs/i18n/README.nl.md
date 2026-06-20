@@ -13,7 +13,7 @@ Ontwikkeld als uitbreiding op [getzep/graphiti](https://github.com/getzep/graphi
 - **Embedding ontkoppeld van LLM** — de inbedder kan afzonderlijk worden opgegeven met `EMBEDDING_PROVIDER`; cloud-LLM's vallen automatisch terug op lokaal `bge-m3`
 - **Dubbele-model-verdeling** — in Ollama-modus gebruiken complexe taken het hoofdmodel en schakelen eenvoudige taken automatisch over naar een klein model voor betere prestaties
 - **Intelligente inhoudssegmentatie** — lange teksten worden automatisch in segmenten verwerkt om de LLM-belasting te verlagen (drempel configureerbaar)
-- **Geheugenverwerking op de achtergrond** — geheugen toevoegen kan op de achtergrond draaien, waarbij de MCP-aanroep onmiddellijk terugkeert
+- **Geheugenverwerking op de achtergrond** — geheugen toevoegen kan op de achtergrond draaien, waarbij de MCP-aanroep onmiddellijk terugkeert; taakstatus wordt persistent opgeslagen in SQLite en onvoltooide taken worden automatisch hersteld na herstart
 - **Geheugendeduplicatie** — detecteert automatisch sterk gelijkende bestaande herinneringen om dubbele opslag te voorkomen
 - **Conflictdetectie** — detecteert tegenstrijdige feiten tussen twee entiteiten en identificeert verouderde en geldige informatie
 - **Gemeenschapsdetectie** — clustert automatisch gerelateerde entiteiten op basis van het Label Propagation-algoritme
@@ -21,8 +21,8 @@ Ontwikkeld als uitbreiding op [getzep/graphiti](https://github.com/getzep/graphi
 - **Intelligent vergeten** — identificeert en ruimt verouderde herinneringen met weinig toegang op om de graaf compact te houden
 - **Bulkimport** — meerdere herinneringen in één keer indienen, geschikt voor grootschalige datamigratie
 - **Gestructureerde triples** — voeg direct "subject-relatie-object" toe en sla LLM-extractie over voor bliksemsnelle voltooiing
-- **Webbeheerinterface** — ingebouwd dashboard, bladeren, zoeken, kennisgraafvisualisatie, AI-vraag-en-antwoord, gemeenschapsbrowsen
-- **Meertaligheid (i18n)** — responsberichten ondersteunen 30+ locales (waaronder zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr enz.); MCP-tools volgen `SERVER_LANG`, REST API onderhandelt automatisch op basis van HTTP `Accept-Language`
+- **Webbeheerinterface** — ingebouwd dashboard, bladeren, zoeken, kennisgraafvisualisatie, AI-vraag-en-antwoord, gemeenschapsbrowsen, kwaliteitsonderhoud, bulkimport, runtime-instellingen
+- **Meertaligheid (i18n)** — responsberichten ondersteunen 33 talen (waaronder zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr enz.; zh-TW/en/zh-CN/ja handgeschreven, overige via de generated-laag); MCP-tools volgen `SERVER_LANG`, REST API onderhandelt automatisch op basis van HTTP `Accept-Language`
 - **Donker/licht thema** — de webinterface ondersteunt themawisseling
 - **Veilige modus** — optionele snelle geheugentoevoeging die entiteitextractie overslaat
 - **Docker-ondersteuning** — ingebouwde Dockerfile, ondersteunt implementatie in containers
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Hoofdingang — MCP-tooldefinities (19 tools)
 ├── src/
 │   ├── config.py                 # Configuratiebeheer (GraphitiConfig, ondersteunt JSON/.env gelaagd)
-│   ├── web_api.py                # REST API van webbeheerinterface (20+ endpoints)
+│   ├── web_api.py                # REST API van webbeheerinterface (30+ endpoints)
 │   ├── ollama_graphiti_client.py  # Ollama LLM-client (dubbele-model-verdeling)
-│   ├── glm_client.py             # GLM (Zhipu AI) LLM-client (OpenAI-compatibele API)
-│   ├── openrouter_client.py      # OpenRouter LLM-client (aggregeert diverse modellen)
-│   ├── deepseek_client.py        # DeepSeek LLM-client (json_object + ingebouwde json-bescherming)
+│   ├── openai_compat_client.py   # OpenAI-compatibele LLM-basisklasse (json_object + vereenvoudigde schema + json-beveiliging)
+│   ├── glm_client.py             # GLM (Zhipu AI) LLM-client (erft van OpenAICompatClient)
+│   ├── openrouter_client.py      # OpenRouter LLM-client (erft van OpenAICompatClient)
+│   ├── deepseek_client.py        # DeepSeek LLM-client (erft van OpenAICompatClient)
 │   ├── ollama_embedder.py        # Ollama-inbeddingsmodeladapter
 │   ├── content_preprocessor.py   # Intelligente inhoudssegmentatie (automatische segmentatie van lange tekst)
 │   ├── deduplication.py          # Geheugendeduplicatie (cosinusgelijkenisvergelijking)
 │   ├── importance.py             # Belangrijkheidstracering en intelligent vergeten
 │   ├── safe_memory_add.py        # Veilige geheugentoevoeging (slaat entiteitextractie over)
+│   ├── task_store.py             # SQLite-persistentie voor achtergrondtaken (TaskStore)
 │   ├── timezone_utils.py         # Tijdzoneconversie (UTC→lokale tijdzoneweergave)
 │   ├── i18n.py                   # Backend-meertaligheid (REST volgt Accept-Language, MCP volgt SERVER_LANG)
+│   ├── i18n_generated.py         # Automatisch gegenereerde taaloverrides (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Gestructureerde uitzonderingsafhandeling (12 uitzonderingsklassen)
 │   └── logging_setup.py          # Logsysteem (tijdrotatie + prestatiemonitoring)
 ├── web/                          # Frontend van webbeheerinterface (SPA, geen build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API-wrapper
 │       ├── components.js         # UI-componentrendering (inclusief gemeenschapspagina)
 │       └── app.js                # SPA-routing, statusbeheer
-├── tests/                        # Testsuite (183 tests)
+├── tests/                        # Testsuite (203 tests)
 │   ├── test_content_preprocessor.py  # Segmentatielogicatests (17 stuks)
 │   ├── test_new_features.py      # Tests voor nieuwe functies (32 stuks)
-│   ├── test_i18n.py             # Meertaligheidstests (37 stuks)
+│   ├── test_i18n.py             # Meertaligheidstests (57 stuks)
 │   ├── test_unit.py              # Unittests
 │   ├── test_web_api.py           # Web API-tests
 │   ├── test_web_ui_features.py   # Web UI-functietests
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Configuratievalidatie
 │   ├── performance_diagnose.py   # Prestatiediagnose
 │   ├── inspect_schema.py         # Neo4j-structuurcontrole
-│   └── batch_reprocess.py        # Batchherverwerking
+│   ├── batch_reprocess.py        # Batchherverwerking
+│   └── migrate_embeddings.py     # Embedding-modelmigratie
 ├── docs/                         # Documentatie
 ├── logs/                         # Logs (tijdrotatie, standaard 30 dagen bewaard)
 ├── Dockerfile                    # Docker-containerimplementatie
@@ -483,7 +487,9 @@ Bezoek in HTTP-modus `http://localhost:8000/` om te gebruiken.
 - Groepbeheer — filteren per groep, batchverwijdering
 - Kennisgraafvisualisatie — grafische weergave van knooppuntrelaties
 - AI-vraag-en-antwoord — intelligente vraag-en-antwoord op basis van de kennisgraaf
-- Kwaliteitsanalyse — analyse van geheugenkwaliteit en dekking
+- Kwaliteitsonderhoud — kwaliteitsindicatoren voor geheugen en opruimtools
+- Bulkimport — meerdere geheugenfragmenten tegelijk importeren (JSON, maximaal 500 per keer)
+- Runtime-instellingen — huidige actieve instellingen bekijken en sommige parameters aanpassen zonder herstart
 - Themawisseling — donker/licht thema
 
 **REST API:**
@@ -492,20 +498,33 @@ Bezoek in HTTP-modus `http://localhost:8000/` om te gebruiken.
 |------|------|------|
 | `/api/stats` | GET | Dashboardstatistieken |
 | `/api/groups` | GET | Alle group_id's ophalen |
+| `/api/groups/stats` | GET | Statistieken per group (knooppunten/feiten/fragmenten) |
 | `/api/nodes` | GET | Entiteitknooppunten bladeren (gepagineerd) |
 | `/api/facts` | GET | Feiten bladeren (gepagineerd) |
 | `/api/episodes` | GET | Geheugenfragmenten bladeren (gepagineerd) |
+| `/api/nodes/{uuid}/relations` | GET | Inkomende/uitgaande relaties van een knooppunt ophalen |
 | `/api/search/nodes` | GET | Vectorzoeken naar knooppunten |
 | `/api/search/facts` | GET | Vectorzoeken naar feiten |
+| `/api/search/episodes` | GET | Geheugenfragmenten doorzoeken |
 | `/api/search/advanced` | GET | Geavanceerd zoeken (16 strategieën) |
 | `/api/communities` | GET | Gemeenschapsknooppunten bladeren (gepagineerd) |
 | `/api/communities/build` | POST | Gemeenschapsopbouw activeren |
+| `/api/memory/add` | POST | Enkel geheugen toevoegen |
 | `/api/memory/add-bulk` | POST | Geheugen in bulk toevoegen |
 | `/api/memory/add-triplet` | POST | Triple toevoegen |
+| `/api/import/episodes` | POST | Geheugenfragmenten in bulk importeren (JSON, maximaal 500 per keer) |
 | `/api/memory/tasks` | GET | Achtergrondtaken weergeven (ondersteunt statusfiltering) |
 | `/api/memory/tasks/{id}` | GET | Status van enkele taak opvragen |
+| `/api/timeline` | GET | Tijdlijnweergave |
+| `/api/graph/subgraph` | GET | Subgraaf ophalen (visualisatie) |
+| `/api/graph/all` | GET | Volledige graaf ophalen (visualisatie) |
+| `/api/ask` | GET | AI-vraag-en-antwoord (op basis van graafopzoeking) |
+| `/api/analytics/top-nodes` | GET | Knooppunten met hoge connectiviteit/toegang |
+| `/api/analytics/quality` | GET | Kwaliteitsindicatoren van de kennisgraaf |
 | `/api/analytics/stale` | GET | Verouderde herinneringen opvragen |
 | `/api/analytics/cleanup` | POST | Verouderde herinneringen opruimen |
+| `/api/config` | GET | Huidige actieve instellingen ophalen (zonder API-sleutels) |
+| `/api/config` | PATCH | Runtime-instellingen bijwerken (alleen geldig voor dit proces, hersteld na herstart) |
 | `/api/nodes/{uuid}` | DELETE | Knooppunt verwijderen |
 | `/api/episodes/{uuid}` | DELETE | Geheugenfragment verwijderen |
 | `/api/facts/{uuid}` | DELETE | Feit verwijderen |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # tekendrempel die intelligente segmentatie
 GRAPHITI_MAX_CHUNK_SIZE=600          # maximaal aantal tekens per segment
 GRAPHITI_MAX_COROUTINES=10            # maximaal aantal gelijktijdige coroutines
 GRAPHITI_DEFAULT_BACKGROUND=false    # of standaard achtergrondverwerking wordt gebruikt
+TASK_DB_PATH=data/tasks.db           # SQLite-persistentiepad voor achtergrondtaken
 
 # === Belangrijkheidstracering en intelligent vergeten (optioneel) ===
 ENABLE_IMPORTANCE_TRACKING=true      # toegangstracering inschakelen
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Testen
 
 ```bash
-# Alle tests uitvoeren (183 stuks, ongeveer 1 seconde)
+# Alle tests uitvoeren (203 stuks, ongeveer 1 seconde)
 uv run python -m pytest tests/
 
 # Gedetailleerde uitvoer

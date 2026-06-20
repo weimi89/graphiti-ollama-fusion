@@ -13,7 +13,7 @@
 - **Embedding과 LLM 분리** — `EMBEDDING_PROVIDER`로 임베딩 제공자를 독립적으로 지정할 수 있으며, 클라우드 LLM은 자동으로 로컬 `bge-m3`로 폴백
 - **이중 모델 분기** — Ollama 모드에서 복잡한 작업은 주 모델을 사용하고, 간단한 작업은 자동으로 소형 모델로 전환하여 성능 향상
 - **지능형 콘텐츠 분할** — 긴 텍스트를 자동으로 분할 처리하여 LLM 부하를 낮춤(임계값 설정 가능)
-- **백그라운드 메모리 처리** — 메모리 추가를 백그라운드에서 실행할 수 있으며, MCP 호출은 즉시 반환
+- **백그라운드 메모리 처리** — 메모리 추가를 백그라운드에서 실행할 수 있으며, MCP 호출은 즉시 반환; 작업 상태는 SQLite에 영속화되어 재시작 후 미완료 작업이 자동으로 복원됨
 - **메모리 중복 제거** — 매우 유사한 기존 메모리를 자동으로 감지하여 중복 저장을 방지
 - **충돌 감지** — 두 엔티티 간의 모순되는 사실을 감지하고, 이미 무효화된 정보와 유효한 정보를 식별
 - **커뮤니티 감지** — Label Propagation 알고리즘을 기반으로 관련 엔티티를 자동으로 클러스터링
@@ -21,8 +21,8 @@
 - **지능형 망각** — 오래되고 접근량이 낮은 메모리를 식별하고 정리하여 그래프를 간결하게 유지
 - **대량 가져오기** — 한 번에 여러 메모리를 제출하여 대량 데이터 마이그레이션에 적합
 - **구조화된 트리플** — "주체-관계-객체"를 직접 추가하여 LLM 추출을 건너뛰고 즉시 완료
-- **Web 관리 인터페이스** — 대시보드, 탐색, 검색, 지식 그래프 시각화, AI 질의응답, 커뮤니티 탐색 내장
-- **다국어(i18n)** — 응답 메시지가 30개 이상의 locale을 지원(zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr 등 포함); MCP 도구는 `SERVER_LANG`에 따르고, REST API는 HTTP `Accept-Language`에 따라 자동 협상
+- **Web 관리 인터페이스** — 대시보드, 탐색, 검색, 지식 그래프 시각화, AI 질의응답, 커뮤니티 탐색, 품질 유지 관리, 일괄 가져오기, 런타임 설정 내장
+- **다국어(i18n)** — 응답 메시지가 33가지 언어를 지원(zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr 등 포함; zh-TW/en/zh-CN/ja는 수동 작성, 나머지는 generated 레이어에서 제공); MCP 도구는 `SERVER_LANG`에 따르고, REST API는 HTTP `Accept-Language`에 따라 자동 협상
 - **다크/라이트 테마** — Web 인터페이스에서 테마 전환 지원
 - **안전 모드** — 엔티티 추출을 건너뛰는 빠른 메모리 추가를 선택 가능
 - **Docker 지원** — Dockerfile 내장, 컨테이너화 배포 지원
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # 메인 진입점 — MCP 도구 정의(19개 도구)
 ├── src/
 │   ├── config.py                 # 구성 관리(GraphitiConfig, JSON/.env 계층 중첩 지원)
-│   ├── web_api.py                # Web 관리 인터페이스 REST API(20개 이상 엔드포인트)
+│   ├── web_api.py                # Web 관리 인터페이스 REST API(30개 이상 엔드포인트)
 │   ├── ollama_graphiti_client.py  # Ollama LLM 클라이언트(이중 모델 분기)
-│   ├── glm_client.py             # GLM(智谱 AI) LLM 클라이언트(OpenAI 호환 API)
-│   ├── openrouter_client.py      # OpenRouter LLM 클라이언트(여러 업체 모델 통합)
-│   ├── deepseek_client.py        # DeepSeek LLM 클라이언트(json_object + 안전장치 json 보호)
+│   ├── openai_compat_client.py   # OpenAI 호환 LLM 기반 클래스(json_object + 간소화 schema + json 보호)
+│   ├── glm_client.py             # GLM(智谱 AI) LLM 클라이언트(OpenAICompatClient 상속)
+│   ├── openrouter_client.py      # OpenRouter LLM 클라이언트(OpenAICompatClient 상속)
+│   ├── deepseek_client.py        # DeepSeek LLM 클라이언트(OpenAICompatClient 상속)
 │   ├── ollama_embedder.py        # Ollama 임베딩 모델 어댑터
 │   ├── content_preprocessor.py   # 지능형 콘텐츠 분할(긴 텍스트 자동 분할)
 │   ├── deduplication.py          # 메모리 중복 제거(코사인 유사도 비교)
 │   ├── importance.py             # 중요도 추적 및 지능형 망각
 │   ├── safe_memory_add.py        # 안전 메모리 추가(엔티티 추출 건너뜀)
+│   ├── task_store.py             # 백그라운드 작업 SQLite 영속화(TaskStore)
 │   ├── timezone_utils.py         # 시간대 변환(UTC→로컬 시간대 표시)
 │   ├── i18n.py                   # 백엔드 다국어(REST는 Accept-Language, MCP는 SERVER_LANG에 따름)
+│   ├── i18n_generated.py         # 자동 생성된 언어 오버라이드(GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # 구조화된 예외 처리(12가지 예외 클래스)
 │   └── logging_setup.py          # 로깅 시스템(시간 순환 + 성능 모니터링)
 ├── web/                          # Web 관리 인터페이스 프런트엔드(SPA, 빌드 없음)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API 래퍼
 │       ├── components.js         # UI 컴포넌트 렌더링(커뮤니티 페이지 포함)
 │       └── app.js                # SPA 라우팅, 상태 관리
-├── tests/                        # 테스트 스위트(183개 테스트)
+├── tests/                        # 테스트 스위트(203개 테스트)
 │   ├── test_content_preprocessor.py  # 분할 로직 테스트(17개)
 │   ├── test_new_features.py      # 신규 기능 테스트(32개)
-│   ├── test_i18n.py             # 다국어 테스트(37개)
+│   ├── test_i18n.py             # 다국어 테스트(57개)
 │   ├── test_unit.py              # 단위 테스트
 │   ├── test_web_api.py           # Web API 테스트
 │   ├── test_web_ui_features.py   # Web UI 기능 테스트
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # 구성 검증
 │   ├── performance_diagnose.py   # 성능 진단
 │   ├── inspect_schema.py         # Neo4j 구조 검사
-│   └── batch_reprocess.py        # 일괄 재처리
+│   ├── batch_reprocess.py        # 일괄 재처리
+│   └── migrate_embeddings.py     # Embedding 모델 마이그레이션
 ├── docs/                         # 문서
 ├── logs/                         # 로그(시간 순환, 기본 30일 보관)
 ├── Dockerfile                    # Docker 컨테이너화 배포
@@ -483,7 +487,9 @@ HTTP 모드에서 `http://localhost:8000/`에 접속하면 사용할 수 있습�
 - Group 관리 — 그룹별 필터링, 일괄 삭제
 - 지식 그래프 시각화 — 노드 관계 그래픽 표시
 - AI 질의응답 — 지식 그래프 기반 지능형 질의응답
-- 품질 분석 — 메모리 품질 및 커버리지 분석
+- 품질 유지 관리 — 메모리 품질 지표 및 정리 도구
+- 일괄 가져오기 — 여러 메모리 에피소드를 한 번에 가져오기(JSON, 1회 최대 500개)
+- 런타임 설정 — 현재 활성 설정 확인 및 재시작 없이 일부 파라미터 조정 가능
 - 테마 전환 — 다크/라이트 테마
 
 **REST API:**
@@ -492,20 +498,33 @@ HTTP 모드에서 `http://localhost:8000/`에 접속하면 사용할 수 있습�
 |------|------|------|
 | `/api/stats` | GET | 대시보드 통계 |
 | `/api/groups` | GET | 모든 group_id 가져오기 |
+| `/api/groups/stats` | GET | 각 group의 노드/사실/에피소드 통계 |
 | `/api/nodes` | GET | 엔티티 노드 탐색(페이지 매김) |
 | `/api/facts` | GET | 사실 탐색(페이지 매김) |
 | `/api/episodes` | GET | 메모리 에피소드 탐색(페이지 매김) |
+| `/api/nodes/{uuid}/relations` | GET | 노드의 입력/출력 엣지 관계 가져오기 |
 | `/api/search/nodes` | GET | 벡터 검색 노드 |
 | `/api/search/facts` | GET | 벡터 검색 사실 |
+| `/api/search/episodes` | GET | 메모리 에피소드 검색 |
 | `/api/search/advanced` | GET | 고급 검색(16가지 전략) |
 | `/api/communities` | GET | 커뮤니티 노드 탐색(페이지 매김) |
 | `/api/communities/build` | POST | 커뮤니티 빌드 트리거 |
+| `/api/memory/add` | POST | 단일 메모리 추가 |
 | `/api/memory/add-bulk` | POST | 일괄 메모리 추가 |
 | `/api/memory/add-triplet` | POST | 트리플 추가 |
+| `/api/import/episodes` | POST | 메모리 에피소드 일괄 가져오기(JSON, 1회 최대 500개) |
 | `/api/memory/tasks` | GET | 백그라운드 작업 나열(상태 필터링 지원) |
 | `/api/memory/tasks/{id}` | GET | 단일 작업 상태 조회 |
+| `/api/timeline` | GET | 타임라인 탐색 |
+| `/api/graph/subgraph` | GET | 서브그래프 가져오기(시각화) |
+| `/api/graph/all` | GET | 전체 그래프 가져오기(시각화) |
+| `/api/ask` | GET | AI 질의응답(그래프 기반 검색) |
+| `/api/analytics/top-nodes` | GET | 연결도/접근 횟수가 높은 노드 |
+| `/api/analytics/quality` | GET | 지식 그래프 품질 지표 |
 | `/api/analytics/stale` | GET | 오래된 메모리 조회 |
 | `/api/analytics/cleanup` | POST | 오래된 메모리 정리 |
+| `/api/config` | GET | 현재 활성 설정 가져오기(API key 제외) |
+| `/api/config` | PATCH | 런타임 설정 업데이트(현재 프로세스에만 적용, 재시작 시 초기화) |
 | `/api/nodes/{uuid}` | DELETE | 노드 삭제 |
 | `/api/episodes/{uuid}` | DELETE | 메모리 에피소드 삭제 |
 | `/api/facts/{uuid}` | DELETE | 사실 삭제 |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # 지능형 분할을 트리거하는 글�
 GRAPHITI_MAX_CHUNK_SIZE=600          # 단락별 최대 글자 수
 GRAPHITI_MAX_COROUTINES=10            # 최대 동시 코루틴 수
 GRAPHITI_DEFAULT_BACKGROUND=false    # 기본 백그라운드 처리 여부
+TASK_DB_PATH=data/tasks.db           # 백그라운드 작업 SQLite 영속화 경로
 
 # === 중요도 추적 및 지능형 망각(선택) ===
 ENABLE_IMPORTANCE_TRACKING=true      # 접근 추적 활성화
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## 테스트
 
 ```bash
-# 모든 테스트 실행(183개, 약 1초)
+# 모든 테스트 실행(203개, 약 1초)
 uv run python -m pytest tests/
 
 # 상세 출력

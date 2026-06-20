@@ -13,7 +13,7 @@ Built as an extension of [getzep/graphiti](https://github.com/getzep/graphiti), 
 - **Embedding decoupled from LLM** — Use `EMBEDDING_PROVIDER` to independently specify the embedder; cloud LLMs automatically fall back to local `bge-m3`
 - **Dual-model routing** — In Ollama mode, complex tasks use the main model while simple tasks automatically switch to the small model for better performance
 - **Smart content chunking** — Long text is automatically split into segments to reduce LLM load (configurable threshold)
-- **Background memory processing** — Memory additions can run in the background, with MCP calls returning immediately
+- **Background memory processing** — Memory additions can run in the background, with MCP calls returning immediately; task state is persisted via SQLite and incomplete tasks are automatically restored after a restart
 - **Memory deduplication** — Automatically detects highly similar existing memories to avoid duplicate storage
 - **Conflict detection** — Detects contradictory facts between two entities, identifying invalidated versus valid information
 - **Community detection** — Automatically clusters related entities using the Label Propagation algorithm
@@ -21,8 +21,8 @@ Built as an extension of [getzep/graphiti](https://github.com/getzep/graphiti), 
 - **Smart forgetting** — Identifies and cleans up stale, low-access memories to keep the graph lean
 - **Bulk import** — Submit multiple memories at once, ideal for large-scale data migration
 - **Structured triplets** — Directly add "subject-relation-object" entries, skipping LLM extraction for instant completion
-- **Web management interface** — Built-in dashboard, browsing, search, knowledge graph visualization, AI Q&A, and community browsing
-- **Internationalization (i18n)** — Response messages support 30+ locales (including zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr, etc.); MCP tools follow `SERVER_LANG`, while the REST API automatically negotiates based on the HTTP `Accept-Language` header
+- **Web management interface** — Built-in dashboard, browsing, search, knowledge graph visualization, AI Q&A, community browsing, quality maintenance, bulk import, and runtime configuration
+- **Internationalization (i18n)** — Response messages support 33 languages (including zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr, etc.; zh-TW/en/zh-CN/ja are hand-written, the rest are provided by the generated layer); MCP tools follow `SERVER_LANG`, while the REST API automatically negotiates based on the HTTP `Accept-Language` header
 - **Dark/light themes** — The Web interface supports theme switching
 - **Safe mode** — Optional fast memory addition that skips entity extraction
 - **Docker support** — Built-in Dockerfile for containerized deployment
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Main entry point — MCP tool definitions (19 tools)
 ├── src/
 │   ├── config.py                 # Configuration management (GraphitiConfig, supports JSON/.env layering)
-│   ├── web_api.py                # Web management interface REST API (20+ endpoints)
+│   ├── web_api.py                # Web management interface REST API (30+ endpoints)
 │   ├── ollama_graphiti_client.py  # Ollama LLM client (dual-model routing)
-│   ├── glm_client.py             # GLM (Zhipu AI) LLM client (OpenAI-compatible API)
-│   ├── openrouter_client.py      # OpenRouter LLM client (aggregates models from many vendors)
-│   ├── deepseek_client.py        # DeepSeek LLM client (json_object + fallback json protection)
+│   ├── openai_compat_client.py   # OpenAI-compatible LLM base class (json_object + simplified schema + json fallback protection)
+│   ├── glm_client.py             # GLM (Zhipu AI) LLM client (inherits OpenAICompatClient)
+│   ├── openrouter_client.py      # OpenRouter LLM client (inherits OpenAICompatClient)
+│   ├── deepseek_client.py        # DeepSeek LLM client (inherits OpenAICompatClient)
 │   ├── ollama_embedder.py        # Ollama embedding model adapter
 │   ├── content_preprocessor.py   # Smart content chunking (auto-segments long text)
 │   ├── deduplication.py          # Memory deduplication (cosine similarity comparison)
 │   ├── importance.py             # Importance tracking and smart forgetting
 │   ├── safe_memory_add.py        # Safe memory addition (skips entity extraction)
+│   ├── task_store.py             # Background task SQLite persistence (TaskStore)
 │   ├── timezone_utils.py         # Timezone conversion (UTC→local timezone display)
 │   ├── i18n.py                   # Backend internationalization (REST follows Accept-Language, MCP follows SERVER_LANG)
+│   ├── i18n_generated.py         # Auto-generated locale overrides (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Structured exception handling (12 exception classes)
 │   └── logging_setup.py          # Logging system (time-based rotation + performance monitoring)
 ├── web/                          # Web management interface frontend (SPA, no build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API wrapper
 │       ├── components.js         # UI component rendering (includes community pages)
 │       └── app.js                # SPA routing, state management
-├── tests/                        # Test suite (183 tests)
+├── tests/                        # Test suite (203 tests)
 │   ├── test_content_preprocessor.py  # Chunking logic tests (17)
 │   ├── test_new_features.py      # New feature tests (32)
-│   ├── test_i18n.py             # Internationalization tests (37)
+│   ├── test_i18n.py             # Internationalization tests (57)
 │   ├── test_unit.py              # Unit tests
 │   ├── test_web_api.py           # Web API tests
 │   ├── test_web_ui_features.py   # Web UI feature tests
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Configuration validation
 │   ├── performance_diagnose.py   # Performance diagnosis
 │   ├── inspect_schema.py         # Neo4j schema inspection
-│   └── batch_reprocess.py        # Batch reprocessing
+│   ├── batch_reprocess.py        # Batch reprocessing
+│   └── migrate_embeddings.py     # Embedding model migration
 ├── docs/                         # Documentation
 ├── logs/                         # Logs (time-based rotation, retained 30 days by default)
 ├── Dockerfile                    # Docker containerized deployment
@@ -483,7 +487,9 @@ Access `http://localhost:8000/` in HTTP mode to use it.
 - Group management — Filter by group, batch delete
 - Knowledge graph visualization — Graphical display of node relationships
 - AI Q&A — Intelligent question answering based on the knowledge graph
-- Quality analysis — Memory quality and coverage analysis
+- Quality maintenance — Memory quality metrics and cleanup tools
+- Bulk import — Import multiple memory episodes at once (JSON, up to 500 per batch)
+- Runtime configuration — View currently active settings and adjust select parameters without restarting
 - Theme switching — Dark/light themes
 
 **REST API:**
@@ -492,20 +498,33 @@ Access `http://localhost:8000/` in HTTP mode to use it.
 |------|------|------|
 | `/api/stats` | GET | Dashboard statistics |
 | `/api/groups` | GET | Retrieve all group_ids |
+| `/api/groups/stats` | GET | Node / fact / episode statistics per group |
 | `/api/nodes` | GET | Browse entity nodes (paginated) |
 | `/api/facts` | GET | Browse facts (paginated) |
 | `/api/episodes` | GET | Browse memory episodes (paginated) |
+| `/api/nodes/{uuid}/relations` | GET | Retrieve inbound/outbound relations for a node |
 | `/api/search/nodes` | GET | Vector search nodes |
 | `/api/search/facts` | GET | Vector search facts |
+| `/api/search/episodes` | GET | Search memory episodes |
 | `/api/search/advanced` | GET | Advanced search (16 strategies) |
 | `/api/communities` | GET | Browse community nodes (paginated) |
 | `/api/communities/build` | POST | Trigger community building |
+| `/api/memory/add` | POST | Add a single memory |
 | `/api/memory/add-bulk` | POST | Bulk-add memories |
 | `/api/memory/add-triplet` | POST | Add a triplet |
+| `/api/import/episodes` | POST | Bulk import memory episodes (JSON, up to 500 per batch) |
 | `/api/memory/tasks` | GET | List background tasks (supports status filtering) |
 | `/api/memory/tasks/{id}` | GET | Query a single task's status |
+| `/api/timeline` | GET | Timeline browsing |
+| `/api/graph/subgraph` | GET | Retrieve a subgraph (for visualization) |
+| `/api/graph/all` | GET | Retrieve the full graph (for visualization) |
+| `/api/ask` | GET | AI Q&A (graph-based retrieval) |
+| `/api/analytics/top-nodes` | GET | High-connectivity / high-access nodes |
+| `/api/analytics/quality` | GET | Knowledge graph quality metrics |
 | `/api/analytics/stale` | GET | Query stale memories |
 | `/api/analytics/cleanup` | POST | Clean up stale memories |
+| `/api/config` | GET | Retrieve currently active configuration (excludes API keys) |
+| `/api/config` | PATCH | Update modifiable settings at runtime (current process only; reverts on restart) |
 | `/api/nodes/{uuid}` | DELETE | Delete a node |
 | `/api/episodes/{uuid}` | DELETE | Delete a memory episode |
 | `/api/facts/{uuid}` | DELETE | Delete a fact |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # Character count threshold that triggers s
 GRAPHITI_MAX_CHUNK_SIZE=600          # Maximum characters per segment
 GRAPHITI_MAX_COROUTINES=10            # Maximum number of concurrent coroutines
 GRAPHITI_DEFAULT_BACKGROUND=false    # Whether to process in the background by default
+TASK_DB_PATH=data/tasks.db           # SQLite persistence path for background tasks
 
 # === Importance tracking and smart forgetting (optional) ===
 ENABLE_IMPORTANCE_TRACKING=true      # Enable access tracking
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Testing
 
 ```bash
-# Run all tests (183, about 1 second)
+# Run all tests (203, about 1 second)
 uv run python -m pytest tests/
 
 # Verbose output

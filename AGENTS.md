@@ -81,15 +81,18 @@ graphiti_mcp_server.py             # FastMCP 主入口與 MCP tools
 src/config.py                      # GraphitiConfig 與所有 provider config
 src/web_api.py                     # Web 管理介面 REST API
 src/ollama_graphiti_client.py      # Ollama LLM adapter，含雙模型分流
-src/glm_client.py                  # GLM OpenAI-compatible client
-src/openrouter_client.py           # OpenRouter OpenAI-compatible client
-src/deepseek_client.py             # DeepSeek OpenAI-compatible client
+src/openai_compat_client.py        # OpenAI-compatible LLM 基類，GLM/OpenRouter/DeepSeek 共用
+src/glm_client.py                  # GLM client（繼承 OpenAICompatClient）
+src/openrouter_client.py           # OpenRouter client（繼承 OpenAICompatClient）
+src/deepseek_client.py             # DeepSeek client（繼承 OpenAICompatClient）
 src/ollama_embedder.py             # Ollama embedding adapter
 src/content_preprocessor.py        # 長文本智慧切分
 src/deduplication.py               # 記憶去重
 src/importance.py                  # 存取追蹤與 stale memory
 src/safe_memory_add.py             # 安全模式記憶添加
-src/i18n.py                        # 後端多語系訊息
+src/task_store.py                  # 背景任務 SQLite 持久化（TaskStore）
+src/i18n.py                        # 後端多語系訊息（33 語言）
+src/i18n_generated.py              # 自動生成的語系覆蓋（GENERATED_MESSAGE_OVERRIDES）
 src/timezone_utils.py              # 時區顯示轉換
 src/exceptions.py                  # 結構化錯誤
 src/logging_setup.py               # logging 設定
@@ -115,9 +118,9 @@ docs/graphiti-memory-rules.md      # 記憶規則
 - LLM provider 由 `LLM_PROVIDER` 控制：`ollama`、`groq`、`glm`、`openrouter`、`deepseek`。
 - `_create_llm_client()` 負責 provider routing；新增 provider 時同步補 config、factory、status/test_connection 顯示。
 - `GraphitiConfig.get_active_model()` 是模型顯示與狀態回報的集中來源，不要在多處重寫 if/elif。
-- `glm`、`openrouter`、`deepseek` 都走 OpenAI-compatible API，但 schema 注入策略不同於 Ollama。
-- DeepSeek 使用 `json_object` 模式時 prompt 必須包含 `json` 字串；`src/deepseek_client.py` 已有保底防護，修改時不要移除。
-- `src/glm_client.py` 也有同類 JSON prompt 防護，避免 endpoint 行為變更造成復發。
+- `glm`、`openrouter`、`deepseek` 都走 OpenAI-compatible API，共同邏輯（`json_object` 模式、簡化 schema 注入、json 保底防護）抽到基類 `src/openai_compat_client.py` 的 `OpenAICompatClient`，三個 client 繼承它，只補各自 base_url 與模型差異；schema 注入策略不同於 Ollama。
+- DeepSeek 使用 `json_object` 模式時 prompt 必須包含 `json` 字串；基類 `OpenAICompatClient._generate_response` 已有保底防護（涵蓋所有呼叫路徑），修改基類時不要移除。
+- 此防護由基類提供，GLM/OpenRouter 一併受惠，避免 endpoint 行為變更造成復發。
 
 ### Embedding
 
@@ -131,7 +134,7 @@ docs/graphiti-memory-rules.md      # 記憶規則
 - `add_memory_simple` 預設 `use_safe_mode=False`，會走完整實體/關係提取，搜尋才完整可用。
 - `use_safe_mode=True` 只建立 `EpisodicNode`，速度快但無法被 nodes/facts 搜尋完整命中。
 - 長文本透過 `src/content_preprocessor.py` 的 `smart_chunk()` 切分，切分後使用 bulk 並發寫入。
-- `background=True` 會建立 `asyncio.Task` 並回傳 `task_id`；狀態由 `_memory_tasks` 追蹤。
+- `background=True` 會建立 `asyncio.Task` 並回傳 `task_id`；狀態由 `_memory_tasks`（`src/task_store.py` 的 `TaskStore`）追蹤，採 SQLite 持久化（預設 `data/tasks.db`，`TASK_DB_PATH` 可覆寫），重啟後會還原未完成任務。
 - 去重由 `src/deduplication.py` 的 cosine similarity 處理，`force=True` 才跳過。
 
 ### 搜尋與維護
@@ -143,10 +146,10 @@ docs/graphiti-memory-rules.md      # 記憶規則
 
 ### i18n
 
-- `src/i18n.py` 以 `zh-TW`、`en`、`zh-CN`、`ja` 為既有完整翻譯基準，並支援下方 locale。
-- 新增 locale 若尚未有專屬翻譯，會先用英文訊息 fallback；未來可逐語系覆寫部分或全部 key。
-- key 使用扁平命名，如 `group.action`。
-- 新增或擴充語系時，所有語言必須同步補齊同一組 key；`tests/test_i18n.py` 會檢查 key 與 placeholder 對齊。
+- `src/i18n.py` 維護 33 種語言的 `MESSAGES`：`zh-TW`（基準/fallback）、`en`、`zh-CN`、`ja` 為手寫，其餘 29 種由 `src/i18n_generated.py` 的 `GENERATED_MESSAGE_OVERRIDES` 提供。
+- 合成邏輯每個語言以 `en` 為底，依序套用手寫覆蓋 → generated → manual overrides，確保所有語言 key 與 `zh-TW` 對齊（缺翻譯回退英文）。
+- key 使用扁平命名，如 `group.action`；`t(key, lang, **params)` 以 `str.format` 插值，fallback 順序 `lang → zh-TW → key`，格式化失敗不冒泡成例外。
+- 新增訊息時只需補 `zh-TW`；新增/擴充語系時所有語言必須同步補齊同一組 key；`tests/test_i18n.py` 會檢查 key 與 placeholder 對齊。
 - MCP 工具語言依 `SERVER_LANG` / `app_config.server_lang`。
 - REST API 語言依每個 request 的 `Accept-Language`，由 `parse_accept_language()` 處理。
 - `src/exceptions.py` 的技術性 context 目前不屬於 i18n 範圍。
@@ -237,20 +240,33 @@ HTTP 模式下：
 | --- | --- |
 | `GET /api/stats` | 儀表板統計 |
 | `GET /api/groups` | group 列表 |
+| `GET /api/groups/stats` | 各 group 統計 |
 | `GET /api/nodes` | 節點瀏覽 |
 | `GET /api/facts` | 事實瀏覽 |
 | `GET /api/episodes` | 記憶片段瀏覽 |
+| `GET /api/nodes/{uuid}/relations` | 節點關係 |
 | `GET /api/search/nodes` | 節點搜尋 |
 | `GET /api/search/facts` | 事實搜尋 |
+| `GET /api/search/episodes` | 記憶片段搜尋 |
 | `GET /api/search/advanced` | 進階搜尋 |
 | `GET /api/communities` | 社群瀏覽 |
 | `POST /api/communities/build` | 建立社群 |
+| `POST /api/memory/add` | 添加單筆記憶 |
 | `POST /api/memory/add-bulk` | 批量記憶 |
 | `POST /api/memory/add-triplet` | 三元組 |
+| `POST /api/import/episodes` | 批量匯入（上限 500 筆） |
 | `GET /api/memory/tasks` | 背景任務列表 |
 | `GET /api/memory/tasks/{id}` | 單一背景任務 |
+| `GET /api/timeline` | 時間軸 |
+| `GET /api/graph/subgraph` | 子圖（視覺化） |
+| `GET /api/graph/all` | 完整圖（視覺化） |
+| `GET /api/ask` | AI 問答 |
+| `GET /api/analytics/top-nodes` | 高連結度/高存取節點 |
+| `GET /api/analytics/quality` | 品質指標 |
 | `GET /api/analytics/stale` | 過時記憶 |
 | `POST /api/analytics/cleanup` | 清理過時記憶 |
+| `GET /api/config` | 取得生效設定（不含 key） |
+| `PATCH /api/config` | 運行時更新設定（僅本進程） |
 | `DELETE /api/nodes/{uuid}` | 刪除節點 |
 | `DELETE /api/episodes/{uuid}` | 刪除 episode |
 | `DELETE /api/facts/{uuid}` | 刪除 fact |
@@ -283,6 +299,7 @@ HTTP 模式下：
 | `GRAPHITI_MAX_CHUNK_SIZE` | `600` | chunk 最大字數 |
 | `GRAPHITI_MAX_COROUTINES` | `10` | 最大並行數 |
 | `GRAPHITI_DEFAULT_BACKGROUND` | `false` | 預設背景寫入 |
+| `TASK_DB_PATH` | `data/tasks.db` | 背景任務 SQLite 持久化路徑 |
 | `ENABLE_IMPORTANCE_TRACKING` | `true` | 啟用重要性追蹤 |
 | `STALE_DAYS_THRESHOLD` | `30` | stale 判斷天數 |
 | `STALE_MIN_ACCESS_COUNT` | `2` | stale 最低存取次數 |
@@ -308,4 +325,4 @@ HTTP 模式下：
 
 上游基底：[getzep/graphiti/mcp_server](https://github.com/getzep/graphiti/tree/main/mcp_server)
 
-本地擴充重點：多 LLM provider、Embedding 解耦、Ollama 雙模型分流、GLM/OpenRouter/DeepSeek client、DeepSeek json_object 防護、Web 管理介面、進階搜尋、衝突偵測、去重、重要性追蹤、智慧遺忘、安全模式、智慧內容切分、背景記憶處理、結構化錯誤與 logging。依賴 graphiti-core `>=0.24.3`。
+本地擴充重點：多 LLM provider、Embedding 解耦、Ollama 雙模型分流、OpenAICompatClient 基類（GLM/OpenRouter/DeepSeek 共用 + DeepSeek json_object 防護）、Web 管理介面、進階搜尋、衝突偵測、去重、重要性追蹤、智慧遺忘、安全模式、智慧內容切分、背景記憶處理（TaskStore SQLite 持久化）、運行時 Config API、批量匯入、33 語言 i18n、結構化錯誤與 logging。依賴 graphiti-core `>=0.24.3`。

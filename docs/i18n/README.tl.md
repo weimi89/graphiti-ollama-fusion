@@ -13,7 +13,7 @@ Binuo bilang ekstensiyon batay sa [getzep/graphiti](https://github.com/getzep/gr
 - **Hiwalayan ng Embedding at LLM** — Maaaring tukuyin nang hiwalay ang embedder gamit ang `EMBEDDING_PROVIDER`, awtomatikong bumabalik ang cloud LLM sa lokal na `bge-m3`
 - **Pagbabahagi sa dalawang modelo** — Sa Ollama mode, gumagamit ng pangunahing modelo ang masalimuot na mga gawain, awtomatikong lumilipat sa maliit na modelo ang mga simpleng gawain upang mapabuti ang performance
 - **Matalinong paghahati ng nilalaman** — Awtomatikong pinaghahati ng bahagi-bahagi ang mahabang teksto, binabawasan ang load ng LLM (maaaring i-configure ang threshold)
-- **Background na pagproseso ng memorya** — Maaaring tumakbo sa background ang pagdaragdag ng memorya, agad na bumabalik ang tawag ng MCP
+- **Background na pagproseso ng memorya** — Maaaring tumakbo sa background ang pagdaragdag ng memorya, agad na bumabalik ang tawag ng MCP; ang estado ng gawain ay pinapanatili sa SQLite, awtomatikong naibabalik ang mga hindi pa natapos na gawain pagkatapos mag-restart
 - **Pag-aalis ng duplikadong memorya** — Awtomatikong tinutukoy ang mga umiiral na memorya na lubos na magkapareho, iniiwasan ang paulit-ulit na pag-iimbak
 - **Pagtukoy ng salungatan** — Tinutukoy ang magkasalungat na katotohanan sa pagitan ng dalawang entity, kinikilala ang impormasyong wala na sa bisa at may bisa pa
 - **Pagtukoy ng komunidad** — Awtomatikong pinagsasama-sama ang mga kaugnay na entity batay sa Label Propagation algorithm
@@ -21,8 +21,8 @@ Binuo bilang ekstensiyon batay sa [getzep/graphiti](https://github.com/getzep/gr
 - **Matalinong paglimot** — Tinutukoy at nililinis ang lipas na, mababang-access na memorya, pinapanatiling makinis ang graph
 - **Bulk na pag-import** — Nagsusumite ng maraming memorya nang sabay-sabay, angkop para sa malakihang paglilipat ng datos
 - **Structured na triple** — Direktang nagdaragdag ng "subject-relation-object", nilalaktawan ang pagkuha ng LLM, natatapos sa ilang segundo
-- **Web management interface** — May built-in na dashboard, pag-browse, paghahanap, visualization ng knowledge graph, AI Q&A, at pag-browse ng komunidad
-- **Maraming wika (i18n)** — Sinusuportahan ng mga mensahe ng tugon ang 30+ locale (kabilang ang zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr atbp.); ang MCP tools ay batay sa `SERVER_LANG`, ang REST API ay awtomatikong nakikipag-ayos batay sa HTTP `Accept-Language`
+- **Web management interface** — May built-in na dashboard, pag-browse, paghahanap, visualization ng knowledge graph, AI Q&A, pag-browse ng komunidad, pagpapanatili ng kalidad, bulk na pag-import, at runtime na pagsasaayos
+- **Maraming wika (i18n)** — Sinusuportahan ng mga mensahe ng tugon ang 33 na wika (kabilang ang zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr atbp.; zh-TW/en/zh-CN/ja ay nakasulat ng kamay, ang iba ay ibinibigay ng generated layer); ang MCP tools ay batay sa `SERVER_LANG`, ang REST API ay awtomatikong nakikipag-ayos batay sa HTTP `Accept-Language`
 - **Madilim/maliwanag na tema** — Sinusuportahan ng Web interface ang paglipat ng tema
 - **Safe mode** — Maaaring piliin ang mabilis na pagdaragdag ng memorya na nilalaktawan ang pagkuha ng entity
 - **Suporta sa Docker** — May built-in na Dockerfile, sinusuportahan ang containerized deployment
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Pangunahing entry — kahulugan ng MCP tools (19 na tool)
 ├── src/
 │   ├── config.py                 # Pamamahala ng konfigurasyon (GraphitiConfig, sinusuportahan ang JSON/.env na layering)
-│   ├── web_api.py                # REST API ng Web management interface (20+ na endpoint)
+│   ├── web_api.py                # REST API ng Web management interface (30+ na endpoint)
 │   ├── ollama_graphiti_client.py  # Ollama LLM client (pagbabahagi sa dalawang modelo)
-│   ├── glm_client.py             # GLM (Zhipu AI) LLM client (OpenAI-compatible API)
-│   ├── openrouter_client.py      # OpenRouter LLM client (pinagsasama ang mga modelo ng iba't ibang kompanya)
-│   ├── deepseek_client.py        # DeepSeek LLM client (json_object + panangga sa json)
+│   ├── openai_compat_client.py   # OpenAI-compatible LLM base class (json_object + simplified schema + json fallback protection)
+│   ├── glm_client.py             # GLM (Zhipu AI) LLM client (nagmamana sa OpenAICompatClient)
+│   ├── openrouter_client.py      # OpenRouter LLM client (nagmamana sa OpenAICompatClient)
+│   ├── deepseek_client.py        # DeepSeek LLM client (nagmamana sa OpenAICompatClient)
 │   ├── ollama_embedder.py        # Ollama embedding model adapter
 │   ├── content_preprocessor.py   # Matalinong paghahati ng nilalaman (awtomatikong paghahati ng mahabang teksto)
 │   ├── deduplication.py          # Pag-aalis ng duplikadong memorya (paghahambing ng cosine similarity)
 │   ├── importance.py             # Pagsubaybay sa kahalagahan at matalinong paglimot
 │   ├── safe_memory_add.py        # Ligtas na pagdaragdag ng memorya (nilalaktawan ang pagkuha ng entity)
+│   ├── task_store.py             # SQLite persistence ng background task (TaskStore)
 │   ├── timezone_utils.py         # Pag-convert ng timezone (pagpapakita ng UTC→lokal na timezone)
 │   ├── i18n.py                   # Backend na maraming wika (REST batay sa Accept-Language, MCP batay sa SERVER_LANG)
+│   ├── i18n_generated.py         # Awtomatikong nabuo na mga override ng wika (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Structured na paghawak ng exception (12 na klase ng exception)
 │   └── logging_setup.py          # Sistema ng log (time rotation + performance monitoring)
 ├── web/                          # Frontend ng Web management interface (SPA, walang build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API wrapper
 │       ├── components.js         # Pag-render ng UI component (kasama ang pahina ng komunidad)
 │       └── app.js                # SPA routing, pamamahala ng estado
-├── tests/                        # Test suite (183 na test)
+├── tests/                        # Test suite (203 na test)
 │   ├── test_content_preprocessor.py  # Test ng lohika ng paghahati (17 na test)
 │   ├── test_new_features.py      # Test ng bagong tampok (32 na test)
-│   ├── test_i18n.py             # Test ng maraming wika (37 na test)
+│   ├── test_i18n.py             # Test ng maraming wika (57 na test)
 │   ├── test_unit.py              # Unit test
 │   ├── test_web_api.py           # Web API test
 │   ├── test_web_ui_features.py   # Test ng tampok ng Web UI
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Pag-validate ng konfigurasyon
 │   ├── performance_diagnose.py   # Pag-diagnose ng performance
 │   ├── inspect_schema.py         # Pagsusuri ng istruktura ng Neo4j
-│   └── batch_reprocess.py        # Batch na muling pagproseso
+│   ├── batch_reprocess.py        # Batch na muling pagproseso
+│   └── migrate_embeddings.py     # Paglilipat ng Embedding model
 ├── docs/                         # Dokumentasyon
 ├── logs/                         # Log (time rotation, default na pinapanatili ng 30 araw)
 ├── Dockerfile                    # Docker containerized deployment
@@ -483,7 +487,9 @@ Sa HTTP mode, i-access ang `http://localhost:8000/` upang magamit.
 - Pamamahala ng Group — pag-filter ayon sa grupo, batch na pagbura
 - Visualization ng knowledge graph — graphical na pagpapakita ng relasyon ng node
 - AI Q&A — matalinong Q&A batay sa knowledge graph
-- Pagsusuri ng kalidad — pagsusuri ng kalidad at saklaw ng memorya
+- Pagpapanatili ng kalidad — mga sukatan ng kalidad ng memorya at mga tool sa paglilinis
+- Bulk na pag-import — mag-import ng maraming memory episode nang sabay-sabay (JSON, hanggang 500 bawat batch)
+- Runtime na pagsasaayos — tingnan ang kasalukuyang epektibong setting, at maaaring ayusin ang ilang parameter nang hindi nagre-restart
 - Paglipat ng tema — madilim/maliwanag na tema
 
 **REST API:**
@@ -492,20 +498,33 @@ Sa HTTP mode, i-access ang `http://localhost:8000/` upang magamit.
 |------|------|------|
 | `/api/stats` | GET | Istatistika ng dashboard |
 | `/api/groups` | GET | Kunin ang lahat ng group_id |
+| `/api/groups/stats` | GET | Istatistika ng node/fact/episode bawat group |
 | `/api/nodes` | GET | Mag-browse ng entity node (paginated) |
 | `/api/facts` | GET | Mag-browse ng fact (paginated) |
 | `/api/episodes` | GET | Mag-browse ng memory episode (paginated) |
+| `/api/nodes/{uuid}/relations` | GET | Kunin ang mga inbound/outbound na relasyon ng node |
 | `/api/search/nodes` | GET | Vector search ng node |
 | `/api/search/facts` | GET | Vector search ng fact |
+| `/api/search/episodes` | GET | Maghanap ng memory episode |
 | `/api/search/advanced` | GET | Advanced search (16 na estratehiya) |
 | `/api/communities` | GET | Mag-browse ng community node (paginated) |
 | `/api/communities/build` | POST | I-trigger ang pagbuo ng komunidad |
+| `/api/memory/add` | POST | Magdagdag ng isang memorya |
 | `/api/memory/add-bulk` | POST | Bulk na pagdaragdag ng memorya |
 | `/api/memory/add-triplet` | POST | Magdagdag ng triple |
+| `/api/import/episodes` | POST | Bulk na pag-import ng memory episode (JSON, hanggang 500 bawat batch) |
 | `/api/memory/tasks` | GET | Ilista ang mga background task (sinusuportahan ang pag-filter ng estado) |
 | `/api/memory/tasks/{id}` | GET | Suriin ang estado ng isang task |
+| `/api/timeline` | GET | Pag-browse ng timeline |
+| `/api/graph/subgraph` | GET | Kunin ang subgraph (visualization) |
+| `/api/graph/all` | GET | Kunin ang kumpletong graph (visualization) |
+| `/api/ask` | GET | AI Q&A (batay sa graph retrieval) |
+| `/api/analytics/top-nodes` | GET | Mga node na may mataas na koneksyon/access |
+| `/api/analytics/quality` | GET | Mga sukatan ng kalidad ng knowledge graph |
 | `/api/analytics/stale` | GET | Maghanap ng lipas na memorya |
 | `/api/analytics/cleanup` | POST | Linisin ang lipas na memorya |
+| `/api/config` | GET | Kunin ang kasalukuyang epektibong setting (hindi kasama ang API key) |
+| `/api/config` | PATCH | I-update ang mababagong setting sa runtime (epektibo lamang sa kasalukuyang proseso, mare-reset pagkatapos mag-restart) |
 | `/api/nodes/{uuid}` | DELETE | Burahin ang node |
 | `/api/episodes/{uuid}` | DELETE | Burahin ang memory episode |
 | `/api/facts/{uuid}` | DELETE | Burahin ang fact |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # Threshold ng bilang ng character na nag-t
 GRAPHITI_MAX_CHUNK_SIZE=600          # Maximum na bilang ng character bawat bahagi
 GRAPHITI_MAX_COROUTINES=10            # Maximum na bilang ng parallel coroutine
 GRAPHITI_DEFAULT_BACKGROUND=false    # Kung default na background processing
+TASK_DB_PATH=data/tasks.db           # Landas ng SQLite persistence ng background task
 
 # === Pagsubaybay sa kahalagahan at matalinong paglimot (opsiyonal) ===
 ENABLE_IMPORTANCE_TRACKING=true      # Paganahin ang pagsubaybay sa access
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Pagsubok
 
 ```bash
-# Patakbuhin ang lahat ng test (183, mga 1 segundo)
+# Patakbuhin ang lahat ng test (203, mga 1 segundo)
 uv run python -m pytest tests/
 
 # Detalyadong output

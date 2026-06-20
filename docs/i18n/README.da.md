@@ -13,7 +13,7 @@ Udviklet som en udvidelse af [getzep/graphiti](https://github.com/getzep/graphit
 - **Embedding afkoblet fra LLM** — `EMBEDDING_PROVIDER` kan angive embedder uafhængigt, og cloud-LLM'er falder automatisk tilbage til lokal `bge-m3`
 - **Dobbeltmodel-fordeling** — i Ollama-tilstand bruger komplekse opgaver hovedmodellen, mens enkle opgaver automatisk skifter til en mindre model for at forbedre ydeevnen
 - **Intelligent indholdsopdeling** — lange tekster opdeles automatisk i afsnit for at reducere LLM-belastningen (tærskel kan konfigureres)
-- **Hukommelsesbehandling i baggrunden** — tilføjelse af hukommelse kan køre i baggrunden, så MCP-kaldet returnerer øjeblikkeligt
+- **Hukommelsesbehandling i baggrunden** — tilføjelse af hukommelse kan køre i baggrunden, så MCP-kaldet returnerer øjeblikkeligt; opgavestatus gemmes vedvarende i SQLite og ufuldstændige opgaver gendannes automatisk efter genstart
 - **Hukommelses-deduplikering** — registrerer automatisk eksisterende hukommelser, der ligner hinanden meget, for at undgå dobbeltlagring
 - **Konfliktregistrering** — registrerer modstridende fakta mellem to entiteter og identificerer udløbet og gyldig information
 - **Fællesskabsregistrering** — automatisk klyngedannelse af relaterede entiteter baseret på Label Propagation-algoritmen
@@ -21,8 +21,8 @@ Udviklet som en udvidelse af [getzep/graphiti](https://github.com/getzep/graphit
 - **Intelligent glemsel** — identificerer og rydder forældede hukommelser med lav adgang for at holde grafen kompakt
 - **Bulk-import** — indsend flere hukommelser på én gang, velegnet til migrering af store datamængder
 - **Strukturerede tripler** — tilføj direkte "subjekt-relation-objekt", spring LLM-udtrækning over og fuldfør på sekunder
-- **Web-administrationsgrænseflade** — indbygget dashboard, gennemsyn, søgning, visualisering af vidensgraf, AI-spørgsmål-og-svar og fællesskabsgennemsyn
-- **Flersproget (i18n)** — svarbeskeder understøtter 30+ locales (inkl. zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr m.fl.); MCP-værktøjer følger `SERVER_LANG`, mens REST API automatisk forhandler ud fra HTTP `Accept-Language`
+- **Web-administrationsgrænseflade** — indbygget dashboard, gennemsyn, søgning, visualisering af vidensgraf, AI-spørgsmål-og-svar, fællesskabsgennemsyn, kvalitetsvedligeholdelse, bulk-import og kørselsindstillinger
+- **Flersproget (i18n)** — svarbeskeder understøtter 33 sprog (inkl. zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr m.fl.; zh-TW/en/zh-CN/ja er håndskrevne, øvrige leveres af det genererede lag); MCP-værktøjer følger `SERVER_LANG`, mens REST API automatisk forhandler ud fra HTTP `Accept-Language`
 - **Mørkt/lyst tema** — Web-grænsefladen understøtter temaskift
 - **Sikker tilstand** — valgfri hurtig hukommelsestilføjelse, der springer entitetsudtrækning over
 - **Docker-understøttelse** — indbygget Dockerfile med understøttelse af containeriseret udrulning
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Hovedindgang — MCP-værktøjsdefinitioner (19 værktøjer)
 ├── src/
 │   ├── config.py                 # Konfigurationshåndtering (GraphitiConfig, understøtter lagdeling af JSON/.env)
-│   ├── web_api.py                # Web-administrationsgrænseflade REST API (20+ endpoints)
+│   ├── web_api.py                # Web-administrationsgrænseflade REST API (30+ endpoints)
 │   ├── ollama_graphiti_client.py  # Ollama LLM-klient (dobbeltmodel-fordeling)
-│   ├── glm_client.py             # GLM (Zhipu AI) LLM-klient (OpenAI-kompatibel API)
-│   ├── openrouter_client.py      # OpenRouter LLM-klient (samler modeller fra flere udbydere)
-│   ├── deepseek_client.py        # DeepSeek LLM-klient (json_object + fail-safe json-beskyttelse)
+│   ├── openai_compat_client.py   # OpenAI-kompatibel LLM-basisklasse (json_object + forenklet schema + json fail-safe)
+│   ├── glm_client.py             # GLM (Zhipu AI) LLM-klient (arver OpenAICompatClient)
+│   ├── openrouter_client.py      # OpenRouter LLM-klient (arver OpenAICompatClient)
+│   ├── deepseek_client.py        # DeepSeek LLM-klient (arver OpenAICompatClient)
 │   ├── ollama_embedder.py        # Ollama embedding-modeladapter
 │   ├── content_preprocessor.py   # Intelligent indholdsopdeling (lange tekster opdeles automatisk)
 │   ├── deduplication.py          # Hukommelses-deduplikering (sammenligning af cosinus-lighed)
 │   ├── importance.py             # Vigtighedssporing og intelligent glemsel
 │   ├── safe_memory_add.py        # Sikker hukommelsestilføjelse (springer entitetsudtrækning over)
+│   ├── task_store.py             # SQLite-persistering af baggrundsopgaver (TaskStore)
 │   ├── timezone_utils.py         # Tidszonekonvertering (UTC→visning i lokal tidszone)
 │   ├── i18n.py                   # Backend flersproget (REST følger Accept-Language, MCP følger SERVER_LANG)
+│   ├── i18n_generated.py         # Automatisk genererede sprogoverstyringer (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Struktureret undtagelseshåndtering (12 undtagelsesklasser)
 │   └── logging_setup.py          # Logsystem (tidsbaseret rotation + ydelsesovervågning)
 ├── web/                          # Web-administrationsgrænseflade frontend (SPA, ingen build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API-indpakning
 │       ├── components.js         # UI-komponentrendering (inkl. fællesskabsside)
 │       └── app.js                # SPA-routing, tilstandshåndtering
-├── tests/                        # Testpakke (183 tests)
+├── tests/                        # Testpakke (203 tests)
 │   ├── test_content_preprocessor.py  # Test af opdelingslogik (17 stk.)
 │   ├── test_new_features.py      # Test af nye funktioner (32 stk.)
-│   ├── test_i18n.py             # Test af flersproget (37 stk.)
+│   ├── test_i18n.py             # Test af flersproget (57 stk.)
 │   ├── test_unit.py              # Enhedstests
 │   ├── test_web_api.py           # Web API-tests
 │   ├── test_web_ui_features.py   # Test af Web UI-funktioner
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Konfigurationsvalidering
 │   ├── performance_diagnose.py   # Ydelsesdiagnose
 │   ├── inspect_schema.py         # Tjek af Neo4j-struktur
-│   └── batch_reprocess.py        # Batch-genbehandling
+│   ├── batch_reprocess.py        # Batch-genbehandling
+│   └── migrate_embeddings.py     # Migrering af Embedding-model
 ├── docs/                         # Dokumentation
 ├── logs/                         # Logge (tidsbaseret rotation, gemmes som standard i 30 dage)
 ├── Dockerfile                    # Docker containeriseret udrulning
@@ -483,7 +487,9 @@ I HTTP-tilstand kan den tilgås på `http://localhost:8000/`.
 - Gruppehåndtering — filtrering efter gruppe, batch-sletning
 - Visualisering af vidensgraf — grafisk fremstilling af knuderelationer
 - AI-spørgsmål-og-svar — intelligent spørgsmål-og-svar baseret på vidensgrafen
-- Kvalitetsanalyse — analyse af hukommelseskvalitet og dækning
+- Kvalitetsvedligeholdelse — hukommelseskvalitetsmålinger og oprydningsværktøjer
+- Bulk-import — importér flere hukommelsessegmenter på én gang (JSON, maks. 500 pr. gang)
+- Kørselsindstillinger — vis aktuelle effektive indstillinger og justér udvalgte parametre uden genstart
 - Temaskift — mørkt/lyst tema
 
 **REST API:**
@@ -492,20 +498,33 @@ I HTTP-tilstand kan den tilgås på `http://localhost:8000/`.
 |------|------|------|
 | `/api/stats` | GET | Dashboard-statistik |
 | `/api/groups` | GET | Hent alle group_id |
+| `/api/groups/stats` | GET | Knude-/fakta-/segmentstatistik pr. gruppe |
 | `/api/nodes` | GET | Gennemse entitetsknuder (sidevisning) |
 | `/api/facts` | GET | Gennemse fakta (sidevisning) |
 | `/api/episodes` | GET | Gennemse hukommelsessegmenter (sidevisning) |
+| `/api/nodes/{uuid}/relations` | GET | Hent indgående/udgående kantrelationer for en knude |
 | `/api/search/nodes` | GET | Vektorsøgning i knuder |
 | `/api/search/facts` | GET | Vektorsøgning i fakta |
+| `/api/search/episodes` | GET | Søg i hukommelsessegmenter |
 | `/api/search/advanced` | GET | Avanceret søgning (16 strategier) |
 | `/api/communities` | GET | Gennemse fællesskabsknuder (sidevisning) |
 | `/api/communities/build` | POST | Udløs fællesskabsopbygning |
+| `/api/memory/add` | POST | Tilføj enkelt hukommelse |
 | `/api/memory/add-bulk` | POST | Tilføj hukommelser i bulk |
 | `/api/memory/add-triplet` | POST | Tilføj tripel |
+| `/api/import/episodes` | POST | Bulk-import af hukommelsessegmenter (JSON, maks. 500 pr. gang) |
 | `/api/memory/tasks` | GET | List baggrundsopgaver (understøtter statusfiltrering) |
 | `/api/memory/tasks/{id}` | GET | Forespørg på status for en enkelt opgave |
+| `/api/timeline` | GET | Tidslinje-gennemsyn |
+| `/api/graph/subgraph` | GET | Hent delgraf (visualisering) |
+| `/api/graph/all` | GET | Hent komplet graf (visualisering) |
+| `/api/ask` | GET | AI-spørgsmål-og-svar (baseret på grafsøgning) |
+| `/api/analytics/top-nodes` | GET | Knuder med høj forbindelsesgrad/høj adgangsfrekvens |
+| `/api/analytics/quality` | GET | Kvalitetsmålinger for vidensgrafen |
 | `/api/analytics/stale` | GET | Forespørg på forældede hukommelser |
 | `/api/analytics/cleanup` | POST | Ryd forældede hukommelser |
+| `/api/config` | GET | Hent aktuelle effektive indstillinger (uden API-nøgler) |
+| `/api/config` | PATCH | Opdatér redigerbare indstillinger under kørsel (gælder kun denne proces, nulstilles ved genstart) |
 | `/api/nodes/{uuid}` | DELETE | Slet knude |
 | `/api/episodes/{uuid}` | DELETE | Slet hukommelsessegment |
 | `/api/facts/{uuid}` | DELETE | Slet faktum |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # Tegntærskel, der udløser intelligent op
 GRAPHITI_MAX_CHUNK_SIZE=600          # Maksimalt antal tegn pr. segment
 GRAPHITI_MAX_COROUTINES=10            # Maksimalt antal samtidige coroutiner
 GRAPHITI_DEFAULT_BACKGROUND=false    # Om baggrundsbehandling er standard
+TASK_DB_PATH=data/tasks.db           # SQLite-persisteringssti for baggrundsopgaver
 
 # === Vigtighedssporing og intelligent glemsel (valgfri) ===
 ENABLE_IMPORTANCE_TRACKING=true      # Aktivér adgangssporing
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Test
 
 ```bash
-# Kør alle tests (183 stk., ca. 1 sekund)
+# Kør alle tests (203 stk., ca. 1 sekund)
 uv run python -m pytest tests/
 
 # Detaljeret output

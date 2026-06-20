@@ -13,7 +13,7 @@ Entwickelt als Erweiterung auf Basis von [getzep/graphiti](https://github.com/ge
 - **Entkopplung von Embedding und LLM** — der Embedder kann über `EMBEDDING_PROVIDER` unabhängig festgelegt werden; Cloud-LLMs greifen automatisch auf das lokale `bge-m3` zurück
 - **Zwei-Modell-Verteilung** — im Ollama-Modus werden für komplexe Aufgaben das Hauptmodell und für einfache Aufgaben automatisch ein kleines Modell verwendet, um die Leistung zu steigern
 - **Intelligente Inhaltsaufteilung** — lange Texte werden automatisch in Abschnitte aufgeteilt, um die LLM-Last zu reduzieren (Schwellenwert konfigurierbar)
-- **Hintergrundverarbeitung von Gedächtnis** — das Hinzufügen von Gedächtnis kann im Hintergrund ausgeführt werden, der MCP-Aufruf kehrt sofort zurück
+- **Hintergrundverarbeitung von Gedächtnis** — das Hinzufügen von Gedächtnis kann im Hintergrund ausgeführt werden, der MCP-Aufruf kehrt sofort zurück; der Aufgabenstatus wird in SQLite persistiert und unvollständige Aufgaben werden nach einem Neustart automatisch wiederhergestellt
 - **Gedächtnis-Deduplizierung** — automatische Erkennung hochgradig ähnlicher vorhandener Gedächtnisinhalte zur Vermeidung doppelter Speicherung
 - **Konflikterkennung** — Erkennung widersprüchlicher Fakten zwischen zwei Entitäten, Identifizierung bereits ungültiger und gültiger Informationen
 - **Community-Erkennung** — automatische Clusterung verwandter Entitäten auf Basis des Label-Propagation-Algorithmus
@@ -21,8 +21,8 @@ Entwickelt als Erweiterung auf Basis von [getzep/graphiti](https://github.com/ge
 - **Intelligentes Vergessen** — Identifizierung und Bereinigung veralteter, selten zugegriffener Gedächtnisinhalte, um den Graphen schlank zu halten
 - **Massenimport** — Übermittlung mehrerer Gedächtniseinträge auf einmal, geeignet für die Migration großer Datenmengen
 - **Strukturierte Tripel** — direktes Hinzufügen von „Subjekt-Beziehung-Objekt“, überspringt die LLM-Extraktion und ist in Sekundenschnelle erledigt
-- **Web-Verwaltungsoberfläche** — integriertes Dashboard, Durchsuchen, Suchen, Wissensgraph-Visualisierung, KI-Frage-Antwort, Community-Übersicht
-- **Mehrsprachigkeit (i18n)** — Antwortnachrichten unterstützen über 30 Locales (darunter zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr usw.); MCP-Tools richten sich nach `SERVER_LANG`, REST API verhandelt automatisch über den HTTP-Header `Accept-Language`
+- **Web-Verwaltungsoberfläche** — integriertes Dashboard, Durchsuchen, Suchen, Wissensgraph-Visualisierung, KI-Frage-Antwort, Community-Übersicht, Qualitätswartung, Massenimport, Laufzeitkonfiguration
+- **Mehrsprachigkeit (i18n)** — Antwortnachrichten unterstützen 33 Sprachen (darunter zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr usw.; zh-TW/en/zh-CN/ja handgeschrieben, die übrigen werden durch die Generated-Schicht bereitgestellt); MCP-Tools richten sich nach `SERVER_LANG`, REST API verhandelt automatisch über den HTTP-Header `Accept-Language`
 - **Dunkles/helles Design** — die Web-Oberfläche unterstützt einen Designwechsel
 - **Sicherer Modus** — optionales schnelles Hinzufügen von Gedächtnis unter Überspringung der Entitätsextraktion
 - **Docker-Unterstützung** — integriertes Dockerfile, unterstützt containerisierte Bereitstellung
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Haupteinstieg — MCP-Tool-Definitionen (19 Tools)
 ├── src/
 │   ├── config.py                 # Konfigurationsverwaltung (GraphitiConfig, unterstützt JSON/.env-Schichtung)
-│   ├── web_api.py                # REST API der Web-Verwaltungsoberfläche (20+ Endpunkte)
+│   ├── web_api.py                # REST API der Web-Verwaltungsoberfläche (30+ Endpunkte)
 │   ├── ollama_graphiti_client.py  # Ollama-LLM-Client (Zwei-Modell-Verteilung)
-│   ├── glm_client.py             # GLM-(Zhipu AI)-LLM-Client (OpenAI-kompatible API)
-│   ├── openrouter_client.py      # OpenRouter-LLM-Client (aggregiert verschiedene Modelle)
-│   ├── deepseek_client.py        # DeepSeek-LLM-Client (json_object + json-Fallback-Schutz)
+│   ├── openai_compat_client.py   # OpenAI-kompatibler LLM-Basisklasse (json_object + vereinfachtes Schema + json-Fallback-Schutz)
+│   ├── glm_client.py             # GLM-(Zhipu AI)-LLM-Client (erbt von OpenAICompatClient)
+│   ├── openrouter_client.py      # OpenRouter-LLM-Client (erbt von OpenAICompatClient)
+│   ├── deepseek_client.py        # DeepSeek-LLM-Client (erbt von OpenAICompatClient)
 │   ├── ollama_embedder.py        # Ollama-Embedding-Modell-Adapter
 │   ├── content_preprocessor.py   # intelligente Inhaltsaufteilung (lange Texte automatisch in Abschnitte teilen)
 │   ├── deduplication.py          # Gedächtnis-Deduplizierung (Kosinus-Ähnlichkeitsvergleich)
 │   ├── importance.py             # Wichtigkeitsverfolgung und intelligentes Vergessen
 │   ├── safe_memory_add.py        # sicheres Hinzufügen von Gedächtnis (überspringt Entitätsextraktion)
+│   ├── task_store.py             # SQLite-Persistierung von Hintergrundaufgaben (TaskStore)
 │   ├── timezone_utils.py         # Zeitzonenkonvertierung (UTC→Anzeige in lokaler Zeitzone)
 │   ├── i18n.py                   # Backend-Mehrsprachigkeit (REST nach Accept-Language, MCP nach SERVER_LANG)
+│   ├── i18n_generated.py         # automatisch generierte Sprachüberschreibungen (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # strukturierte Ausnahmebehandlung (12 Ausnahmeklassen)
 │   └── logging_setup.py          # Logging-System (zeitbasierte Rotation + Leistungsüberwachung)
 ├── web/                          # Frontend der Web-Verwaltungsoberfläche (SPA, kein Build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST-API-Kapselung
 │       ├── components.js         # Rendering der UI-Komponenten (inkl. Community-Seite)
 │       └── app.js                # SPA-Routing, Zustandsverwaltung
-├── tests/                        # Testsuite (183 Tests)
+├── tests/                        # Testsuite (203 Tests)
 │   ├── test_content_preprocessor.py  # Tests der Aufteilungslogik (17 Tests)
 │   ├── test_new_features.py      # Tests neuer Funktionen (32 Tests)
-│   ├── test_i18n.py             # Mehrsprachigkeitstests (37 Tests)
+│   ├── test_i18n.py             # Mehrsprachigkeitstests (57 Tests)
 │   ├── test_unit.py              # Unit-Tests
 │   ├── test_web_api.py           # Web-API-Tests
 │   ├── test_web_ui_features.py   # Tests der Web-UI-Funktionen
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Konfigurationsvalidierung
 │   ├── performance_diagnose.py   # Leistungsdiagnose
 │   ├── inspect_schema.py         # Neo4j-Strukturprüfung
-│   └── batch_reprocess.py        # Stapelweise Neuverarbeitung
+│   ├── batch_reprocess.py        # Stapelweise Neuverarbeitung
+│   └── migrate_embeddings.py     # Embedding-Modell-Migration (Vektoren nach Modellwechsel neu generieren)
 ├── docs/                         # Dokumentation
 ├── logs/                         # Logs (zeitbasierte Rotation, standardmäßig 30 Tage aufbewahrt)
 ├── Dockerfile                    # containerisierte Docker-Bereitstellung
@@ -479,11 +483,13 @@ Im HTTP-Modus unter `http://localhost:8000/` aufrufbar und nutzbar.
 - Faktenbeziehungen — durchsuchen, filtern, Vektorsuche
 - Gedächtnisepisoden — durchsuchen, Volltextsuche, löschen
 - Community-Übersicht — Liste der Community-Knoten, Zusammenfassungen, Community-Aufbau auslösen
-- Tripel-Formular — direktes Hinzufügen von strukturiertem Wissen „Subjekt-Beziehung-Objekt“
+- Tripel-Formular — direktes Hinzufügen von strukturiertem Wissen „Subjekt-Beziehung-Objekt”
 - Group-Verwaltung — nach Gruppe filtern, stapelweise löschen
 - Wissensgraph-Visualisierung — grafische Darstellung von Knotenbeziehungen
 - KI-Frage-Antwort — intelligente Frage-Antwort auf Basis des Wissensgraphen
-- Qualitätsanalyse — Analyse von Gedächtnisqualität und Abdeckung
+- Qualitätswartung — Gedächtnisqualitätskennzahlen und Bereinigungswerkzeuge
+- Massenimport — mehrere Gedächtnisepisoden auf einmal importieren (JSON, max. 500 Einträge pro Vorgang)
+- Laufzeitkonfiguration — aktuelle Einstellungen anzeigen und bestimmte Parameter ohne Neustart anpassen
 - Designwechsel — dunkles/helles Design
 
 **REST API:**
@@ -492,20 +498,33 @@ Im HTTP-Modus unter `http://localhost:8000/` aufrufbar und nutzbar.
 |------|------|------|
 | `/api/stats` | GET | Dashboard-Statistik |
 | `/api/groups` | GET | alle group_id abrufen |
+| `/api/groups/stats` | GET | Knoten-/Fakten-/Episodenstatistik pro Gruppe |
 | `/api/nodes` | GET | Entitätsknoten durchsuchen (paginiert) |
 | `/api/facts` | GET | Fakten durchsuchen (paginiert) |
 | `/api/episodes` | GET | Gedächtnisepisoden durchsuchen (paginiert) |
+| `/api/nodes/{uuid}/relations` | GET | Ein- und ausgehende Beziehungen eines Knotens abrufen |
 | `/api/search/nodes` | GET | Vektorsuche nach Knoten |
 | `/api/search/facts` | GET | Vektorsuche nach Fakten |
+| `/api/search/episodes` | GET | Gedächtnisepisoden suchen |
 | `/api/search/advanced` | GET | erweiterte Suche (16 Strategien) |
 | `/api/communities` | GET | Community-Knoten durchsuchen (paginiert) |
 | `/api/communities/build` | POST | Community-Aufbau auslösen |
+| `/api/memory/add` | POST | einzelnes Gedächtnis hinzufügen |
 | `/api/memory/add-bulk` | POST | Gedächtnis stapelweise hinzufügen |
 | `/api/memory/add-triplet` | POST | Tripel hinzufügen |
+| `/api/import/episodes` | POST | Gedächtnisepisoden massenweise importieren (JSON, max. 500 Einträge) |
 | `/api/memory/tasks` | GET | Hintergrundaufgaben auflisten (unterstützt Statusfilterung) |
 | `/api/memory/tasks/{id}` | GET | Status einer einzelnen Aufgabe abfragen |
+| `/api/timeline` | GET | Zeitachsenansicht |
+| `/api/graph/subgraph` | GET | Teilgraph abrufen (Visualisierung) |
+| `/api/graph/all` | GET | vollständigen Graphen abrufen (Visualisierung) |
+| `/api/ask` | GET | KI-Frage-Antwort (auf Basis der Graphsuche) |
+| `/api/analytics/top-nodes` | GET | Knoten mit hoher Vernetzung/hohem Zugriff |
+| `/api/analytics/quality` | GET | Qualitätskennzahlen des Wissensgraphen |
 | `/api/analytics/stale` | GET | veraltete Gedächtnisinhalte abfragen |
 | `/api/analytics/cleanup` | POST | veraltete Gedächtnisinhalte bereinigen |
+| `/api/config` | GET | aktuelle Einstellungen abrufen (ohne API-Keys) |
+| `/api/config` | PATCH | Einstellungen zur Laufzeit aktualisieren (gilt nur für den laufenden Prozess, wird nach Neustart zurückgesetzt) |
 | `/api/nodes/{uuid}` | DELETE | Knoten löschen |
 | `/api/episodes/{uuid}` | DELETE | Gedächtnisepisode löschen |
 | `/api/facts/{uuid}` | DELETE | Fakt löschen |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # Zeichenanzahl-Schwellenwert zum Auslösen
 GRAPHITI_MAX_CHUNK_SIZE=600          # maximale Zeichenanzahl pro Abschnitt
 GRAPHITI_MAX_COROUTINES=10            # maximale Anzahl paralleler Koroutinen
 GRAPHITI_DEFAULT_BACKGROUND=false    # ob standardmäßig im Hintergrund verarbeitet wird
+TASK_DB_PATH=data/tasks.db           # SQLite-Persistierungspfad für Hintergrundaufgaben
 
 # === Wichtigkeitsverfolgung und intelligentes Vergessen (optional) ===
 ENABLE_IMPORTANCE_TRACKING=true      # Zugriffsverfolgung aktivieren
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Tests
 
 ```bash
-# Alle Tests ausführen (183 Stück, ca. 1 Sekunde)
+# Alle Tests ausführen (203 Stück, ca. 1 Sekunde)
 uv run python -m pytest tests/
 
 # Ausführliche Ausgabe

@@ -13,7 +13,7 @@
 - **Embedding と LLM のデカップリング** — `EMBEDDING_PROVIDER` で埋め込み器を独立して指定可能。クラウド LLM は自動的にローカル `bge-m3` にフォールバック
 - **デュアルモデル振り分け** — Ollama モードでは複雑なタスクにメインモデルを使用し、単純なタスクは自動的に小型モデルに切り替えてパフォーマンスを向上
 - **インテリジェントなコンテンツ分割** — 長文を自動的に分割処理し、LLM の負荷を軽減（閾値は設定可能）
-- **バックグラウンド記憶処理** — 記憶の追加をバックグラウンドで実行可能。MCP 呼び出しは即座に返る
+- **バックグラウンド記憶処理** — 記憶の追加をバックグラウンドで実行可能。MCP 呼び出しは即座に返る；タスク状態は SQLite に永続化され、再起動後も未完了タスクが自動復元される
 - **記憶の重複排除** — 高度に類似する既存の記憶を自動検出し、重複保存を回避
 - **競合検出** — 2 つのエンティティ間の矛盾する事実を検出し、無効化された情報と有効な情報を識別
 - **コミュニティ検出** — Label Propagation アルゴリズムに基づいて関連エンティティを自動クラスタリング
@@ -21,8 +21,8 @@
 - **インテリジェントな忘却** — 古く、アクセス量の少ない記憶を識別・整理し、グラフを簡潔に保つ
 - **一括インポート** — 一度に複数の記憶を送信。大量のデータ移行に最適
 - **構造化トリプレット** — 「主体-関係-客体」を直接追加し、LLM 抽出をスキップして瞬時に完了
-- **Web 管理インターフェース** — ダッシュボード、ブラウジング、検索、ナレッジグラフ可視化、AI 質問応答、コミュニティブラウジングを内蔵
-- **多言語対応（i18n）** — 応答メッセージが 30 以上のロケールをサポート（zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr など）。MCP ツールは `SERVER_LANG`、REST API は HTTP `Accept-Language` に基づいて自動ネゴシエーション
+- **Web 管理インターフェース** — ダッシュボード、ブラウジング、検索、ナレッジグラフ可視化、AI 質問応答、コミュニティブラウジング、品質維護、一括インポート、ランタイム設定を内蔵
+- **多言語対応（i18n）** — 応答メッセージが 33 種類の言語をサポート（zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr など；zh-TW/en/zh-CN/ja は手書き、その他は generated レイヤーが提供）。MCP ツールは `SERVER_LANG`、REST API は HTTP `Accept-Language` に基づいて自動ネゴシエーション
 - **ダーク/ライトテーマ** — Web インターフェースがテーマ切り替えをサポート
 - **セーフモード** — エンティティ抽出をスキップする高速記憶追加を選択可能
 - **Docker サポート** — Dockerfile を内蔵し、コンテナ化デプロイをサポート
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # メインエントリ — MCP ツール定義（19 個のツール）
 ├── src/
 │   ├── config.py                 # 設定管理（GraphitiConfig、JSON/.env のレイヤード読み込みをサポート）
-│   ├── web_api.py                # Web 管理インターフェース REST API（20+ エンドポイント）
+│   ├── web_api.py                # Web 管理インターフェース REST API（30+ エンドポイント）
 │   ├── ollama_graphiti_client.py  # Ollama LLM クライアント（デュアルモデル振り分け）
-│   ├── glm_client.py             # GLM（智谱 AI）LLM クライアント（OpenAI 互換 API）
-│   ├── openrouter_client.py      # OpenRouter LLM クライアント（各社モデルを集約）
-│   ├── deepseek_client.py        # DeepSeek LLM クライアント（json_object + 予備の json 防護）
+│   ├── openai_compat_client.py   # OpenAI 互換 LLM 基底クラス（json_object + 簡略化 schema + json 予備防護）
+│   ├── glm_client.py             # GLM（智谱 AI）LLM クライアント（OpenAICompatClient を継承）
+│   ├── openrouter_client.py      # OpenRouter LLM クライアント（OpenAICompatClient を継承）
+│   ├── deepseek_client.py        # DeepSeek LLM クライアント（OpenAICompatClient を継承）
 │   ├── ollama_embedder.py        # Ollama 埋め込みモデルアダプター
 │   ├── content_preprocessor.py   # インテリジェントなコンテンツ分割（長文を自動分割）
 │   ├── deduplication.py          # 記憶の重複排除（コサイン類似度比較）
 │   ├── importance.py             # 重要度トラッキングとインテリジェントな忘却
 │   ├── safe_memory_add.py        # 安全な記憶追加（エンティティ抽出をスキップ）
+│   ├── task_store.py             # バックグラウンドタスクの SQLite 永続化（TaskStore）
 │   ├── timezone_utils.py         # タイムゾーン変換（UTC→ローカルタイムゾーン表示）
 │   ├── i18n.py                   # バックエンド多言語対応（REST は Accept-Language、MCP は SERVER_LANG に従う）
+│   ├── i18n_generated.py         # 自動生成された言語オーバーライド（GENERATED_MESSAGE_OVERRIDES）
 │   ├── exceptions.py             # 構造化例外処理（12 種類の例外クラス）
 │   └── logging_setup.py          # ロギングシステム（時間ローテーション + パフォーマンス監視）
 ├── web/                          # Web 管理インターフェースフロントエンド（SPA、ビルド不要）
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API ラッパー
 │       ├── components.js         # UI コンポーネントレンダリング（コミュニティページを含む）
 │       └── app.js                # SPA ルーティング、状態管理
-├── tests/                        # テストスイート（183 個のテスト）
+├── tests/                        # テストスイート（203 個のテスト）
 │   ├── test_content_preprocessor.py  # 分割ロジックテスト（17 個）
 │   ├── test_new_features.py      # 新機能テスト（32 個）
-│   ├── test_i18n.py             # 多言語対応テスト（37 個）
+│   ├── test_i18n.py             # 多言語対応テスト（57 個）
 │   ├── test_unit.py              # ユニットテスト
 │   ├── test_web_api.py           # Web API テスト
 │   ├── test_web_ui_features.py   # Web UI 機能テスト
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # 設定検証
 │   ├── performance_diagnose.py   # パフォーマンス診断
 │   ├── inspect_schema.py         # Neo4j 構造チェック
-│   └── batch_reprocess.py        # バッチ再処理
+│   ├── batch_reprocess.py        # バッチ再処理
+│   └── migrate_embeddings.py     # Embedding モデルの移行
 ├── docs/                         # ドキュメント
 ├── logs/                         # ログ（時間ローテーション、デフォルトで 30 日間保持）
 ├── Dockerfile                    # Docker コンテナ化デプロイ
@@ -483,7 +487,9 @@ HTTP モードで `http://localhost:8000/` にアクセスすれば使用でき�
 - Group 管理 — グループ別フィルタリング、バッチ削除
 - ナレッジグラフ可視化 — ノード関係をグラフィカルに表示
 - AI 質問応答 — ナレッジグラフに基づくインテリジェントな質問応答
-- 品質分析 — 記憶の品質とカバレッジの分析
+- 品質維護 — 記憶品質指標とクリーンアップツール
+- 一括インポート — 一度に複数の記憶エピソードをインポート（JSON、1 回あたり最大 500 件）
+- ランタイム設定 — 現在有効な設定を確認し、再起動なしで一部のパラメータを調整可能
 - テーマ切り替え — ダーク/ライトテーマ
 
 **REST API：**
@@ -492,20 +498,33 @@ HTTP モードで `http://localhost:8000/` にアクセスすれば使用でき�
 |------|------|------|
 | `/api/stats` | GET | ダッシュボード統計 |
 | `/api/groups` | GET | すべての group_id を取得 |
+| `/api/groups/stats` | GET | 各 group のノード/事実/エピソード統計 |
 | `/api/nodes` | GET | エンティティノードをブラウズ（ページネーション） |
 | `/api/facts` | GET | 事実をブラウズ（ページネーション） |
 | `/api/episodes` | GET | 記憶エピソードをブラウズ（ページネーション） |
+| `/api/nodes/{uuid}/relations` | GET | ノードの入力エッジ/出力エッジの関係を取得 |
 | `/api/search/nodes` | GET | ノードをベクトル検索 |
 | `/api/search/facts` | GET | 事実をベクトル検索 |
+| `/api/search/episodes` | GET | 記憶エピソードを検索 |
 | `/api/search/advanced` | GET | 高度な検索（16 種類の戦略） |
 | `/api/communities` | GET | コミュニティノードをブラウズ（ページネーション） |
 | `/api/communities/build` | POST | コミュニティ構築をトリガー |
+| `/api/memory/add` | POST | 単一の記憶を追加 |
 | `/api/memory/add-bulk` | POST | 記憶を一括追加 |
 | `/api/memory/add-triplet` | POST | トリプレットを追加 |
+| `/api/import/episodes` | POST | 記憶エピソードを一括インポート（JSON、1 回あたり最大 500 件） |
 | `/api/memory/tasks` | GET | バックグラウンドタスク一覧（状態フィルタリングをサポート） |
 | `/api/memory/tasks/{id}` | GET | 単一タスクの状態を照会 |
+| `/api/timeline` | GET | タイムライン表示 |
+| `/api/graph/subgraph` | GET | サブグラフを取得（可視化） |
+| `/api/graph/all` | GET | 完全なグラフを取得（可視化） |
+| `/api/ask` | GET | AI 質問応答（グラフ検索に基づく） |
+| `/api/analytics/top-nodes` | GET | 高接続度/高アクセスノード |
+| `/api/analytics/quality` | GET | ナレッジグラフ品質指標 |
 | `/api/analytics/stale` | GET | 古い記憶を照会 |
 | `/api/analytics/cleanup` | POST | 古い記憶を整理 |
+| `/api/config` | GET | 現在有効な設定を取得（API key を除く） |
+| `/api/config` | PATCH | ランタイムで変更可能な設定を更新（現在のプロセスのみ有効、再起動で元に戻る） |
 | `/api/nodes/{uuid}` | DELETE | ノードを削除 |
 | `/api/episodes/{uuid}` | DELETE | 記憶エピソードを削除 |
 | `/api/facts/{uuid}` | DELETE | 事実を削除 |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # インテリジェントな分割をト�
 GRAPHITI_MAX_CHUNK_SIZE=600          # 各セグメントの最大文字数
 GRAPHITI_MAX_COROUTINES=10            # 最大並行コルーチン数
 GRAPHITI_DEFAULT_BACKGROUND=false    # デフォルトでバックグラウンド処理するかどうか
+TASK_DB_PATH=data/tasks.db           # バックグラウンドタスクの SQLite 永続化パス
 
 # === 重要度トラッキングとインテリジェントな忘却（オプション） ===
 ENABLE_IMPORTANCE_TRACKING=true      # アクセストラッキングを有効化
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## テスト
 
 ```bash
-# すべてのテストを実行（183 個、約 1 秒）
+# すべてのテストを実行（203 個、約 1 秒）
 uv run python -m pytest tests/
 
 # 詳細出力

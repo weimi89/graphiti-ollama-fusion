@@ -13,7 +13,7 @@ Bilgi grafiği bellek hizmeti — çoklu LLM sağlayıcılarını (Ollama / GLM 
 - **Embedding ile LLM'in ayrıştırılması** — `EMBEDDING_PROVIDER` ile gömücü bağımsız olarak belirtilebilir; bulut LLM otomatik olarak yerel `bge-m3`'e geri döner
 - **Çift model dağıtımı** — Ollama modunda karmaşık görevler ana modeli kullanır, basit görevler performansı artırmak için otomatik olarak küçük modele geçer
 - **Akıllı içerik bölütleme** — Uzun metinler otomatik olarak parçalara ayrılarak işlenir, LLM yükü azaltılır (eşik yapılandırılabilir)
-- **Arka planda bellek işleme** — Bellek ekleme arka planda çalıştırılabilir, MCP çağrısı anında geri döner
+- **Arka planda bellek işleme** — Bellek ekleme arka planda çalıştırılabilir, MCP çağrısı anında geri döner; görev durumu SQLite ile kalıcı olarak saklanır, yeniden başlatma sonrasında tamamlanmamış görevler otomatik olarak geri yüklenir
 - **Bellek tekilleştirme** — Mevcut yüksek benzerlikteki bellekleri otomatik olarak tespit ederek yinelenen depolamayı önler
 - **Çelişki tespiti** — İki varlık arasındaki çelişkili gerçekleri tespit eder, geçersiz ve geçerli bilgileri ayırt eder
 - **Topluluk tespiti** — Label Propagation algoritmasına dayalı olarak ilgili varlıkları otomatik olarak kümeler
@@ -21,8 +21,8 @@ Bilgi grafiği bellek hizmeti — çoklu LLM sağlayıcılarını (Ollama / GLM 
 - **Akıllı unutma** — Eski, düşük erişimli bellekleri tespit edip temizler, grafiği sade tutar
 - **Toplu içe aktarma** — Tek seferde birden fazla bellek gönderir, büyük veri taşımalarına uygundur
 - **Yapılandırılmış üçlüler** — "Özne-İlişki-Nesne" doğrudan eklenir, LLM çıkarımı atlanır, saniyeler içinde tamamlanır
-- **Web yönetim arayüzü** — Yerleşik gösterge paneli, gözatma, arama, bilgi grafiği görselleştirme, AI soru-cevap, topluluk gözatma
-- **Çok dilli destek (i18n)** — Yanıt mesajları 30'dan fazla locale'i destekler (zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr vb. dahil); MCP araçları `SERVER_LANG`'a, REST API ise HTTP `Accept-Language`'e göre otomatik olarak müzakere eder
+- **Web yönetim arayüzü** — Yerleşik gösterge paneli, gözatma, arama, bilgi grafiği görselleştirme, AI soru-cevap, topluluk gözatma, kalite bakımı, toplu içe aktarma, çalışma zamanı ayarları
+- **Çok dilli destek (i18n)** — Yanıt mesajları 33 dili destekler (zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr vb. dahil; zh-TW/en/zh-CN/ja elle yazılmış, geri kalanlar generated katmanı tarafından sağlanmaktadır); MCP araçları `SERVER_LANG`'a, REST API ise HTTP `Accept-Language`'e göre otomatik olarak müzakere eder
 - **Koyu/açık tema** — Web arayüzü tema değiştirmeyi destekler
 - **Güvenli mod** — Varlık çıkarımını atlayan hızlı bellek eklemesi seçilebilir
 - **Docker desteği** — Yerleşik Dockerfile, konteynerli dağıtımı destekler
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Ana giriş — MCP araç tanımları (19 araç)
 ├── src/
 │   ├── config.py                 # Yapılandırma yönetimi (GraphitiConfig, JSON/.env katmanlamayı destekler)
-│   ├── web_api.py                # Web yönetim arayüzü REST API (20+ uç nokta)
+│   ├── web_api.py                # Web yönetim arayüzü REST API (30+ uç nokta)
 │   ├── ollama_graphiti_client.py  # Ollama LLM istemcisi (çift model dağıtımı)
-│   ├── glm_client.py             # GLM (Zhipu AI) LLM istemcisi (OpenAI uyumlu API)
-│   ├── openrouter_client.py      # OpenRouter LLM istemcisi (çeşitli modelleri toplar)
-│   ├── deepseek_client.py        # DeepSeek LLM istemcisi (json_object + güvence json koruması)
+│   ├── openai_compat_client.py   # OpenAI uyumlu LLM temel sınıfı (json_object + basitleştirilmiş şema + json güvence koruması)
+│   ├── glm_client.py             # GLM (Zhipu AI) LLM istemcisi (OpenAICompatClient'tan türetilmiş)
+│   ├── openrouter_client.py      # OpenRouter LLM istemcisi (OpenAICompatClient'tan türetilmiş)
+│   ├── deepseek_client.py        # DeepSeek LLM istemcisi (OpenAICompatClient'tan türetilmiş)
 │   ├── ollama_embedder.py        # Ollama gömme modeli adaptörü
 │   ├── content_preprocessor.py   # Akıllı içerik bölütleme (uzun metin otomatik parçalama)
 │   ├── deduplication.py          # Bellek tekilleştirme (kosinüs benzerliği karşılaştırması)
 │   ├── importance.py             # Önem takibi ve akıllı unutma
 │   ├── safe_memory_add.py        # Güvenli bellek ekleme (varlık çıkarımını atlar)
+│   ├── task_store.py             # Arka plan görevi SQLite kalıcı depolama (TaskStore)
 │   ├── timezone_utils.py         # Saat dilimi dönüştürme (UTC→yerel saat dilimi gösterimi)
 │   ├── i18n.py                   # Arka uç çok dilli destek (REST Accept-Language'e, MCP SERVER_LANG'e göre)
+│   ├── i18n_generated.py         # Otomatik oluşturulan dil katmanı geçersiz kılmaları (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Yapılandırılmış istisna işleme (12 istisna sınıfı)
 │   └── logging_setup.py          # Günlük sistemi (zaman tabanlı döndürme + performans izleme)
 ├── web/                          # Web yönetim arayüzü ön ucu (SPA, build yok)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API sarmalayıcısı
 │       ├── components.js         # UI bileşeni render (topluluk sayfası dahil)
 │       └── app.js                # SPA yönlendirme, durum yönetimi
-├── tests/                        # Test paketi (183 test)
+├── tests/                        # Test paketi (203 test)
 │   ├── test_content_preprocessor.py  # Bölütleme mantığı testi (17 adet)
 │   ├── test_new_features.py      # Yeni özellik testi (32 adet)
-│   ├── test_i18n.py             # Çok dilli destek testi (37 adet)
+│   ├── test_i18n.py             # Çok dilli destek testi (57 adet)
 │   ├── test_unit.py              # Birim testi
 │   ├── test_web_api.py           # Web API testi
 │   ├── test_web_ui_features.py   # Web UI işlev testi
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Yapılandırma doğrulaması
 │   ├── performance_diagnose.py   # Performans tanılaması
 │   ├── inspect_schema.py         # Neo4j yapı kontrolü
-│   └── batch_reprocess.py        # Toplu yeniden işleme
+│   ├── batch_reprocess.py        # Toplu yeniden işleme
+│   └── migrate_embeddings.py     # Embedding model taşıması (model değiştirildikten sonra vektörleri yeniden oluştur)
 ├── docs/                         # Belgeler
 ├── logs/                         # Günlükler (zaman tabanlı döndürme, varsayılan 30 gün saklanır)
 ├── Dockerfile                    # Docker konteynerli dağıtım
@@ -483,7 +487,9 @@ HTTP modunda `http://localhost:8000/` adresine erişerek kullanabilirsiniz.
 - Grup yönetimi — Gruba göre filtreleme, toplu silme
 - Bilgi grafiği görselleştirme — Düğüm ilişkilerinin grafiksel gösterimi
 - AI soru-cevap — Bilgi grafiğine dayalı akıllı soru-cevap
-- Kalite analizi — Bellek kalitesi ve kapsama analizi
+- Kalite bakımı — Bellek kalitesi metrikleri ve temizleme araçları
+- Toplu içe aktarma — Tek seferde birden fazla bellek parçası içe aktarma (JSON, tek seferinde 500 kayıt sınırı)
+- Çalışma zamanı ayarları — Geçerli ayarları görüntüleme ve yeniden başlatmadan bazı parametreleri ayarlama
 - Tema değiştirme — Koyu/açık tema
 
 **REST API:**
@@ -492,20 +498,33 @@ HTTP modunda `http://localhost:8000/` adresine erişerek kullanabilirsiniz.
 |------|------|------|
 | `/api/stats` | GET | Gösterge paneli istatistikleri |
 | `/api/groups` | GET | Tüm group_id'leri al |
+| `/api/groups/stats` | GET | Her grup için düğüm/gerçek/parça istatistikleri |
 | `/api/nodes` | GET | Varlık düğümlerini gözat (sayfalı) |
 | `/api/facts` | GET | Gerçekleri gözat (sayfalı) |
 | `/api/episodes` | GET | Bellek parçalarını gözat (sayfalı) |
+| `/api/nodes/{uuid}/relations` | GET | Düğümün gelen/giden kenar ilişkilerini al |
 | `/api/search/nodes` | GET | Vektör araması ile düğüm ara |
 | `/api/search/facts` | GET | Vektör araması ile gerçek ara |
+| `/api/search/episodes` | GET | Bellek parçalarını ara |
 | `/api/search/advanced` | GET | Gelişmiş arama (16 strateji) |
 | `/api/communities` | GET | Topluluk düğümlerini gözat (sayfalı) |
 | `/api/communities/build` | POST | Topluluk oluşturmayı tetikle |
+| `/api/memory/add` | POST | Tekil bellek ekle |
 | `/api/memory/add-bulk` | POST | Toplu bellek ekle |
 | `/api/memory/add-triplet` | POST | Üçlü ekle |
+| `/api/import/episodes` | POST | Bellek parçalarını toplu içe aktar (JSON, tek seferinde 500 kayıt sınırı) |
 | `/api/memory/tasks` | GET | Arka plan görevlerini listele (durum filtresi destekler) |
 | `/api/memory/tasks/{id}` | GET | Tek görev durumunu sorgula |
+| `/api/timeline` | GET | Zaman çizelgesi gözatma |
+| `/api/graph/subgraph` | GET | Alt grafı al (görselleştirme) |
+| `/api/graph/all` | GET | Tam grafı al (görselleştirme) |
+| `/api/ask` | GET | AI soru-cevap (grafik tabanlı arama) |
+| `/api/analytics/top-nodes` | GET | Yüksek bağlantılı/yüksek erişimli düğümler |
+| `/api/analytics/quality` | GET | Bilgi grafiği kalite metrikleri |
 | `/api/analytics/stale` | GET | Eski bellekleri sorgula |
 | `/api/analytics/cleanup` | POST | Eski bellekleri temizle |
+| `/api/config` | GET | Geçerli ayarları al (API anahtarı hariç) |
+| `/api/config` | PATCH | Çalışma zamanında değiştirilebilir ayarları güncelle (yalnızca mevcut süreç için geçerli, yeniden başlatmada sıfırlanır) |
 | `/api/nodes/{uuid}` | DELETE | Düğümü sil |
 | `/api/episodes/{uuid}` | DELETE | Bellek parçasını sil |
 | `/api/facts/{uuid}` | DELETE | Gerçeği sil |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # Akıllı bölütlemeyi tetikleyen karakte
 GRAPHITI_MAX_CHUNK_SIZE=600          # Her parçanın maksimum karakter sayısı
 GRAPHITI_MAX_COROUTINES=10            # Maksimum eşzamanlı coroutine sayısı
 GRAPHITI_DEFAULT_BACKGROUND=false    # Varsayılan olarak arka planda işlenip işlenmeyeceği
+TASK_DB_PATH=data/tasks.db           # Arka plan görevi SQLite kalıcı depolama yolu
 
 # === Önem takibi ve akıllı unutma (isteğe bağlı) ===
 ENABLE_IMPORTANCE_TRACKING=true      # Erişim takibini etkinleştir
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Test
 
 ```bash
-# Tüm testleri çalıştır (183 adet, yaklaşık 1 saniye)
+# Tüm testleri çalıştır (203 adet, yaklaşık 1 saniye)
 uv run python -m pytest tests/
 
 # Ayrıntılı çıktı

@@ -13,7 +13,7 @@ Utvecklad som en utökning av [getzep/graphiti](https://github.com/getzep/graphi
 - **Embedding frikopplat från LLM** — du kan ange inbäddaren separat med `EMBEDDING_PROVIDER`; moln-LLM faller automatiskt tillbaka till lokal `bge-m3`
 - **Dubbel modellfördelning** — i Ollama-läge används huvudmodellen för komplexa uppgifter, medan enklare uppgifter automatiskt växlar till en mindre modell för bättre prestanda
 - **Intelligent innehållssegmentering** — långa texter delas automatiskt upp i segment, vilket minskar LLM-belastningen (tröskelvärde kan konfigureras)
-- **Bakgrundsbearbetning av minne** — minnestillägg kan köras i bakgrunden så att MCP-anropet returnerar omedelbart
+- **Bakgrundsbearbetning av minne** — minnestillägg kan köras i bakgrunden så att MCP-anropet returnerar omedelbart; uppgiftsstatus sparas i SQLite och ofullständiga uppgifter återställs automatiskt efter omstart
 - **Minnesdeduplicering** — upptäcker automatiskt befintliga minnen som är mycket lika, för att undvika dubbellagring
 - **Konfliktdetektering** — upptäcker motstridiga fakta mellan två entiteter och identifierar inaktuell respektive giltig information
 - **Communitydetektering** — klustrar automatiskt relaterade entiteter baserat på Label Propagation-algoritmen
@@ -21,8 +21,8 @@ Utvecklad som en utökning av [getzep/graphiti](https://github.com/getzep/graphi
 - **Intelligent glömska** — identifierar och rensar inaktuella minnen med låg åtkomstfrekvens för att hålla grafen kompakt
 - **Bulkimport** — skicka in flera minnen på en gång, lämpligt för migrering av stora datamängder
 - **Strukturerade trippletter** — lägg till "subjekt-relation-objekt" direkt, hoppa över LLM-extraktion och slutför på sekunder
-- **Webbaserat administrationsgränssnitt** — inbyggd instrumentpanel, bläddring, sökning, visualisering av kunskapsgraf, AI-frågor och communitybläddring
-- **Internationalisering (i18n)** — svarsmeddelanden stöder 30+ locale (inklusive zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr m.fl.); MCP-verktyg följer `SERVER_LANG`, REST API förhandlar automatiskt via HTTP `Accept-Language`
+- **Webbaserat administrationsgränssnitt** — inbyggd instrumentpanel, bläddring, sökning, visualisering av kunskapsgraf, AI-frågor, communitybläddring, kvalitetsunderhåll, bulkimport och körningsinställningar
+- **Internationalisering (i18n)** — svarsmeddelanden stöder 33 språk (inklusive zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr m.fl.; zh-TW/en/zh-CN/ja är handskrivna, övriga tillhandahålls av det genererade lagret); MCP-verktyg följer `SERVER_LANG`, REST API förhandlar automatiskt via HTTP `Accept-Language`
 - **Mörkt/ljust tema** — webbgränssnittet stöder temaväxling
 - **Säkert läge** — alternativ för snabbt minnestillägg som hoppar över entitetsextraktion
 - **Docker-stöd** — inbyggd Dockerfile med stöd för containeriserad driftsättning
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Huvudingång — MCP-verktygsdefinitioner (19 verktyg)
 ├── src/
 │   ├── config.py                 # Konfigurationshantering (GraphitiConfig, stöder överlagring av JSON/.env)
-│   ├── web_api.py                # REST API för webbaserat administrationsgränssnitt (20+ slutpunkter)
+│   ├── web_api.py                # REST API för webbaserat administrationsgränssnitt (30+ slutpunkter)
 │   ├── ollama_graphiti_client.py  # Ollama LLM-klient (dubbel modellfördelning)
-│   ├── glm_client.py             # GLM (Zhipu AI) LLM-klient (OpenAI-kompatibelt API)
-│   ├── openrouter_client.py      # OpenRouter LLM-klient (aggregerar modeller från olika leverantörer)
-│   ├── deepseek_client.py        # DeepSeek LLM-klient (json_object + inbyggt json-skydd)
+│   ├── openai_compat_client.py   # OpenAI-kompatibel LLM-basklass (json_object + förenklat schema + json-skyddsmekanism)
+│   ├── glm_client.py             # GLM (Zhipu AI) LLM-klient (ärver OpenAICompatClient)
+│   ├── openrouter_client.py      # OpenRouter LLM-klient (ärver OpenAICompatClient)
+│   ├── deepseek_client.py        # DeepSeek LLM-klient (ärver OpenAICompatClient)
 │   ├── ollama_embedder.py        # Adapter för Ollama-inbäddningsmodell
 │   ├── content_preprocessor.py   # Intelligent innehållssegmentering (automatisk segmentering av lång text)
 │   ├── deduplication.py          # Minnesdeduplicering (cosinuslikhetsjämförelse)
 │   ├── importance.py             # Viktighetsspårning och intelligent glömska
 │   ├── safe_memory_add.py        # Säkert minnestillägg (hoppar över entitetsextraktion)
+│   ├── task_store.py             # SQLite-persistens för bakgrundsuppgifter (TaskStore)
 │   ├── timezone_utils.py         # Tidszonskonvertering (UTC→visning i lokal tidszon)
 │   ├── i18n.py                   # Backend-internationalisering (REST följer Accept-Language, MCP följer SERVER_LANG)
+│   ├── i18n_generated.py         # Automatiskt genererade språköversättningar (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Strukturerad undantagshantering (12 undantagsklasser)
 │   └── logging_setup.py          # Loggsystem (tidsrotation + prestandaövervakning)
 ├── web/                          # Frontend för webbaserat administrationsgränssnitt (SPA, ingen build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # REST API-inkapsling
 │       ├── components.js         # Rendering av UI-komponenter (inkl. communitysida)
 │       └── app.js                # SPA-routing, tillståndshantering
-├── tests/                        # Testsvit (183 tester)
+├── tests/                        # Testsvit (203 tester)
 │   ├── test_content_preprocessor.py  # Test av segmenteringslogik (17 st)
 │   ├── test_new_features.py      # Test av nya funktioner (32 st)
-│   ├── test_i18n.py             # Internationaliseringstest (37 st)
+│   ├── test_i18n.py             # Internationaliseringstest (57 st)
 │   ├── test_unit.py              # Enhetstester
 │   ├── test_web_api.py           # Web API-tester
 │   ├── test_web_ui_features.py   # Test av Web UI-funktioner
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Konfigurationsvalidering
 │   ├── performance_diagnose.py   # Prestandadiagnostik
 │   ├── inspect_schema.py         # Kontroll av Neo4j-struktur
-│   └── batch_reprocess.py        # Bearbetning i batch på nytt
+│   ├── batch_reprocess.py        # Bearbetning i batch på nytt
+│   └── migrate_embeddings.py     # Migrering av Embedding-modell
 ├── docs/                         # Dokumentation
 ├── logs/                         # Loggar (tidsrotation, behålls i 30 dagar som standard)
 ├── Dockerfile                    # Docker-containeriserad driftsättning
@@ -483,7 +487,9 @@ I HTTP-läge når du det genom att besöka `http://localhost:8000/`.
 - Grupphantering — filtrera per grupp, ta bort i batch
 - Visualisering av kunskapsgraf — grafisk presentation av nodrelationer
 - AI-frågor — intelligent frågefunktion baserad på kunskapsgrafen
-- Kvalitetsanalys — analys av minneskvalitet och täckning
+- Kvalitetsunderhåll — minneskvalitetsmätningar och rensningsverktyg
+- Bulkimport — importera flera minnessegment på en gång (JSON, max 500 poster per omgång)
+- Körningsinställningar — visa aktuella inställningar och justera vissa parametrar utan omstart
 - Temaväxling — mörkt/ljust tema
 
 **REST API:**
@@ -492,20 +498,33 @@ I HTTP-läge når du det genom att besöka `http://localhost:8000/`.
 |------|------|------|
 | `/api/stats` | GET | Statistik för instrumentpanel |
 | `/api/groups` | GET | Hämta alla group_id |
+| `/api/groups/stats` | GET | Statistik per grupp (noder/fakta/segment) |
 | `/api/nodes` | GET | Bläddra bland entitetsnoder (paginerat) |
 | `/api/facts` | GET | Bläddra bland fakta (paginerat) |
 | `/api/episodes` | GET | Bläddra bland minnessegment (paginerat) |
+| `/api/nodes/{uuid}/relations` | GET | Hämta en nods inkommande/utgående kantrelationer |
 | `/api/search/nodes` | GET | Vektorsök noder |
 | `/api/search/facts` | GET | Vektorsök fakta |
+| `/api/search/episodes` | GET | Sök minnessegment |
 | `/api/search/advanced` | GET | Avancerad sökning (16 strategier) |
 | `/api/communities` | GET | Bläddra bland communitynoder (paginerat) |
 | `/api/communities/build` | POST | Utlös communitybyggnad |
+| `/api/memory/add` | POST | Lägg till ett enskilt minne |
 | `/api/memory/add-bulk` | POST | Lägg till minnen i batch |
 | `/api/memory/add-triplet` | POST | Lägg till tripplett |
+| `/api/import/episodes` | POST | Bulkimportera minnessegment (JSON, max 500 poster) |
 | `/api/memory/tasks` | GET | Lista bakgrundsuppgifter (stöder statusfiltrering) |
 | `/api/memory/tasks/{id}` | GET | Fråga om status för en enskild uppgift |
+| `/api/timeline` | GET | Tidslinjevy |
+| `/api/graph/subgraph` | GET | Hämta undergraf (visualisering) |
+| `/api/graph/all` | GET | Hämta fullständig graf (visualisering) |
+| `/api/ask` | GET | AI-frågor (baserat på grafretrieval) |
+| `/api/analytics/top-nodes` | GET | Noder med hög anslutningsgrad/åtkomst |
+| `/api/analytics/quality` | GET | Kvalitetsmätningar för kunskapsgrafen |
 | `/api/analytics/stale` | GET | Sök inaktuella minnen |
 | `/api/analytics/cleanup` | POST | Rensa inaktuella minnen |
+| `/api/config` | GET | Hämta aktuella inställningar (utan API-nycklar) |
+| `/api/config` | PATCH | Uppdatera ändringsbara inställningar under körning (gäller endast aktuell process, återställs vid omstart) |
 | `/api/nodes/{uuid}` | DELETE | Ta bort nod |
 | `/api/episodes/{uuid}` | DELETE | Ta bort minnessegment |
 | `/api/facts/{uuid}` | DELETE | Ta bort fakta |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # Teckentröskel som utlöser intelligent s
 GRAPHITI_MAX_CHUNK_SIZE=600          # Maximalt antal tecken per segment
 GRAPHITI_MAX_COROUTINES=10            # Maximalt antal samtidiga coroutiner
 GRAPHITI_DEFAULT_BACKGROUND=false    # Om bakgrundsbearbetning ska vara standard
+TASK_DB_PATH=data/tasks.db           # SQLite-persistenssökväg för bakgrundsuppgifter
 
 # === Viktighetsspårning och intelligent glömska (valfritt) ===
 ENABLE_IMPORTANCE_TRACKING=true      # Aktivera åtkomstspårning
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Testning
 
 ```bash
-# Kör alla tester (183 st, cirka 1 sekund)
+# Kör alla tester (203 st, cirka 1 sekund)
 uv run python -m pytest tests/
 
 # Detaljerad utdata

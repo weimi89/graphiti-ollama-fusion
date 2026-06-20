@@ -13,7 +13,7 @@ Phát triển mở rộng dựa trên [getzep/graphiti](https://github.com/getze
 - **Tách rời Embedding và LLM** — có thể dùng `EMBEDDING_PROVIDER` để chỉ định bộ embedding độc lập, LLM đám mây tự động dự phòng về `bge-m3` cục bộ
 - **Phân luồng mô hình kép** — ở chế độ Ollama, tác vụ phức tạp dùng mô hình chính, tác vụ đơn giản tự động chuyển sang mô hình nhỏ để tăng hiệu suất
 - **Phân đoạn nội dung thông minh** — văn bản dài tự động được phân đoạn xử lý, giảm tải cho LLM (ngưỡng có thể cấu hình)
-- **Xử lý bộ nhớ nền** — việc thêm bộ nhớ có thể chạy ở chế độ nền, lời gọi MCP trả về ngay lập tức
+- **Xử lý bộ nhớ nền** — việc thêm bộ nhớ có thể chạy ở chế độ nền, lời gọi MCP trả về ngay lập tức; trạng thái tác vụ được lưu trữ bền vững bằng SQLite, tự động khôi phục các tác vụ chưa hoàn thành sau khi khởi động lại
 - **Khử trùng lặp bộ nhớ** — tự động phát hiện các bộ nhớ hiện có có độ tương đồng cao, tránh lưu trữ trùng lặp
 - **Phát hiện xung đột** — phát hiện các sự kiện mâu thuẫn giữa hai thực thể, nhận diện thông tin đã hết hiệu lực và còn hiệu lực
 - **Phát hiện cộng đồng** — tự động phân cụm các thực thể liên quan dựa trên thuật toán Label Propagation
@@ -21,8 +21,8 @@ Phát triển mở rộng dựa trên [getzep/graphiti](https://github.com/getze
 - **Lãng quên thông minh** — nhận diện và dọn dẹp các bộ nhớ đã lỗi thời, ít được truy cập, giữ cho đồ thị gọn gàng
 - **Nhập hàng loạt** — gửi nhiều bộ nhớ cùng một lúc, thích hợp cho việc di chuyển dữ liệu khối lượng lớn
 - **Bộ ba có cấu trúc** — thêm trực tiếp "chủ thể - quan hệ - khách thể", bỏ qua quá trình trích xuất của LLM, hoàn thành trong tích tắc
-- **Giao diện quản lý Web** — tích hợp bảng điều khiển, duyệt, tìm kiếm, trực quan hóa đồ thị tri thức, hỏi đáp AI, duyệt cộng đồng
-- **Đa ngôn ngữ (i18n)** — thông điệp phản hồi hỗ trợ hơn 30 locale (gồm zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr v.v.); công cụ MCP theo `SERVER_LANG`, REST API tự động đàm phán theo HTTP `Accept-Language`
+- **Giao diện quản lý Web** — tích hợp bảng điều khiển, duyệt, tìm kiếm, trực quan hóa đồ thị tri thức, hỏi đáp AI, duyệt cộng đồng, bảo trì chất lượng, nhập hàng loạt, cài đặt thời gian chạy
+- **Đa ngôn ngữ (i18n)** — thông điệp phản hồi hỗ trợ 33 ngôn ngữ (gồm zh-TW / en / zh-CN / ja / pt-BR / ko / es / de / fr v.v.; zh-TW/en/zh-CN/ja viết tay, phần còn lại do lớp generated cung cấp); công cụ MCP theo `SERVER_LANG`, REST API tự động đàm phán theo HTTP `Accept-Language`
 - **Chủ đề tối/sáng** — giao diện Web hỗ trợ chuyển đổi chủ đề
 - **Chế độ an toàn** — có thể chọn thêm bộ nhớ nhanh bằng cách bỏ qua việc trích xuất thực thể
 - **Hỗ trợ Docker** — tích hợp sẵn Dockerfile, hỗ trợ triển khai container hóa
@@ -189,18 +189,21 @@ graphiti/
 ├── graphiti_mcp_server.py        # Điểm vào chính — định nghĩa công cụ MCP (19 công cụ)
 ├── src/
 │   ├── config.py                 # Quản lý cấu hình (GraphitiConfig, hỗ trợ chồng lớp JSON/.env)
-│   ├── web_api.py                # REST API giao diện quản lý Web (20+ điểm cuối)
+│   ├── web_api.py                # REST API giao diện quản lý Web (30+ điểm cuối)
 │   ├── ollama_graphiti_client.py  # Client LLM Ollama (phân luồng mô hình kép)
-│   ├── glm_client.py             # Client LLM GLM (Zhipu AI) (API tương thích OpenAI)
-│   ├── openrouter_client.py      # Client LLM OpenRouter (tổng hợp các mô hình)
-│   ├── deepseek_client.py        # Client LLM DeepSeek (json_object + bảo vệ json dự phòng)
+│   ├── openai_compat_client.py   # Lớp cơ sở LLM tương thích OpenAI (json_object + schema đơn giản hóa + bảo vệ json dự phòng)
+│   ├── glm_client.py             # Client LLM GLM (Zhipu AI) (kế thừa OpenAICompatClient)
+│   ├── openrouter_client.py      # Client LLM OpenRouter (kế thừa OpenAICompatClient)
+│   ├── deepseek_client.py        # Client LLM DeepSeek (kế thừa OpenAICompatClient)
 │   ├── ollama_embedder.py        # Bộ điều hợp mô hình embedding Ollama
 │   ├── content_preprocessor.py   # Phân đoạn nội dung thông minh (văn bản dài tự động phân đoạn)
 │   ├── deduplication.py          # Khử trùng lặp bộ nhớ (so sánh độ tương đồng cosine)
 │   ├── importance.py             # Theo dõi mức độ quan trọng và lãng quên thông minh
 │   ├── safe_memory_add.py        # Thêm bộ nhớ an toàn (bỏ qua trích xuất thực thể)
+│   ├── task_store.py             # Lưu trữ bền vững tác vụ nền bằng SQLite (TaskStore)
 │   ├── timezone_utils.py         # Chuyển đổi múi giờ (UTC→hiển thị múi giờ cục bộ)
 │   ├── i18n.py                   # Đa ngôn ngữ phía backend (REST theo Accept-Language, MCP theo SERVER_LANG)
+│   ├── i18n_generated.py         # Ghi đè ngôn ngữ được tạo tự động (GENERATED_MESSAGE_OVERRIDES)
 │   ├── exceptions.py             # Xử lý ngoại lệ có cấu trúc (12 loại ngoại lệ)
 │   └── logging_setup.py          # Hệ thống nhật ký (xoay vòng theo thời gian + giám sát hiệu suất)
 ├── web/                          # Frontend giao diện quản lý Web (SPA, không build)
@@ -210,10 +213,10 @@ graphiti/
 │       ├── api.js                # Đóng gói REST API
 │       ├── components.js         # Kết xuất thành phần UI (gồm trang cộng đồng)
 │       └── app.js                # Định tuyến SPA, quản lý trạng thái
-├── tests/                        # Bộ kiểm thử (183 bài kiểm thử)
+├── tests/                        # Bộ kiểm thử (203 bài kiểm thử)
 │   ├── test_content_preprocessor.py  # Kiểm thử logic phân đoạn (17 bài)
 │   ├── test_new_features.py      # Kiểm thử tính năng mới (32 bài)
-│   ├── test_i18n.py             # Kiểm thử đa ngôn ngữ (37 bài)
+│   ├── test_i18n.py             # Kiểm thử đa ngôn ngữ (57 bài)
 │   ├── test_unit.py              # Kiểm thử đơn vị
 │   ├── test_web_api.py           # Kiểm thử Web API
 │   ├── test_web_ui_features.py   # Kiểm thử tính năng Web UI
@@ -224,7 +227,8 @@ graphiti/
 │   ├── validate_config.py        # Xác thực cấu hình
 │   ├── performance_diagnose.py   # Chẩn đoán hiệu suất
 │   ├── inspect_schema.py         # Kiểm tra cấu trúc Neo4j
-│   └── batch_reprocess.py        # Xử lý lại hàng loạt
+│   ├── batch_reprocess.py        # Xử lý lại hàng loạt
+│   └── migrate_embeddings.py     # Di chuyển mô hình Embedding (tạo lại vector sau khi đổi mô hình)
 ├── docs/                         # Tài liệu
 ├── logs/                         # Nhật ký (xoay vòng theo thời gian, mặc định giữ 30 ngày)
 ├── Dockerfile                    # Triển khai container hóa Docker
@@ -483,7 +487,9 @@ graphiti/
 - Quản lý Group — lọc theo nhóm, xóa hàng loạt
 - Trực quan hóa đồ thị tri thức — trình bày đồ họa quan hệ nút
 - Hỏi đáp AI — hỏi đáp thông minh dựa trên đồ thị tri thức
-- Phân tích chất lượng — phân tích chất lượng và độ bao phủ bộ nhớ
+- Bảo trì chất lượng — chỉ số chất lượng bộ nhớ và công cụ dọn dẹp
+- Nhập hàng loạt — nhập nhiều phân đoạn bộ nhớ cùng một lúc (JSON, giới hạn 500 bản mỗi lần)
+- Cài đặt thời gian chạy — xem cài đặt hiện hành và điều chỉnh một số tham số mà không cần khởi động lại
 - Chuyển đổi chủ đề — chủ đề tối/sáng
 
 **REST API:**
@@ -492,20 +498,33 @@ graphiti/
 |------|------|------|
 | `/api/stats` | GET | Thống kê bảng điều khiển |
 | `/api/groups` | GET | Lấy tất cả group_id |
+| `/api/groups/stats` | GET | Thống kê nút/sự kiện/phân đoạn theo từng group |
 | `/api/nodes` | GET | Duyệt nút thực thể (phân trang) |
 | `/api/facts` | GET | Duyệt sự kiện (phân trang) |
 | `/api/episodes` | GET | Duyệt phân đoạn bộ nhớ (phân trang) |
+| `/api/nodes/{uuid}/relations` | GET | Lấy quan hệ cạnh vào/ra của nút |
 | `/api/search/nodes` | GET | Tìm kiếm vector nút |
 | `/api/search/facts` | GET | Tìm kiếm vector sự kiện |
+| `/api/search/episodes` | GET | Tìm kiếm phân đoạn bộ nhớ |
 | `/api/search/advanced` | GET | Tìm kiếm nâng cao (16 chiến lược) |
 | `/api/communities` | GET | Duyệt nút cộng đồng (phân trang) |
 | `/api/communities/build` | POST | Kích hoạt xây dựng cộng đồng |
+| `/api/memory/add` | POST | Thêm bộ nhớ đơn lẻ |
 | `/api/memory/add-bulk` | POST | Thêm bộ nhớ hàng loạt |
 | `/api/memory/add-triplet` | POST | Thêm bộ ba |
+| `/api/import/episodes` | POST | Nhập hàng loạt phân đoạn bộ nhớ (JSON, giới hạn 500 bản mỗi lần) |
 | `/api/memory/tasks` | GET | Liệt kê tác vụ nền (hỗ trợ lọc theo trạng thái) |
 | `/api/memory/tasks/{id}` | GET | Truy vấn trạng thái tác vụ đơn lẻ |
+| `/api/timeline` | GET | Duyệt theo dòng thời gian |
+| `/api/graph/subgraph` | GET | Lấy đồ thị con (trực quan hóa) |
+| `/api/graph/all` | GET | Lấy toàn bộ đồ thị (trực quan hóa) |
+| `/api/ask` | GET | Hỏi đáp AI (dựa trên truy xuất đồ thị) |
+| `/api/analytics/top-nodes` | GET | Các nút có kết nối cao/truy cập nhiều |
+| `/api/analytics/quality` | GET | Chỉ số chất lượng đồ thị tri thức |
 | `/api/analytics/stale` | GET | Truy vấn bộ nhớ lỗi thời |
 | `/api/analytics/cleanup` | POST | Dọn dẹp bộ nhớ lỗi thời |
+| `/api/config` | GET | Lấy cài đặt hiện hành (không bao gồm API key) |
+| `/api/config` | PATCH | Cập nhật cài đặt có thể thay đổi khi chạy (chỉ có hiệu lực trong tiến trình hiện tại, khởi động lại sẽ khôi phục) |
 | `/api/nodes/{uuid}` | DELETE | Xóa nút |
 | `/api/episodes/{uuid}` | DELETE | Xóa phân đoạn bộ nhớ |
 | `/api/facts/{uuid}` | DELETE | Xóa sự kiện |
@@ -567,6 +586,7 @@ GRAPHITI_CHUNK_THRESHOLD=800         # Ngưỡng số ký tự kích hoạt phâ
 GRAPHITI_MAX_CHUNK_SIZE=600          # Số ký tự tối đa mỗi đoạn
 GRAPHITI_MAX_COROUTINES=10            # Số coroutine đồng thời tối đa
 GRAPHITI_DEFAULT_BACKGROUND=false    # Có mặc định xử lý nền hay không
+TASK_DB_PATH=data/tasks.db           # Đường dẫn lưu trữ bền vững tác vụ nền bằng SQLite
 
 # === Theo dõi mức độ quan trọng và lãng quên thông minh (tùy chọn) ===
 ENABLE_IMPORTANCE_TRACKING=true      # Bật theo dõi truy cập
@@ -668,7 +688,7 @@ docker run -p 8000:8000 \
 ## Kiểm thử
 
 ```bash
-# Chạy tất cả bài kiểm thử (183 bài, khoảng 1 giây)
+# Chạy tất cả bài kiểm thử (203 bài, khoảng 1 giây)
 uv run python -m pytest tests/
 
 # Đầu ra chi tiết
