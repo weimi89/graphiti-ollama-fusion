@@ -567,6 +567,76 @@ class TestSafeModeSearchability:
         assert result["searchable"] is False
 
 
+class TestDedupEmbeddingFix:
+    """測試記憶去重的嵌入修正（store_episode_embedding + check_episode_similarity）。"""
+
+    def _mock_driver(self, session):
+        from unittest.mock import AsyncMock, MagicMock
+        driver = MagicMock()
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=session)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        driver.session.return_value = cm
+        return driver
+
+    def test_store_episode_embedding_uses_str_and_full_vector(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        from src.deduplication import store_episode_embedding
+
+        embedder = MagicMock()
+        embedder.create = AsyncMock(return_value=[0.1] * 1024)
+        session = AsyncMock()
+        driver = self._mock_driver(session)
+
+        asyncio.run(store_episode_embedding(driver, embedder, "uuid-1", "hello content"))
+
+        # 關鍵：create 以 str 呼叫（非 list[dict]），存入完整向量
+        embedder.create.assert_awaited_once_with("hello content")
+        session.run.assert_awaited_once()
+        _, kwargs = session.run.call_args
+        # session.run(query, params) — params 為第 2 位置引數
+        params = session.run.call_args.args[1]
+        assert params["emb"] == [0.1] * 1024
+        assert params["uuid"] == "uuid-1"
+
+    def test_store_episode_embedding_skips_empty(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        from src.deduplication import store_episode_embedding
+        embedder = MagicMock()
+        embedder.create = AsyncMock(return_value=[0.1] * 1024)
+        driver = MagicMock()
+        asyncio.run(store_episode_embedding(driver, embedder, "", "content"))
+        asyncio.run(store_episode_embedding(driver, embedder, "uuid", ""))
+        embedder.create.assert_not_awaited()
+
+    def test_check_similarity_uses_str_create_and_computes(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        from src.deduplication import check_episode_similarity
+
+        # new content 嵌入與既有 episode 嵌入相同 → 相似度 1.0 → 視為重複
+        vec = [1.0, 0.0, 0.0]
+        embedder = MagicMock()
+        embedder.create = AsyncMock(return_value=vec)
+
+        async def _aiter(records):
+            for r in records:
+                yield r
+        records = [{"uuid": "u1", "name": "dup", "embedding": vec}]
+        session = AsyncMock()
+        session.run = AsyncMock(return_value=_aiter(records))
+        driver = self._mock_driver(session)
+
+        res = asyncio.run(check_episode_similarity(
+            driver, embedder, "some content", "g", threshold=0.9
+        ))
+        embedder.create.assert_awaited_once_with("some content")
+        assert res.is_duplicate is True
+        assert res.max_similarity == 1.0
+
+
 # ============================================================
 # _build_search_filters 測試
 # ============================================================

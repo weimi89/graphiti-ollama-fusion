@@ -130,7 +130,7 @@ from graphiti_core.utils.bulk_utils import RawEpisode
 from src.content_preprocessor import smart_chunk, should_chunk
 
 # 載入新功能模組
-from src.deduplication import check_episode_similarity
+from src.deduplication import check_episode_similarity, store_episode_embedding
 from src.importance import update_access_metadata, get_stale_entities, cleanup_stale_entities
 
 # ============================================================================
@@ -1152,7 +1152,7 @@ async def _add_memory_full_mode(
 
     if not chunk_result.was_chunked:
         # 不需切分，直接處理
-        await graphiti.add_episode(
+        result = await graphiti.add_episode(
             name=name,
             episode_body=episode_body,
             source_description=source_description,
@@ -1162,6 +1162,13 @@ async def _add_memory_full_mode(
             uuid=episode_uuid,
             **add_episode_kwargs,
         )
+
+        # 為新 Episodic 補存 content 嵌入（供去重比對），fire-and-forget 不阻塞
+        episode = getattr(result, "episode", None)
+        if episode is not None:
+            asyncio.create_task(store_episode_embedding(
+                graphiti.driver, graphiti.embedder, episode.uuid, episode_body
+            ))
 
         duration = time.time() - start_time
         log_operation_success("add_memory_full", duration, name=name)
@@ -1194,11 +1201,18 @@ async def _add_memory_full_mode(
         for i, chunk in enumerate(chunk_result.chunks, 1)
     ]
 
-    await graphiti.add_episode_bulk(
+    bulk_result = await graphiti.add_episode_bulk(
         bulk_episodes=raw_episodes,
         group_id=group_id,
         **add_episode_kwargs,
     )
+
+    # 為新 Episodic 補存 content 嵌入（供去重比對），fire-and-forget 不阻塞
+    bulk_episodes_out = getattr(bulk_result, "episodes", None) or []
+    for ep, chunk in zip(bulk_episodes_out, chunk_result.chunks):
+        asyncio.create_task(store_episode_embedding(
+            graphiti.driver, graphiti.embedder, ep.uuid, chunk
+        ))
 
     duration = time.time() - start_time
     log_operation_success("add_memory_full_chunked", duration, name=name, chunks=total_chunks)
