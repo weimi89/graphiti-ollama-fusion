@@ -839,3 +839,94 @@ class TestMCPInstructions:
             "cleanup_stale_memories",
         ]:
             assert tool in GRAPHITI_MCP_INSTRUCTIONS, f"說明缺少工具: {tool}"
+
+
+class TestPostRerank:
+    """post-retrieval 重排（_apply_rerank）：用 stub cross-encoder 驗排序與降級。
+
+    背景：評估框架實測 BGE post-rerank 使 node recall@10 0.808→0.949、
+    MRR 0.460→0.819；LLM 重排有害。_apply_rerank 在 RRF 候選池與 top_k
+    截斷之間，依 cross-encoder 相關性分數重排，任何失敗/未啟用都回原序。
+    """
+
+    def _nodes(self):
+        return [
+            SimpleNamespace(name="A", summary="sa", uuid="u1"),
+            SimpleNamespace(name="B", summary="sb", uuid="u2"),
+            SimpleNamespace(name="C", summary="sc", uuid="u3"),
+        ]
+
+    def test_reorders_by_reranker_output(self, monkeypatch):
+        import asyncio
+        import graphiti_mcp_server as server
+
+        class StubReranker:
+            async def rank(self, query, passages):
+                # 把 query 相關性最高的排前面：這裡固定回 C, A, B 的 passage 順序
+                by_name = {p.split(":")[0].strip(): p for p in passages}
+                return [(by_name["C"], 0.9), (by_name["A"], 0.5), (by_name["B"], 0.1)]
+
+        monkeypatch.setattr(server, "_get_search_reranker", lambda: StubReranker())
+        out = asyncio.run(server._apply_rerank("q", self._nodes(), "node"))
+        assert [n.uuid for n in out] == ["u3", "u1", "u2"]
+
+    def test_no_reranker_keeps_order(self, monkeypatch):
+        import asyncio
+        import graphiti_mcp_server as server
+
+        monkeypatch.setattr(server, "_get_search_reranker", lambda: None)
+        out = asyncio.run(server._apply_rerank("q", self._nodes(), "node"))
+        assert [n.uuid for n in out] == ["u1", "u2", "u3"]
+
+    def test_reranker_failure_keeps_order(self, monkeypatch):
+        import asyncio
+        import graphiti_mcp_server as server
+
+        class BoomReranker:
+            async def rank(self, query, passages):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(server, "_get_search_reranker", lambda: BoomReranker())
+        out = asyncio.run(server._apply_rerank("q", self._nodes(), "node"))
+        assert [n.uuid for n in out] == ["u1", "u2", "u3"]  # 降級回原序，不拋錯
+
+    def test_single_item_short_circuits(self, monkeypatch):
+        import asyncio
+        import graphiti_mcp_server as server
+
+        called = {"n": 0}
+
+        class CountReranker:
+            async def rank(self, query, passages):
+                called["n"] += 1
+                return [(p, 1.0) for p in passages]
+
+        monkeypatch.setattr(server, "_get_search_reranker", lambda: CountReranker())
+        one = [SimpleNamespace(name="A", summary="sa", uuid="u1")]
+        out = asyncio.run(server._apply_rerank("q", one, "node"))
+        assert [n.uuid for n in out] == ["u1"]
+        assert called["n"] == 0  # 單筆不呼叫 reranker
+
+    def test_edge_passage_uses_fact(self):
+        from graphiti_mcp_server import _rerank_passage
+
+        edge = SimpleNamespace(fact="X 任職於 Y", name="WORKS_AT")
+        node = SimpleNamespace(name="黑貓", summary="物流業者")
+        assert _rerank_passage(edge, "edge") == "X 任職於 Y"
+        assert "黑貓" in _rerank_passage(node, "node")
+        assert "物流業者" in _rerank_passage(node, "node")
+
+
+class TestRerankSearchConfig:
+    """rerank_search 配置欄位與環境變數覆寫。"""
+
+    def test_default_true(self):
+        from src.config import CrossEncoderConfig
+        assert CrossEncoderConfig().rerank_search is True
+
+    def test_env_override_false(self, monkeypatch):
+        from src.config import GraphitiConfig, _load_graphiti_settings
+        monkeypatch.setenv("RERANK_SEARCH", "false")
+        cfg = GraphitiConfig()
+        _load_graphiti_settings(cfg)
+        assert cfg.cross_encoder.rerank_search is False

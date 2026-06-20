@@ -265,14 +265,19 @@ def _recipe_domain(recipe: str) -> str:
     return "node"  # node_* 與 combined_*
 
 
-def _extract_ranked(res, recipe: str):
-    """從 search_ 結果依 recipe 領域取出排序後的 uuid 清單。"""
+def _extract_objects(res, recipe: str):
+    """從 search_ 結果依 recipe 領域取出排序後的物件清單。"""
     domain = _recipe_domain(recipe)
     if domain == "edge":
-        return [str(e.uuid) for e in (res.edges or [])]
+        return list(res.edges or [])
     if domain == "community":
-        return [str(c.uuid) for c in (res.communities or [])]
-    return [str(n.uuid) for n in (res.nodes or [])]
+        return list(res.communities or [])
+    return list(res.nodes or [])
+
+
+def _extract_ranked(res, recipe: str):
+    """從 search_ 結果依 recipe 領域取出排序後的 uuid 清單。"""
+    return [str(o.uuid) for o in _extract_objects(res, recipe)]
 
 
 def _item_kind_for_domain(domain: str) -> str:
@@ -280,12 +285,15 @@ def _item_kind_for_domain(domain: str) -> str:
     return "edge" if domain == "edge" else "node"
 
 
-async def _evaluate(graphiti, server, golden, recipes, k, mmr_lambda, sim_min_score, verbose):
+async def _evaluate(graphiti, server, golden, recipes, k, mmr_lambda, sim_min_score, verbose, pool=None, post_rerank=False):
     """對每個 recipe 跑 golden set。
 
     回傳 (metrics, raw)：
       metrics: RecipeMetrics 清單（跨全部樣本彙總）
       raw: {recipe: [(group_id, ranked, target_uuid), ...]}，供 per-group 拆解
+
+    pool: 候選池大小（config.limit）。None 時用 max(k,10)；設大於 k 可測重排把
+          池中第 k+1~pool 名拉進 top-k 的效果。
     """
     from src.search_eval import compute_metrics
 
@@ -300,7 +308,7 @@ async def _evaluate(graphiti, server, golden, recipes, k, mmr_lambda, sim_min_sc
             continue
 
         config = server.SEARCH_RECIPES[recipe_name].model_copy(deep=True)
-        config.limit = max(k, 10)
+        config.limit = pool if pool else max(k, 10)
         if mmr_lambda is not None or sim_min_score is not None:
             server._apply_search_tuning(config, sim_min_score=sim_min_score, mmr_lambda=mmr_lambda)
 
@@ -311,7 +319,12 @@ async def _evaluate(graphiti, server, golden, recipes, k, mmr_lambda, sim_min_sc
                 res = await graphiti.search_(
                     query=item.query, config=config, group_ids=[item.group_id]
                 )
-                ranked = _extract_ranked(res, recipe_name)
+                if post_rerank:
+                    objs = _extract_objects(res, recipe_name)
+                    objs = await server._apply_rerank(item.query, objs, want_kind)
+                    ranked = [str(o.uuid) for o in objs]
+                else:
+                    ranked = _extract_ranked(res, recipe_name)
             except Exception as e:
                 ranked = []
                 if verbose:
@@ -415,6 +428,8 @@ async def cmd_run(args, server, graphiti):
     metrics, raw = await _evaluate(
         graphiti, server, golden, recipes, args.k,
         args.mmr_lambda, args.sim_min_score, args.verbose,
+        pool=getattr(args, "pool", None),
+        post_rerank=getattr(args, "post_rerank", False),
     )
 
     print("\n" + "=" * 60)
@@ -479,6 +494,10 @@ def _parse_args(argv):
     pr.add_argument("--tol", type=float, default=0.05, help="回歸容忍下滑幅度")
     pr.add_argument("--per-group", action="store_true", help="輸出各 group 的 recall/MRR 拆解")
     pr.add_argument("--low-recall", type=float, default=0.8, help="per-group 低召回警示門檻")
+    pr.add_argument("--pool", type=int, default=None, help="候選池大小（config.limit）；設大於 k 可測重排把第 k+1~pool 名拉進 top-k")
+    pr.add_argument("--rerank-top-n", type=int, default=None, help="重排涵蓋筆數（覆寫 cross_encoder.top_n，需 LLM_PROVIDER 的 reranker 啟用）")
+    pr.add_argument("--cross-encoder-provider", default=None, choices=["none", "llm", "bge"], help="覆寫 cross_encoder.provider（繞過 .env，量測不同 reranker）")
+    pr.add_argument("--post-rerank", action="store_true", help="對 RRF 候選池套用 _apply_rerank post-rerank（乾淨隔離重排效果，不引入 bfs）")
 
     # 向後相容：無子命令 = run（即時生成）
     _add_common(parser)
@@ -497,6 +516,15 @@ async def main():
     from src.config import load_config
 
     server.app_config = load_config()
+    # cross_encoder 覆寫（須在 initialize_graphiti 注入 reranker 前設定；繞過 .env override）
+    ce_provider = getattr(args, "cross_encoder_provider", None)
+    if ce_provider and getattr(server.app_config, "cross_encoder", None):
+        server.app_config.cross_encoder.provider = ce_provider
+        print(f"[調參] cross_encoder.provider 覆寫為 {ce_provider}")
+    rtn = getattr(args, "rerank_top_n", None)
+    if rtn and getattr(server.app_config, "cross_encoder", None):
+        server.app_config.cross_encoder.top_n = rtn
+        print(f"[調參] cross_encoder.top_n 覆寫為 {rtn}")
     graphiti = await server.initialize_graphiti()
     try:
         if args.cmd == "build-golden":
