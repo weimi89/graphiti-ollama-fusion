@@ -55,7 +55,11 @@ from src.logging_setup import (
 )
 from src.ollama_graphiti_client import OptimizedOllamaClient
 from src.ollama_embedder import OllamaEmbedder
-from src.cross_encoder_client import PassthroughCrossEncoder
+from src.cross_encoder_client import (
+    PassthroughCrossEncoder,
+    LLMRerankerClient,
+    make_bge_reranker,
+)
 from src.timezone_utils import configure_timezone, format_timestamp
 from src.task_store import get_task_store, initialize_task_store
 
@@ -356,18 +360,72 @@ def _create_llm_client():
         return None
 
 
+def _resolve_reranker_llm_target(ce_cfg):
+    """
+    決定 LLM reranker 的 (model, base_url, api_key)。
+
+    cross_encoder.* 明確設定優先，否則沿用當前 LLM_PROVIDER 的設定，
+    讓「用現有 provider 做重排」開箱即用。
+    """
+    provider = app_config.llm_provider
+    provider_cfg = {
+        "glm": app_config.glm,
+        "groq": getattr(app_config, "groq", None),
+        "openrouter": app_config.openrouter,
+        "deepseek": app_config.deepseek,
+        "ollama": app_config.ollama,
+    }.get(provider)
+
+    model = ce_cfg.model or getattr(provider_cfg, "model", None)
+    base_url = ce_cfg.base_url or getattr(provider_cfg, "base_url", None)
+    api_key = ce_cfg.api_key or getattr(provider_cfg, "api_key", None)
+
+    # Ollama 的 base_url（http://host:11434）需補 /v1 才是 OpenAI 相容端點
+    if provider == "ollama" and base_url and not base_url.rstrip("/").endswith("/v1"):
+        base_url = base_url.rstrip("/") + "/v1"
+
+    return model, base_url, api_key
+
+
 def _create_cross_encoder():
     """
     建立 cross-encoder（reranker）客戶端並注入 Graphiti。
 
-    若不注入，graphiti-core 會 fallback 為 OpenAIRerankerClient(model='gpt-4.1-nano')
-    並打向 OPENAI_BASE_URL（本機 Ollama），因 Ollama 無此模型且不支援 logprobs，
-    導致所有 *_cross_encoder recipe 在 rank() 時拋錯、搜尋回傳失敗。
+    依 CROSS_ENCODER_PROVIDER（config.cross_encoder.provider）路由：
+      - "llm": LLMRerankerClient，沿用或覆寫主 LLM provider 的 model/base_url/api_key
+      - "bge": 本地 BAAI/bge-reranker-v2-m3（需 sentence-transformers）
+      - "none"（預設）或任何初始化失敗：PassthroughCrossEncoder（no-op，永不拋錯）
 
-    Commit 1：先回傳安全的 PassthroughCrossEncoder（no-op，永不拋錯）。
-    Commit 2：改為依 CROSS_ENCODER_PROVIDER（llm / bge / none）路由到真實 reranker，
-    任何初始化失敗一律降級為 Passthrough。
+    若不注入，graphiti-core 會 fallback 為 OpenAIRerankerClient(model='gpt-4.1-nano')
+    並打向本機 Ollama，因模型不存在且不支援 logprobs 而在 rank() 時拋錯、搜尋失敗。
     """
+    glog = logging.getLogger("graphiti")
+    ce_cfg = getattr(app_config, "cross_encoder", None)
+    provider = getattr(ce_cfg, "provider", "none") if ce_cfg else "none"
+
+    try:
+        if provider == "bge":
+            client = make_bge_reranker()
+            if client is not None:
+                glog.info("Cross-encoder: 使用本地 BGE reranker (BAAI/bge-reranker-v2-m3)")
+                return client
+            glog.warning("Cross-encoder: BGE 不可用，降級為 Passthrough（搜尋走 RRF）")
+            return PassthroughCrossEncoder()
+
+        if provider == "llm":
+            model, base_url, api_key = _resolve_reranker_llm_target(ce_cfg)
+            if not model:
+                glog.warning("Cross-encoder: 無法決定 LLM 重排模型，降級為 Passthrough")
+                return PassthroughCrossEncoder()
+            glog.info(f"Cross-encoder: 使用 LLM reranker (model={model}, base_url={base_url})")
+            return LLMRerankerClient(
+                model=model, base_url=base_url, api_key=api_key, top_n=ce_cfg.top_n
+            )
+    except Exception as e:
+        glog.warning(f"Cross-encoder 初始化失敗，降級為 Passthrough: {e}")
+        return PassthroughCrossEncoder()
+
+    # provider == "none" 或未知 → 安全 no-op
     return PassthroughCrossEncoder()
 
 

@@ -13,6 +13,11 @@ dependencies = [
     "groq>=1.1.1",
 ]
 
+[project.optional-dependencies]
+# 本地 cross-encoder 重排（BAAI/bge-reranker-v2-m3，中文重排品質佳、無 API 成本）
+# 安裝：uv sync --extra reranker（首次使用會下載約 1GB 模型）
+reranker = ["sentence-transformers>=3.0.0"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",

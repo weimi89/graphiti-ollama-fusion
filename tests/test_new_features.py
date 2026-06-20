@@ -277,6 +277,110 @@ class TestExcludedEntityTypesKwarg:
         assert "entity_types" not in kwargs
 
 
+class TestCrossEncoderClients:
+    """測試可切換的 reranker 實作。"""
+
+    def test_passthrough_keeps_order_and_scores(self):
+        import asyncio
+        from src.cross_encoder_client import PassthroughCrossEncoder
+        out = asyncio.run(PassthroughCrossEncoder().rank("q", ["a", "b", "c"]))
+        assert out == [("a", 1.0), ("b", 1.0), ("c", 1.0)]
+
+    def test_llm_reranker_reorders_by_score(self):
+        import asyncio
+        import json
+        from unittest.mock import AsyncMock, MagicMock
+        from src.cross_encoder_client import LLMRerankerClient
+
+        rr = LLMRerankerClient(model="m", base_url="http://x/v1", api_key="k", top_n=10)
+        payload = {"scores": [
+            {"index": 0, "score": 0.1},
+            {"index": 1, "score": 0.9},
+            {"index": 2, "score": 0.5},
+        ]}
+        msg = MagicMock(); msg.content = json.dumps(payload)
+        choice = MagicMock(); choice.message = msg
+        resp = MagicMock(); resp.choices = [choice]
+        rr._client = MagicMock()
+        rr._client.chat.completions.create = AsyncMock(return_value=resp)
+
+        out = asyncio.run(rr.rank("q", ["p0", "p1", "p2"]))
+        assert [p for p, _ in out] == ["p1", "p2", "p0"]
+
+    def test_llm_reranker_fallback_keeps_order_on_error(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        from src.cross_encoder_client import LLMRerankerClient
+
+        rr = LLMRerankerClient(model="m")
+        rr._client = MagicMock()
+        rr._client.chat.completions.create = AsyncMock(side_effect=RuntimeError("boom"))
+        out = asyncio.run(rr.rank("q", ["a", "b"]))
+        assert [p for p, _ in out] == ["a", "b"]
+
+    def test_llm_reranker_top_n_limits_scoring(self):
+        import asyncio
+        import json
+        from unittest.mock import AsyncMock, MagicMock
+        from src.cross_encoder_client import LLMRerankerClient
+
+        rr = LLMRerankerClient(model="m", top_n=1)
+        payload = {"scores": [{"index": 0, "score": 0.3}]}
+        msg = MagicMock(); msg.content = json.dumps(payload)
+        choice = MagicMock(); choice.message = msg
+        resp = MagicMock(); resp.choices = [choice]
+        rr._client = MagicMock()
+        rr._client.chat.completions.create = AsyncMock(return_value=resp)
+
+        out = asyncio.run(rr.rank("q", ["a", "b", "c"]))
+        # 只有 a 被評分；b、c 未送評分，給 0 分排在後並保持原序
+        assert out[0][0] == "a"
+        assert [p for p, _ in out[1:]] == ["b", "c"]
+
+    def test_llm_reranker_empty(self):
+        import asyncio
+        from src.cross_encoder_client import LLMRerankerClient
+        assert asyncio.run(LLMRerankerClient(model="m").rank("q", [])) == []
+
+    def test_bge_reranker_degrades_when_missing_dep(self):
+        # 環境未安裝 sentence-transformers 時應回 None（降級），不拋錯
+        from src.cross_encoder_client import make_bge_reranker
+        result = make_bge_reranker()
+        assert result is None or result.__class__.__name__ == "BGERerankerClient"
+
+
+class TestCrossEncoderConfig:
+    """測試 CrossEncoderConfig 驗證與載入。"""
+
+    def test_default_provider_is_none(self):
+        from src.config import GraphitiConfig
+        assert GraphitiConfig().cross_encoder.provider == "none"
+
+    def test_invalid_provider_rejected(self):
+        from src.config import CrossEncoderConfig
+        assert CrossEncoderConfig(provider="bad").get_errors()
+        assert not CrossEncoderConfig(provider="llm").get_errors()
+        assert not CrossEncoderConfig(provider="bge").get_errors()
+
+    def test_bounds_validation(self):
+        from src.config import CrossEncoderConfig
+        assert CrossEncoderConfig(top_n=0).get_errors()
+        assert CrossEncoderConfig(min_score=2.0).get_errors()
+
+    def test_env_override(self):
+        import os
+        from src.config import load_config
+        os.environ["CROSS_ENCODER_PROVIDER"] = "llm"
+        os.environ["CROSS_ENCODER_TOP_N"] = "7"
+        try:
+            cfg = load_config()
+            assert cfg.cross_encoder.provider == "llm"
+            assert cfg.cross_encoder.top_n == 7
+        finally:
+            del os.environ["CROSS_ENCODER_PROVIDER"]
+            del os.environ["CROSS_ENCODER_TOP_N"]
+
+
 # ============================================================
 # _build_search_filters 測試
 # ============================================================
