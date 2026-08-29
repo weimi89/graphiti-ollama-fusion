@@ -166,3 +166,12 @@ models/
 # ===========================
 *.tar.gz
 *.zip
+.claude-sessions/
+
+# 備份檔一律不進版控（2026-08-29）
+# .env 本身有被忽略，但它的備份沒有——那份含 DEEPSEEK/GLM/OPENAI 金鑰與 Neo4j 密碼，
+# 只要有人 git add . 就會外洩。
+.env.bak*
+.env.*.bak
+*.bak-*
+*.py.bak-*

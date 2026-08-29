@@ -24,7 +24,9 @@ from graphiti_core.prompts.models import Message
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_TOKENS = 4096
+DEFAULT_MAX_TOKENS = 8192  # 4096 對中文實體抽取不夠，JSON 會被截斷（2026-08-29）
+# 截斷時原地加倍重試的上限，避免無限制放大
+MAX_TOKENS_CEILING = 16384
 
 
 # ============================================================================
@@ -175,6 +177,7 @@ class OpenAICompatClient(LLMClient):
         response_model: type[BaseModel] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         model_size: ModelSize = ModelSize.medium,
+        _retry_of_truncation: bool = False,
     ) -> dict[str, typing.Any]:
         msgs: list[ChatCompletionMessageParam] = []
         for m in messages:
@@ -195,11 +198,64 @@ class OpenAICompatClient(LLMClient):
                 max_tokens=max_tokens or self.max_tokens,
                 response_format={"type": "json_object"},
             )
-            result = response.choices[0].message.content or ""
+            choice = response.choices[0]
+            result = choice.message.content or ""
             if not result.strip():
                 logger.warning(f"{self._provider_name} 回傳空內容")
                 return {}
-            return json.loads(result)
+
+            # 先檢查是否因長度上限被截斷。
+            # 截斷時 JSON 會斷在字串中間，json.loads 只會丟出
+            # "Unterminated string" 之類的訊息，完全看不出真正原因是 max_tokens 太小。
+            finish_reason = getattr(choice, "finish_reason", None)
+            if finish_reason == "length":
+                used = max_tokens or self.max_tokens
+                if not _retry_of_truncation and used < MAX_TOKENS_CEILING:
+                    # 原地重試一次，並把上限加倍。
+                    # 不這麼做的話：截斷 → JSONDecodeError → graphiti-core 重試 4 次，
+                    # 但每次的 max_tokens 都一樣，必然再次截斷，
+                    # 等於多燒 4 倍 token、每則多卡數分鐘，而且註定失敗。
+                    bigger = min(used * 2, MAX_TOKENS_CEILING)
+                    logger.warning(
+                        f"{self._provider_name} 回應被 max_tokens 截斷"
+                        f"（上限 {used}），改以 {bigger} 重試一次。"
+                    )
+                    return await self._generate_response(
+                        messages, response_model, bigger, model_size,
+                        _retry_of_truncation=True,
+                    )
+                logger.error(
+                    f"{self._provider_name} 回應在 max_tokens={used} 仍被截斷"
+                    f"（實際輸出 {len(result)} 字元）。"
+                    f"請調高 .env 的 *_MAX_TOKENS，或縮小單次送入的內容。"
+                )
+                # 已經加倍過還是截斷，才交給 json.loads 自然拋 JSONDecodeError
+                # （graphiti-core 的 is_server_or_retry_error 只重試
+                # RateLimitError 與 JSONDecodeError，改拋別的例外會讓重試失效）。
+                #
+                # 注意：截斷的回應「不保證」是壞掉的 JSON——有些供應商在
+                # json_object 模式下會補齊括號收尾，於是解析成功、但實體少了一半。
+                # 下面用 _truncated 標記讓上層知道這份結果不完整。
+                try:
+                    parsed = json.loads(result)
+                    if isinstance(parsed, dict):
+                        parsed["_truncated"] = True
+                        logger.error(
+                            f"{self._provider_name} 回應被截斷但仍可解析——"
+                            f"內容不完整，已標記 _truncated。"
+                        )
+                    return parsed
+                except json.JSONDecodeError:
+                    pass
+
+            try:
+                return json.loads(result)
+            except json.JSONDecodeError as je:
+                logger.error(
+                    f"{self._provider_name} 回傳的內容不是合法 JSON"
+                    f"（finish_reason={finish_reason}，長度 {len(result)} 字元）: {je}"
+                )
+                raise
         except Exception as e:
             if "rate" in str(e).lower() or "429" in str(e):
                 raise RateLimitError from e
