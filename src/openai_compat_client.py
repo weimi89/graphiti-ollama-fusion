@@ -9,6 +9,7 @@ GLM、OpenRouter、DeepSeek 三個 provider 共用同一套邏輯：
 - json 保底防護（prompt 若不含 "json" 字串自動補上）
 """
 
+import asyncio
 import json
 import logging
 import typing
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_TOKENS = 8192  # 4096 對中文實體抽取不夠，JSON 會被截斷（2026-08-29）
 # 截斷時原地加倍重試的上限，避免無限制放大
 MAX_TOKENS_CEILING = 16384
+# 供應商偶發回空字串時的重試次數（實測 DeepSeek 會，非截斷也非錯誤，重試多半就好了）
+EMPTY_RESPONSE_RETRIES = 2
 
 
 # ============================================================================
@@ -178,6 +181,7 @@ class OpenAICompatClient(LLMClient):
         max_tokens: int = DEFAULT_MAX_TOKENS,
         model_size: ModelSize = ModelSize.medium,
         _retry_of_truncation: bool = False,
+        _empty_retry: int = 0,
     ) -> dict[str, typing.Any]:
         msgs: list[ChatCompletionMessageParam] = []
         for m in messages:
@@ -201,7 +205,25 @@ class OpenAICompatClient(LLMClient):
             choice = response.choices[0]
             result = choice.message.content or ""
             if not result.strip():
-                logger.warning(f"{self._provider_name} 回傳空內容")
+                # 供應商偶發回空字串（非截斷、也不是錯誤回應）。直接放棄的話這個 {} 會一路
+                # 傳到 ExtractedEntities(**{}) 變成 pydantic 驗證錯誤，而 graphiti-core 只
+                # 重試 RateLimitError 與 JSONDecodeError、不會重試它 —— 那一則記憶就靜默
+                # 降級成沒有實體、搜尋永遠命不中的孤兒節點。
+                if _empty_retry < EMPTY_RESPONSE_RETRIES:
+                    logger.warning(
+                        f"{self._provider_name} 回傳空內容，"
+                        f"重試第 {_empty_retry + 1}/{EMPTY_RESPONSE_RETRIES} 次。"
+                    )
+                    await asyncio.sleep(0.5 * (_empty_retry + 1))
+                    return await self._generate_response(
+                        messages, response_model, max_tokens, model_size,
+                        _retry_of_truncation=_retry_of_truncation,
+                        _empty_retry=_empty_retry + 1,
+                    )
+                logger.error(
+                    f"{self._provider_name} 連續 {EMPTY_RESPONSE_RETRIES + 1} 次回傳空內容，"
+                    f"放棄。這一則會缺少實體、無法被搜尋命中。"
+                )
                 return {}
 
             # 先檢查是否因長度上限被截斷。
